@@ -169,6 +169,41 @@ class GameToFrontTest(unittest.TestCase):
             self.assertFalse(actions.bring_game_to_front())
 
 
+class CloneJobLoginTest(unittest.TestCase):
+    """Live 4K 2026-10-09: a single task handed to the 桌面分身 with the game
+    closed waited ten minutes for a login nothing could start, then ran on
+    the title screen."""
+
+    def _run(self, game_running: bool):
+        from src.ui.shell import clone_flow
+        from src.utils import clone_desktop
+
+        task = SimpleNamespace(name="跑图路线测试")
+        clone_flow._waiting_job.clear()
+        with (
+            mock.patch.object(clone_flow.data, "busy", return_value=False),
+            mock.patch.object(clone_flow.data, "task_by_name", return_value=task),
+            mock.patch.object(clone_desktop, "JOB_FILE", mock.Mock(exists=lambda: True)),
+            mock.patch.object(clone_desktop, "take_job", return_value={"task": task.name}),
+            mock.patch.object(clone_flow, "_reload_settings"),
+            mock.patch.object(clone_flow, "log_in_this_run"),
+            mock.patch.object(clone_flow, "_login_pending", return_value=True),
+            mock.patch.object(actions, "game_running", return_value=game_running),
+            mock.patch.object(clone_flow, "_open_game_only") as opened,
+            mock.patch.object(actions, "start") as started,
+        ):
+            clone_flow._run_pending_job()
+        waiting = bool(clone_flow._waiting_job)
+        clone_flow._waiting_job.clear()
+        return opened.call_count, started.call_count, waiting
+
+    def test_closed_game_is_opened_before_waiting_for_the_login(self):
+        self.assertEqual((1, 0, True), self._run(game_running=False))
+
+    def test_an_open_game_just_waits_for_the_login(self):
+        self.assertEqual((0, 0, True), self._run(game_running=True))
+
+
 class CloneStartTest(unittest.TestCase):
     """Leo 2026-10-07: 继续 was refused after he stopped the run in the 桌面分身."""
 

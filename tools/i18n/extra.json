@@ -888,5 +888,15 @@
   "en": "Runs in the background and finishes even if you close the tool. Takes effect next time you open it.",
   "ja": "バックグラウンドで行い、ツールを閉じても完了します。次に開いたときに反映されます",
   "ko": "백그라운드에서 진행되며 도구를 닫아도 완료됩니다. 다음에 열 때 적용됩니다"
+ },
+ "测试中，可能较不稳定": {
+  "en": "In testing, may be less stable",
+  "ja": "テスト中のため、不安定な場合があります",
+  "ko": "테스트 중이라 불안정할 수 있습니다"
+ },
+ "活动卡带": {
+  "en": "Event Pack",
+  "ja": "イベントカセット",
+  "ko": "이벤트팩"
  }
 }

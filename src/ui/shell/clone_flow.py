@@ -384,7 +384,15 @@ def _run_pending_job() -> None:
         log_in_this_run()
         # A batch waits for the login itself; a single task would start on the
         # title screen (live 2026-10-04: 跑图路线测试 failed 进入卡带失败).
-        if task.name not in (data.DAILY_BATCH, data.WEEKLY_BATCH) and _login_pending():
+        single = task.name not in (data.DAILY_BATCH, data.WEEKLY_BATCH)
+        if single and _login_pending() and not actions.game_running():
+            # Nothing opens the game before the task starts, so the login
+            # waited its full ten minutes and the task then started on the
+            # title screen (live 4K 2026-10-09).  Open the game now; the
+            # auto-login runs once it is up.
+            logger.info(f"clone job: opening the game before {task.name}")
+            _open_game_only()
+        if single and _login_pending():
             _waiting_job.update(
                 task=task, run_mode=run_mode, until=time.time() + LOGIN_WAIT_SECONDS
             )
@@ -393,6 +401,15 @@ def _run_pending_job() -> None:
     logger.info(f"clone job: starting {task.name}")
     _get_out_of_the_way()
     actions.start(task, None, run_mode)
+
+
+def _open_game_only() -> None:
+    """Start the game (and the trigger tasks, the auto-login among them)
+    without a one-time task."""
+    try:
+        data.og().app.start_controller.start(None)
+    except Exception as error:
+        logger.warning(f"clone job: opening the game failed: {error}")
 
 
 def _reload_settings() -> None:

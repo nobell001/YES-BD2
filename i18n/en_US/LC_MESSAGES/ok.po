@@ -2572,3 +2572,9 @@ msgstr "Packs on Home → Last Night → walk to the red crossed-swords marker �
 
 msgid "游戏设置为点击移动时选「鼠标点击舞台」；用 WASD 移动的玩家选「键盘WASD走到舞台」。末日之书走到红色战斗标记也用这个设置，走不到时会换另一种方式再试。"
 msgstr "If the game is set to click-to-move, choose \"Click to stage\"; players who move with WASD choose \"Walk to stage with WASD\". Last Night uses this setting too to reach the red battle marker, and tries the other way if it can't get there."
+
+msgid "活动卡带"
+msgstr "Event Pack"
+
+msgid "测试中，可能较不稳定"
+msgstr "In testing, may be less stable"

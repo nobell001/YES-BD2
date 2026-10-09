@@ -1464,6 +1464,9 @@ msgstr "테레제 파이"
 msgid "活动卡"
 msgstr "이벤트팩"
 
+msgid "活动卡带"
+msgstr "이벤트팩"
+
 msgid "活动奖励"
 msgstr "이벤트 보상"
 
@@ -1475,6 +1478,9 @@ msgstr "이벤트 일일 전투"
 
 msgid "浅色"
 msgstr "라이트"
+
+msgid "测试中，可能较不稳定"
+msgstr "테스트 중이라 불안정할 수 있습니다"
 
 msgid "浏览街机菜单"
 msgstr "아케이드 메뉴 둘러보기"

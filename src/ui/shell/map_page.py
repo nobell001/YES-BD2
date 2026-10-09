@@ -275,6 +275,8 @@ class MapPage(Page):
         self.char_box, self.char_grid = grid_container(104, 12)
         cards_column.addWidget(self.char_box)
         cards_column.addWidget(Text("活动卡带", "eyebrow"))
+        # Leo 2026-10-09: the event cards are still being tuned.
+        cards_column.addWidget(Text("测试中，可能较不稳定", "muted"))
         self.event_box, self.event_grid = grid_container(104, 12)
         cards_column.addWidget(self.event_box)
         self.body.addWidget(cards)

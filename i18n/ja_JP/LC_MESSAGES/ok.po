@@ -1464,6 +1464,9 @@ msgstr "テレーゼ・パイ"
 msgid "活动卡"
 msgstr "イベントカセット"
 
+msgid "活动卡带"
+msgstr "イベントカセット"
+
 msgid "活动奖励"
 msgstr "イベント報酬"
 
@@ -1475,6 +1478,9 @@ msgstr "イベントデイリー戦闘"
 
 msgid "浅色"
 msgstr "ライト"
+
+msgid "测试中，可能较不稳定"
+msgstr "テスト中のため、不安定な場合があります"
 
 msgid "浏览街机菜单"
 msgstr "アーケードメニュー閲覧"
