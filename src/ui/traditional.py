@@ -28,10 +28,20 @@ def _converter():
     return opencc.OpenCC("s2twp")
 
 
+# Taiwan words OpenCC's s2twp gets wrong (GitHub issue #4's 账号 came out as
+# 賬號, live 2026-10-09).
+TAIWAN_FIXES = (("賬號", "帳號"), ("賬戶", "帳戶"))
+
+
 @lru_cache(maxsize=4096)
 def to_traditional(text: str) -> str:
     converter = _converter()
-    return converter.convert(text) if converter is not None else text
+    if converter is None:
+        return text
+    converted = converter.convert(text)
+    for wrong, right in TAIWAN_FIXES:
+        converted = converted.replace(wrong, right)
+    return converted
 
 
 def _locale_name(app) -> str:

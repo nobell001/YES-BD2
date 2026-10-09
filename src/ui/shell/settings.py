@@ -27,6 +27,7 @@ from src.ui.shell.widgets import (
     t,
     vbox,
 )
+from src.utils import game_sound
 
 THEME_LABELS = {"light": "淡紫", "dark": "深色", "auto": "跟随系统"}
 # Each language in its own words.  The project's texts are written in
@@ -203,6 +204,18 @@ class SettingsPage(Page):
                 )
             )
             game.addWidget(Separator())
+        # Leo 2026-10-09: the player chooses; off unless ticked here.
+        self.mute_toggle = Toggle(game_sound.enabled())
+        self.mute_toggle.toggled.connect(game_sound.set_enabled)
+        game.addWidget(
+            HubRow(
+                "volume-x",
+                "跑的时候游戏静音",
+                "开跑时关掉游戏声音，跑完恢复",
+                control=self.mute_toggle,
+            )
+        )
+        game.addWidget(Separator())
         home_task = data.task_by_name("回到主页")
         if home_task is not None:
             self.home_button = Button(
@@ -384,6 +397,7 @@ class SettingsPage(Page):
         self.theme_switch.set_value(theme.theme_mode())
         self._show_language()
         self.notify_toggle.set_checked_quietly(system_notification_on())
+        self.mute_toggle.set_checked_quietly(game_sound.enabled())
         login = data.task_by_class_name("AutoLoginTask")
         if self.login_toggle is not None and login is not None:
             self.login_toggle.set_checked_quietly(bool(getattr(login, "enabled", False)))

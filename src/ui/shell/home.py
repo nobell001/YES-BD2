@@ -12,9 +12,21 @@ from PySide6.QtWidgets import QDialog, QLabel, QSizePolicy, QWidget
 
 from src.tasks import problem_report, run_report
 from src.tasks.BaseBD2Task import task_info_snapshot
-from src.ui.shell import actions, autorun, clone_flow, data, hotkeys, motion, theme
+from src.tasks.map_trade import account_check
+from src.ui.shell import (
+    accounts_ui,
+    actions,
+    autorun,
+    clone_flow,
+    data,
+    hotkeys,
+    motion,
+    run_confirm,
+    theme,
+)
 from src.ui.shell.page import Page
 from src.ui.shell.problem_page import ProblemCard
+from src.utils import accounts
 from src.ui.shell.safe import guarded
 from src.ui.shell.widgets import (
     Bar,
@@ -49,6 +61,7 @@ ENDED_TEXT = {
     run_report.ENDED_ABORTED: "中途停了",
     run_report.ENDED_STOPPED: "手动停止",
     run_report.ENDED_ERROR: "出错停了",
+    run_report.ENDED_SETUP: "没有开始跑",
 }
 SUMMARY_TITLE = {
     run_report.ENDED_DONE: "跑完了",
@@ -56,6 +69,7 @@ SUMMARY_TITLE = {
     run_report.ENDED_ABORTED: "中途停了",
     run_report.ENDED_STOPPED: "手动停止了",
     run_report.ENDED_ERROR: "出错停了",
+    run_report.ENDED_SETUP: "没有开始跑",
 }
 
 
@@ -474,6 +488,9 @@ class HomePage(Page):
         self._logs: deque = deque(maxlen=3)
         self._last_log = ""
 
+        # GitHub issue #4: which game account the records and ticks belong to.
+        self.account_chip = self.add_action(accounts_ui.AccountChip(self._account_switched))
+        self._asking_account = False
         self.pause_button = self.add_action(
             Button("暂停", "secondary", "pause", on_click=self._pause)
         )
@@ -533,15 +550,10 @@ class HomePage(Page):
         self.resume = Button(
             "", "primary", "play", "lg", on_click=lambda: self._start_batch(data.DAILY_BATCH, False)
         )
+        # Leo 2026-10-09: both starts open a window to pick 跑勾选的 or
+        # 跑没跑完的 and confirm the ticks (it replaced 「只跑剩下的 N 项」).
         self.start_all = Button(
-            "一键完成日常",
-            "primary",
-            "play",
-            "lg",
-            on_click=lambda: self._start_batch(data.DAILY_BATCH, all_items=True),
-        )
-        self.start_rest = Button(
-            "", "ghost", on_click=lambda: self._start_batch(data.DAILY_BATCH, False)
+            "一键完成日常", "primary", "play", "lg", on_click=self._confirm_and_start
         )
         # Leo (2026-10-03): a separate start for 桌面分身, no mode switch.
         self.start_clone = Button(
@@ -561,10 +573,8 @@ class HomePage(Page):
         buttons.addWidget(self.cancel_autorun)
         buttons.addWidget(self.resume)
         buttons.addWidget(self.start_all)
-        buttons.addWidget(self.start_rest)
         buttons.addWidget(self.start_clone)
-        # The plain start uses the real mouse (Leo, 2026-10-03).
-        buttons.addWidget(Text("一般执行时请别动键盘和鼠标", "muted"), 0, Qt.AlignHCenter)
+        # The 「别动键盘和鼠标」 line moved into that window (Leo 2026-10-09).
         # Leo 2026-10-09: the player chooses here whether opening the tool runs it.
         self.autorun_box = CheckBox("打开就自动跑日常", autorun.enabled())
         self.autorun_box.setToolTip(
@@ -610,7 +620,8 @@ class HomePage(Page):
         layout.addWidget(self.game_size)
         self._tile_keys: list[str] = []
         self._tiles: dict[str, BoardTile] = {}
-        self._map_cache: tuple[float, object] = (0.0, None)
+        # (when, account id, progress): a switched account reads its own.
+        self._map_cache: tuple[float, str, object] = (0.0, "", None)
 
     def _refresh_idle(self) -> None:
         self.set_eyebrow("")
@@ -630,7 +641,6 @@ class HomePage(Page):
         if not included:
             self.hero_title.set_text("一键日常里没有项目")
             self.hero_sub.set_text("到「任务设定」把要跑的项目加进一键日常")
-            self.start_rest.hide()
         elif remaining:
             self.hero_title.set_text(tf("还剩 {n} 项", n=len(remaining)))
             estimate = data.estimate_seconds(child.name for child in remaining)
@@ -639,12 +649,9 @@ class HomePage(Page):
                 if estimate
                 else "第一次跑，跑完就知道要多久"
             )
-            self.start_rest.set_label(tf("只跑剩下的 {n} 项", n=len(remaining)))
-            self.start_rest.setVisible(len(remaining) < len(included))
         else:
             self.hero_title.set_text("今天的日常都做完了")
             self.hero_sub.set_text(tf("下次刷新 {next}", next=data.next_refresh_text()))
-            self.start_rest.hide()
         stopped = (
             run_report.stopped_row(run_report.load(data.DAILY_BATCH)) if remaining else None
         )
@@ -654,14 +661,11 @@ class HomePage(Page):
             name = stopped_name(stopped)
             self.hero_sub.set_text(tf("上次在「{name}」手动停止，做完的不会再跑", name=name))
             self.resume.set_label(tf("从「{name}」继续", name=name))
-            self.start_rest.hide()
         if clone_flow.busy_in_clone():
             # The tool on the 桌面分身 is running; this one shows its progress.
             self.hero_sub.set_text("工具正在桌面分身里跑，这里会跟着更新")
             busy = True
-        self.start_all.set_label("再跑一次全部" if included and not remaining else "一键完成日常")
         self.start_all.setEnabled(not busy and batch is not None)
-        self.start_rest.setEnabled(not busy)
         self.resume.setEnabled(not busy and batch is not None)
         # Still usable then: the tool in the clone takes the run when it is free.
         self.start_clone.setEnabled(not data.busy())
@@ -673,10 +677,11 @@ class HomePage(Page):
             self.hero_title.set_text("马上自动开始一键日常")
             self.hero_sub.set_text(tf("{n} 秒后开始，不想跑就按「取消自动开始」", n=left))
 
-        stamp, progress = self._map_cache
-        if time.time() - stamp > 15:
+        stamp, cached_for, progress = self._map_cache
+        account_id = accounts.current_id()
+        if time.time() - stamp > 15 or cached_for != account_id:
             progress = data.map_progress()
-            self._map_cache = (time.time(), progress)
+            self._map_cache = (time.time(), account_id, progress)
         if progress is not None and progress.cards:
             cards = len(progress.cards)
             self.map_card.set(
@@ -760,11 +765,48 @@ class HomePage(Page):
             batch.config[key] = bool(on)
         self.refresh()
 
-    def _start_in_clone(self) -> None:
-        from src.tasks.DailyBatchTask import RUN_MODE_ALL
+    def _confirm(self, batch, clone: bool) -> str | None:
+        """The pick-and-confirm window; the run mode on 开始, else ``None``.
+        Changed checks are kept, like the home tiles' checks."""
+        from src.tasks.DailyBatchTask import RUN_MODE_ALL, RUN_MODE_INCOMPLETE
 
-        clone_flow.ask_and_start(self.window(), data.task_by_name(data.DAILY_BATCH), RUN_MODE_ALL)
+        if batch is None:
+            return None
+        picked = run_confirm.ask(self.window(), batch, clone)
+        if picked is None:
+            return None
+        mode, ticks = picked
+        for key, on in ticks.items():
+            if bool(batch.config.get(key, True)) != on:
+                batch.config[key] = on
+        return RUN_MODE_INCOMPLETE if mode == run_confirm.MODE_LEFT else RUN_MODE_ALL
+
+    def _confirm_and_start(self) -> None:
+        batch = data.task_by_name(data.DAILY_BATCH)
+        if data.busy():
+            # actions.start says what is running.
+            actions.start(batch, self.window())
+            return
+        run_mode = self._confirm(batch, clone=False)
         self.refresh()
+        if run_mode is not None:
+            actions.start(batch, self.window(), run_mode)
+            self.refresh()
+
+    def _start_in_clone(self) -> None:
+        batch = data.task_by_name(data.DAILY_BATCH)
+        if batch is None or data.busy():
+            return
+        if not clone_flow.ready_to_go():
+            # First-time setup and sign-in fixes still go through their notes.
+            clone_flow.ask_and_start(self.window(), batch)
+            self.refresh()
+            return
+        run_mode = self._confirm(batch, clone=True)
+        self.refresh()
+        if run_mode is not None:
+            clone_flow.open_clone(self.window(), batch, run_mode)
+            self.refresh()
 
     def _start_batch(self, name: str, all_items: bool) -> None:
         from src.tasks.DailyBatchTask import RUN_MODE_ALL, RUN_MODE_INCOMPLETE
@@ -774,6 +816,34 @@ class HomePage(Page):
             self.window(),
             RUN_MODE_ALL if all_items else RUN_MODE_INCOMPLETE,
         )
+        self.refresh()
+
+    # ================================================================ accounts
+
+    def _account_switched(self) -> None:
+        # Another account's day: its own done items, ticks and last report.
+        self._summary = None
+        self._mode = ""
+        self.refresh()
+
+    def _ask_account(self) -> None:
+        """跑图 stopped because its records looked like another account's."""
+        try:
+            if not account_check.pending_flag():
+                return
+            account_check.clear_flag()
+            dialog = accounts_ui.MismatchDialog(self.window())
+            dialog.exec()
+            if dialog.choice == dialog.SAME:
+                # The player says this is the account: forget this week's
+                # 跑图 records (a copy is kept) and go by the screen.
+                from src.tasks.map_trade.progress import ProgressStore
+
+                ProgressStore().forget_collection_week()
+            elif dialog.choice == dialog.SWITCH:
+                self.account_chip.open_menu()
+        finally:
+            self._asking_account = False
         self.refresh()
 
     # ================================================================ running
@@ -961,13 +1031,16 @@ class HomePage(Page):
         self.sum_switch: Segmented | None = None
         self._sum_switch_labels: tuple[str, ...] = ()
         layout.addLayout(self.sum_switch_row)
-        boxes, grid = grid_container(120, 12, 4, 78)
+        self.sum_boxes, grid = grid_container(120, 12, 4, 78)
         self.sum_time = self._sum_box(grid, "用时", "")
         self.sum_done = self._sum_box(grid, "完成", "ok")
         self.sum_skip = self._sum_box(grid, "跳过", "")
         self.sum_fail = self._sum_box(grid, "失败", "bad")
-        layout.addWidget(boxes)
-        body = hbox(None, (0, 0, 0, 0), 16)
+        layout.addWidget(self.sum_boxes)
+        # A run the 开跑前检查 stopped shows only its reminder (Leo 10-09
+        # 「5提醒就好了」): nothing ran, so no numbers and no list.
+        self.sum_body = QWidget()
+        body = hbox(self.sum_body, (0, 0, 0, 0), 16)
         self.sum_timeline = Timeline()
         left = vbox(None, (0, 0, 0, 0), 0)
         left.addWidget(self.sum_timeline)
@@ -985,7 +1058,7 @@ class HomePage(Page):
         side.addWidget(self.mail_card)
         side.addStretch(1)
         body.addWidget(self.sum_side, 2)
-        layout.addLayout(body)
+        layout.addWidget(self.sum_body)
         self._shown_summary_key = None
         self._summary_pictures = False
         self._problem_found = False
@@ -1030,6 +1103,11 @@ class HomePage(Page):
             name = stopped_name(stopped)
             self.resume_summary_button.set_label(tf("从「{name}」继续", name=name))
             self.set_sub(tf("按继续会从「{name}」接着跑，做完的不会再跑", name=name))
+        setup = ended == run_report.ENDED_SETUP
+        if setup:
+            self.set_sub(report.get("notice") or "")
+        self.sum_boxes.setVisible(not setup)
+        self.sum_body.setVisible(not setup)
         rows = report.get("rows") or []
         self.sum_time.set_text(fmt_clock(finished - (report.get("started") or finished)))
         self.sum_done.set_text(str(sum(1 for row in rows if row.get("state") == run_report.DONE)))
@@ -1050,7 +1128,9 @@ class HomePage(Page):
             self._problem_looked = False
         # A stop the player pressed is not a problem to report: the run stays
         # in the 回报问题 page, but the results page shows no card (Leo 10-09).
-        reportable = ended not in (run_report.ENDED_DONE, run_report.ENDED_STOPPED)
+        reportable = ended not in (
+            run_report.ENDED_DONE, run_report.ENDED_STOPPED, run_report.ENDED_SETUP
+        )
         if reportable and not self._problem_found and (
             not self._problem_looked or time.time() - finished < 60
         ):
@@ -1162,9 +1242,14 @@ class HomePage(Page):
             if mode == "run":
                 self._logs.clear()
                 self._last_log = ""
+        self.account_chip.refresh()
+        self.account_chip.set_switchable(mode != "run" and not clone_flow.busy_in_clone())
         if mode == "idle":
             self._refresh_idle()
         elif mode == "run":
             self._refresh_running(report, task)
         else:
             self._refresh_summary()
+        if mode != "run" and not self._asking_account and account_check.pending_flag():
+            self._asking_account = True
+            QTimer.singleShot(0, guarded("ask account", self._ask_account))

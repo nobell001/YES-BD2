@@ -17,6 +17,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from src.tasks.run_history import week_start_ts
+from src.utils import accounts
 
 ROOT = Path(__file__).resolve().parents[2]
 STATE_FILE = ROOT / "configs" / "weekly_ticks.json"
@@ -60,7 +61,7 @@ def sync(
     ``children`` are (config key, task name) pairs; ``last_run`` is
     run_history's lookup by task name.
     """
-    path = STATE_FILE if path is None else path
+    path = accounts.scoped(STATE_FILE) if path is None else path
     state = _read(path)
     week = week_start_ts(now)
     changed: list[str] = []
@@ -96,7 +97,7 @@ def mark_done(
     config, key: str, finished: float | None = None, now: float | None = None, path=None
 ) -> None:
     """A 周常 just finished in a run: take its tick away for this week."""
-    path = STATE_FILE if path is None else path
+    path = accounts.scoped(STATE_FILE) if path is None else path
     finished = time.time() if finished is None else finished
     state = _read(path)
     state[key] = {"done": finished, "week": week_start_ts(now)}

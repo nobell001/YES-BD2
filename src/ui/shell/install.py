@@ -21,6 +21,8 @@ logger = Logger.get_logger(__name__)
 
 MIN_WIDTH = 940
 MIN_HEIGHT = 600
+# How often the keep-awake request follows the runs (well under any sleep timeout).
+KEEP_AWAKE_CHECK_MS = 5000
 
 
 class Shell(QObject):
@@ -85,11 +87,36 @@ class Shell(QObject):
         from src.ui.shell import clone_flow
 
         clone_flow.run_pending_job_soon()
+        from src.ui.shell import sound_watch
+
+        # 设置「跑的时候游戏静音」 (Leo 2026-10-09).
+        self._sound_timer = sound_watch.start(self)
         self._start_hotkeys()
         from src.ui.shell import autorun
 
         # The player's 「打开工具就自动跑」 on 首页 (Leo 2026-10-09).
         QTimer.singleShot(1500, autorun.schedule)
+        self._start_keep_awake()
+
+    # ------------------------------------------------------------ keep awake
+
+    def _start_keep_awake(self) -> None:
+        """The PC does not sleep while a run goes (Leo 2026-10-09)."""
+        from src.ui.shell.safe import guarded
+
+        self._awake_timer = QTimer(self)
+        self._awake_timer.timeout.connect(guarded("keep awake", self._keep_awake))
+        self._awake_timer.start(KEEP_AWAKE_CHECK_MS)
+
+    def _keep_awake(self) -> None:
+        from src.ui.shell import clone_flow
+        from src.utils import keep_awake
+
+        task = data.current_task()
+        here = (task is not None and task in data.onetime_tasks()) or data.waiting_for_login()
+        paused = bool(getattr(task, "paused", False)) if task is not None else False
+        level = keep_awake.level_for(here, paused, clone_flow.busy_in_clone())
+        keep_awake.apply(level)
 
     # ------------------------------------------------------------ hotkeys
 

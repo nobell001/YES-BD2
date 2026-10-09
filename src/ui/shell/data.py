@@ -94,6 +94,47 @@ def busy() -> bool:
     return current_task() is not None
 
 
+# ---------------------------------------------------------------- accounts
+
+
+def _tick_keys(batch) -> list[str]:
+    return [child.config_key for child in getattr(batch, "child_tasks", ()) or ()]
+
+
+def switch_account(account_id: str) -> bool:
+    """Make another game account current (GitHub issue #4): its records and
+    its own 一键日常 ticks come in, the old account's ticks are kept."""
+    from src.utils import accounts
+
+    if busy():
+        return False
+    batch = task_by_name(DAILY_BATCH)
+    try:
+        return accounts.switch(account_id, getattr(batch, "config", None), _tick_keys(batch))
+    except (accounts.AccountError, OSError) as exc:
+        logger.error(f"switch account failed: {exc}")
+        return False
+
+
+def add_account():
+    """A new account starting with the current account's ticks."""
+    from src.utils import accounts
+
+    batch = task_by_name(DAILY_BATCH)
+    config = getattr(batch, "config", None) or {}
+    ticks = {key: bool(config.get(key, True)) for key in _tick_keys(batch)}
+    try:
+        return accounts.add("", ticks)
+    except (accounts.AccountError, OSError) as exc:
+        logger.error(f"add account failed: {exc}")
+        return None
+
+
+def waiting_for_login() -> bool:
+    """一键日常 is queued behind the auto-login (game opening or logging in)."""
+    return any(getattr(task, "_start_after_login", False) for task in onetime_tasks())
+
+
 def tr(text: str) -> str:
     app = getattr(og(), "app", None)
     try:
@@ -364,7 +405,8 @@ class MapProgress:
         return sum(card.done_maps for card in self.cards)
 
 
-def map_progress() -> MapProgress | None:
+def map_progress(account_id: str | None = None) -> MapProgress | None:
+    """This week's 跑图; ``account_id`` reads another game account's records."""
     try:
         from src.tasks.map_trade.collector_constants import UNSUPPORTED_COLLECTION_CARD_NUMBERS
         from src.tasks.map_trade.models import COLLECTABLE_CARDS
@@ -381,7 +423,10 @@ def map_progress() -> MapProgress | None:
                     return {}
                 return value if isinstance(value, dict) else {}
 
-        store = _ReadOnlyStore()
+        from src.tasks.map_trade.progress import DEFAULT_PROGRESS_PATH
+        from src.utils import accounts
+
+        store = _ReadOnlyStore(accounts.scoped(DEFAULT_PROGRESS_PATH, account_id))
         state = store.load()
         cards = []
         prefixes = {"story": "S", "character": "R", "event": "E"}

@@ -761,6 +761,13 @@ class Segmented(QFrame):
         if button is not None and not button.isChecked():
             button.setChecked(True)
 
+    def set_label(self, option: str, text: str) -> None:
+        """New text for one option (already translated), e.g. with a count."""
+        button = self._buttons.get(option)
+        if button is not None and button.text() != text:
+            button.setText(text)
+            self.update()
+
     def value(self) -> str | None:
         for option, button in self._buttons.items():
             if button.isChecked():

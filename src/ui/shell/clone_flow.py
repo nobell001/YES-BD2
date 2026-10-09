@@ -85,6 +85,15 @@ def available() -> bool:
     return clone_desktop.supported() and not clone_desktop.in_clone()
 
 
+def ready_to_go() -> bool:
+    """Set up and signed-in ready: 前往 would go straight into the clone."""
+    return (
+        not clone_desktop.viewer_removed()
+        and clone_desktop.ready()
+        and not clone_desktop.hello_only()
+    )
+
+
 def ask_and_start(window, task, run_mode: str | None = None) -> bool:
     """Leo (2026-10-03, 10:37): remind first, then 前往 goes into the clone."""
     from qfluentwidgets import MessageBox
@@ -345,6 +354,13 @@ def _close_startup_programs() -> None:
 
 _waiting_job: dict = {}
 LOGIN_WAIT_SECONDS = 600
+# A started job whose game never came up (live 2026-10-10 02:19: the game
+# closed itself in the clone right after opening; the start timed out and the
+# clone sat there with nothing running).  Past ok's start timeout (120 s) with
+# no game and nothing run, the start is tried again, at most this many times.
+_started_job: dict = {}
+START_CHECK_SECONDS = 150
+START_RETRIES = 2
 
 
 def _login_pending() -> bool:
@@ -362,6 +378,8 @@ def _login_pending() -> bool:
 def _run_pending_job() -> None:
     from src.ui.shell import actions
 
+    if _check_started_job():
+        return
     if data.busy():
         return
     if _waiting_job:
@@ -400,7 +418,38 @@ def _run_pending_job() -> None:
             return
     logger.info(f"clone job: starting {task.name}")
     _get_out_of_the_way()
+    _started_job.clear()
+    _started_job.update(task=task, run_mode=run_mode, at=time.time(), tries=0, seen=False)
     actions.start(task, None, run_mode)
+
+
+def _check_started_job() -> bool:
+    """True when the started job was just tried again."""
+    from src.ui.shell import actions
+
+    if not _started_job:
+        return False
+    task = _started_job["task"]
+    if data.busy() or data.waiting_for_login() or task in data.onetime_tasks() and task.enabled:
+        _started_job["seen"] = True
+        return False
+    if _started_job["seen"]:
+        _started_job.clear()  # it ran and ended
+        return False
+    if time.time() - _started_job["at"] < START_CHECK_SECONDS or actions.game_running():
+        return False
+    if _started_job["tries"] >= START_RETRIES:
+        logger.warning(f"clone job: the game did not open, {task.name} not started")
+        _started_job.clear()
+        return False
+    _started_job["tries"] += 1
+    _started_job["at"] = time.time()
+    logger.warning(
+        f"clone job: the game did not open, trying again ({_started_job['tries']}) {task.name}"
+    )
+    log_in_this_run()
+    actions.start(task, None, _started_job["run_mode"])
+    return True
 
 
 def _open_game_only() -> None:
@@ -646,6 +695,20 @@ def run_status() -> dict:
     if current is None and report is None and _waiting_job:
         current = _waiting_job["task"]
         stage = stage or "等待自动登录完成"
+    if current is None and report is None:
+        # Between the auto-login's checks nothing is current: the run outside
+        # went "ended" and back, and its PC was let sleep (live 2026-10-10).
+        waiting = next(
+            (task for task in data.onetime_tasks() if getattr(task, "_start_after_login", False)),
+            None,
+        )
+        if waiting is not None:
+            current = waiting
+            stage = stage or "等待自动登录完成"
+    if current is None and report is None and _started_job:
+        # The game is opening (or opened again): the run is on its way.
+        current = _started_job["task"]
+        stage = stage or "正在打开游戏"
     return {
         "at": time.time(),
         "version": own_version(),

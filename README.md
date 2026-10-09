@@ -18,6 +18,8 @@
 </p>
 
 > [!IMPORTANT]
+> **玩家请到 [Releases](https://github.com/nobell001/YES-BD2/releases/latest) 下载 `yes-bd2-win32-online-setup.exe` 安装。** 页面上的 `Source code` 和绿色「Code → Download ZIP」是源码，不是安装包。
+>
 > **只支持电脑版（桌面应用程序）的棕色尘埃2**，不支持手机和模拟器。
 >
 > **游戏语言请先切成简体中文。** 工具是看游戏画面上的字来操作的，目前只认得简体中文，**很快会支持更多语言**。

@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -193,9 +194,18 @@ class BuildWorkflowTest(unittest.TestCase):
                 git("commit", "--quiet", "-m", title)
                 if tag:
                     git("tag", "-a", tag, "-m", tag)
+            pwsh = shutil.which("pwsh")
+            if pwsh is None:
+                # The release runs this script on GitHub under PowerShell 7;
+                # Windows' built-in PowerShell 5.1 reads git's UTF-8 titles
+                # differently, so it is no stand-in.
+                self.fail(
+                    "PowerShell 7 (pwsh) is not installed; install it with "
+                    "`winget install Microsoft.PowerShell` to run this test."
+                )
             result = subprocess.run(
                 [
-                    "pwsh", "-NoProfile", "-File", str(script),
+                    pwsh, "-NoProfile", "-File", str(script),
                     "-StartTag", start_tag,
                     "-EndTag", release_tag,
                     "-Changelog", "",

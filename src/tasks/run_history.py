@@ -24,6 +24,7 @@ from ok import Logger
 from ok.util.file import get_relative_path, read_json_file, write_json_file
 
 from src.tasks.BaseBD2Task import task_info_snapshot
+from src.utils import accounts
 from src.utils.game_day import DAILY_REFRESH_HOUR, GAME_TZ
 
 logger = Logger.get_logger(__name__)
@@ -36,6 +37,11 @@ DEFAULT_FILE = ("configs", "task_run_history.json")
 
 # Status texts containing any of these markers never count as a completion.
 _FAILURE_MARKERS = ("中止", "失败")
+
+# A run whose info carries this key stopped before pressing anything (the
+# 开跑前检查 found the game set to 繁中): not a run, so neither a record nor a
+# failure backoff that would skip the item once the player fixed the game.
+NOT_STARTED_KEY = "没有开始"
 
 # The 失败 field uses list strings, joined stage names, or empty placeholders.
 _NO_FAILURE_VALUES = frozenset({"", "-", "0", "无", "[]", "none", "false"})
@@ -310,19 +316,24 @@ def _log_single_run(task, info: dict, ok: bool, started, finished: float, folder
 
 
 _default_store: RunHistoryStore | None = None
+_default_store_own = True  # False while a test put its own store in
 
 
 def default_store() -> RunHistoryStore:
+    """The current game account's store (GitHub issue #4): switching accounts
+    hands out the other account's file from the next call on."""
     global _default_store
-    if _default_store is None:
-        _default_store = RunHistoryStore()
+    wanted = accounts.scoped(get_relative_path(*DEFAULT_FILE))
+    if _default_store is None or (_default_store_own and _default_store.path != wanted):
+        _default_store = RunHistoryStore(wanted)
     return _default_store
 
 
 def set_default_store(store: RunHistoryStore | None) -> None:
     """Override the process-wide store (tests); None restores lazy creation."""
-    global _default_store
+    global _default_store, _default_store_own
     _default_store = store
+    _default_store_own = store is None
 
 
 def install_run_history_recorder() -> bool:
@@ -337,6 +348,11 @@ def install_run_history_recorder() -> bool:
     class _Recorder(QObject):
         def on_task_done(self, task):
             name = str(getattr(task, "name", ""))
+            try:
+                if task_info_snapshot(task).get(NOT_STARTED_KEY):
+                    return
+            except Exception:
+                pass
             try:
                 default_store().record_task_done(task)
                 record = default_store().last_run(name)

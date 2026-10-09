@@ -2578,3 +2578,138 @@ msgstr "Event Pack"
 
 msgid "测试中，可能较不稳定"
 msgstr "In testing, may be less stable"
+
+msgid "一动就会停下，想边跑边用电脑请用桌面分身"
+msgstr "Any input stops the run. To use your PC meanwhile, run it on Clone Desktop."
+
+msgid "会跳出 Windows 确认，请按「是」"
+msgstr "Windows will ask to confirm; press Yes."
+
+msgid "做完的会跳过，没勾的不跑"
+msgstr "Done items are skipped; unticked ones never run."
+
+msgid "勾到的都跑，做完的也会再跑一次"
+msgstr "Every ticked item runs, even ones already done."
+
+msgid "开始 {n} 项"
+msgstr "Start {n}"
+
+msgid "执行时请别动键盘和鼠标"
+msgstr "Don't touch the keyboard or mouse while it runs"
+
+msgid "游戏在分身窗口里跑，你照常用电脑"
+msgstr "The game runs on Clone Desktop; keep using your PC."
+
+msgid "跑勾选的"
+msgstr "Ticked"
+
+msgid "跑勾选的 {n} 项"
+msgstr "Ticked · {n}"
+
+msgid "跑没跑完的"
+msgstr "Unfinished"
+
+msgid "跑没跑完的 {n} 项"
+msgstr "Unfinished · {n}"
+
+msgid "全选"
+msgstr "Select all"
+
+msgid "「{name}」本周跑图的记录说已经跑完，但游戏里的卡带还没完成。"
+msgstr "\"{name}\" has this week's map runs recorded as done, but the cartridges in the game aren't finished."
+
+msgid "切换账号"
+msgstr "Switch account"
+
+msgid "切换账号：每个账号各自记日常、周常、跑图、跑商和勾选"
+msgstr "Switch account: each account keeps its own dailies, weeklies, map runs, trading and ticks"
+
+msgid "删除这个账号和它的记录"
+msgstr "Delete this account and its records"
+
+msgid "图片"
+msgstr "Images"
+
+msgid "图片要在 8MB 以内"
+msgstr "The image must be 8 MB or smaller"
+
+msgid "头像没存好，再试一次"
+msgstr "The picture wasn't saved. Try again."
+
+msgid "就是这个账号，重新看画面"
+msgstr "It's this account, check the screen again"
+
+msgid "换头像（8MB 以内的图片）"
+msgstr "Change picture (image up to 8 MB)"
+
+msgid "改名、换头像、删除"
+msgstr "Rename, picture, delete"
+
+msgid "新增账号"
+msgstr "Add account"
+
+msgid "是不是换了账号？"
+msgstr "Did you switch accounts?"
+
+msgid "最多 {n} 个账号"
+msgstr "Up to {n} accounts"
+
+msgid "正在用的账号不能删除，先切到别的账号"
+msgstr "The account in use can't be deleted. Switch to another first."
+
+msgid "每个账号各自记日常、周常、跑图、跑商和勾选"
+msgstr "Each account keeps its own dailies, weeklies, map runs, trading and ticks"
+
+msgid "点头像可以换图片（8MB 以内）。在游戏里换账号后，记得在这里也换。"
+msgstr "Click a picture to change it (up to 8 MB). After switching accounts in the game, switch here too."
+
+msgid "看不懂这张图片，换一张 PNG 或 JPG 试试"
+msgstr "This image can't be opened. Try a PNG or JPG."
+
+msgid "确定删除？"
+msgstr "Delete?"
+
+msgid "请在右上角选对账号，再按开始。"
+msgstr "Pick the right account at the top right, then press Start."
+
+msgid "读不到这张图片"
+msgstr "Couldn't read this image"
+
+msgid "账号"
+msgstr "Accounts"
+
+msgid "账号 {n}"
+msgstr "Account {n}"
+
+msgid "账号：{name}"
+msgstr "Account: {name}"
+
+msgid "跑图 {done}/{total}"
+msgstr "Maps {done}/{total}"
+
+msgid "跑图先停下了，没有按任何技能。"
+msgstr "Map runs stopped without pressing any skill."
+
+msgid "选一张头像图片"
+msgstr "Pick a picture"
+
+msgid "开跑时关掉游戏声音，跑完恢复"
+msgstr "Turns the game sound off when a run starts and back on when it ends"
+
+msgid "本周代跑 {time}"
+msgstr "Ran for you this week: {time}"
+
+msgid "跑的时候游戏静音"
+msgstr "Mute the game while running"
+
+msgid "没有开始跑"
+msgstr "Didn't start"
+
+msgid "游戏语言是繁体中文，工具只认得简体中文。到游戏设置改成简体中文，再按开始。"
+msgstr "The game language is Traditional Chinese, but the tool only reads Simplified Chinese. Switch the game to Simplified Chinese in its settings, then press start again."
+
+msgid "游戏语言是繁体中文，工具只认得简体中文，这次没有开始跑。请到游戏设置把语言改成简体中文，再按开始。"
+msgstr "The game language is Traditional Chinese, but the tool only reads Simplified Chinese, so this run didn't start. Switch the game language to Simplified Chinese in the game settings, then press start again."
+
+msgid "画面颜色和游戏原本的差很多，可能开着 HDR 或显卡的颜色滤镜，有些判断可能不准。建议关掉后再跑，这次照常执行。"
+msgstr "The picture's colours are far from the game's own, maybe because HDR or a graphics-card colour filter is on, so some checks may be off. Turning it off is recommended; this run goes on as usual."

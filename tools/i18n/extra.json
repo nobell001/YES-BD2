@@ -898,5 +898,230 @@
   "en": "Event Pack",
   "ja": "イベントカセット",
   "ko": "이벤트팩"
+ },
+ "跑没跑完的": {
+  "en": "Unfinished",
+  "ja": "未完了のみ",
+  "ko": "안 끝난 것"
+ },
+ "跑勾选的": {
+  "en": "Ticked",
+  "ja": "チェックしたもの",
+  "ko": "체크한 것"
+ },
+ "跑没跑完的 {n} 项": {
+  "en": "Unfinished · {n}",
+  "ja": "未完了のみ {n} 件",
+  "ko": "안 끝난 것 {n}개"
+ },
+ "跑勾选的 {n} 项": {
+  "en": "Ticked · {n}",
+  "ja": "チェックしたもの {n} 件",
+  "ko": "체크한 것 {n}개"
+ },
+ "做完的会跳过，没勾的不跑": {
+  "en": "Done items are skipped; unticked ones never run.",
+  "ja": "完了済みは飛ばし、チェックなしは実行しません",
+  "ko": "끝난 항목은 건너뛰고, 체크 안 한 항목은 실행하지 않습니다"
+ },
+ "勾到的都跑，做完的也会再跑一次": {
+  "en": "Every ticked item runs, even ones already done.",
+  "ja": "チェックしたものはすべて実行（完了済みももう一度）",
+  "ko": "체크한 항목은 모두 실행합니다(끝난 항목도 다시)"
+ },
+ "开始 {n} 项": {
+  "en": "Start {n}",
+  "ja": "{n} 件を開始",
+  "ko": "{n}개 시작"
+ },
+ "游戏在分身窗口里跑，你照常用电脑": {
+  "en": "The game runs on Clone Desktop; keep using your PC.",
+  "ja": "ゲームは分身ウィンドウで動きます。PC はいつも通り使えます",
+  "ko": "게임은 분신 창에서 실행됩니다. PC는 평소처럼 쓰세요"
+ },
+ "会跳出 Windows 确认，请按「是」": {
+  "en": "Windows will ask to confirm; press Yes.",
+  "ja": "Windows の確認が出たら「はい」を押してください",
+  "ko": "Windows 확인 창이 뜨면 '예'를 누르세요"
+ },
+ "执行时请别动键盘和鼠标": {
+  "en": "Don't touch the keyboard or mouse while it runs",
+  "ja": "実行中はキーボードとマウスに触らないでください",
+  "ko": "실행 중에는 키보드와 마우스를 건드리지 마세요"
+ },
+ "一动就会停下，想边跑边用电脑请用桌面分身": {
+  "en": "Any input stops the run. To use your PC meanwhile, run it on Clone Desktop.",
+  "ja": "操作すると止まります。実行中も PC を使うなら分身デスクトップで",
+  "ko": "조작하면 멈춥니다. 실행 중에 PC를 쓰려면 분신 데스크톱을 쓰세요"
+ },
+ "全选": {
+  "en": "Select all",
+  "ja": "すべて選択",
+  "ko": "전체 선택"
+ },
+ "账号 {n}": {
+  "en": "Account {n}",
+  "ja": "アカウント {n}",
+  "ko": "계정 {n}"
+ },
+ "账号": {
+  "en": "Accounts",
+  "ja": "アカウント",
+  "ko": "계정"
+ },
+ "账号：{name}": {
+  "en": "Account: {name}",
+  "ja": "アカウント：{name}",
+  "ko": "계정: {name}"
+ },
+ "切换账号：每个账号各自记日常、周常、跑图、跑商和勾选": {
+  "en": "Switch account: each account keeps its own dailies, weeklies, map runs, trading and ticks",
+  "ja": "アカウント切替：日課・週課・マップ周回・交易・チェックはアカウントごとに記録",
+  "ko": "계정 전환: 일일·주간·맵 순회·교역·체크를 계정마다 따로 기록"
+ },
+ "每个账号各自记日常、周常、跑图、跑商和勾选": {
+  "en": "Each account keeps its own dailies, weeklies, map runs, trading and ticks",
+  "ja": "日課・週課・マップ周回・交易・チェックはアカウントごとに記録します",
+  "ko": "일일·주간·맵 순회·교역·체크를 계정마다 따로 기록합니다"
+ },
+ "跑图 {done}/{total}": {
+  "en": "Maps {done}/{total}",
+  "ja": "マップ {done}/{total}",
+  "ko": "맵 {done}/{total}"
+ },
+ "最多 {n} 个账号": {
+  "en": "Up to {n} accounts",
+  "ja": "アカウントは最大 {n} 個",
+  "ko": "계정은 최대 {n}개"
+ },
+ "新增账号": {
+  "en": "Add account",
+  "ja": "アカウントを追加",
+  "ko": "계정 추가"
+ },
+ "改名、换头像、删除": {
+  "en": "Rename, picture, delete",
+  "ja": "名前・アイコン・削除",
+  "ko": "이름·사진·삭제"
+ },
+ "换头像（8MB 以内的图片）": {
+  "en": "Change picture (image up to 8 MB)",
+  "ja": "アイコンを変更（8MB までの画像）",
+  "ko": "사진 변경(8MB 이하 이미지)"
+ },
+ "正在用的账号不能删除，先切到别的账号": {
+  "en": "The account in use can't be deleted. Switch to another first.",
+  "ja": "使用中のアカウントは削除できません。先に別のアカウントに切り替えてください。",
+  "ko": "사용 중인 계정은 삭제할 수 없습니다. 먼저 다른 계정으로 바꾸세요."
+ },
+ "删除这个账号和它的记录": {
+  "en": "Delete this account and its records",
+  "ja": "このアカウントと記録を削除",
+  "ko": "이 계정과 기록 삭제"
+ },
+ "选一张头像图片": {
+  "en": "Pick a picture",
+  "ja": "アイコン画像を選択",
+  "ko": "사진 선택"
+ },
+ "图片": {
+  "en": "Images",
+  "ja": "画像",
+  "ko": "이미지"
+ },
+ "读不到这张图片": {
+  "en": "Couldn't read this image",
+  "ja": "この画像を読み込めません",
+  "ko": "이 이미지를 읽을 수 없습니다"
+ },
+ "图片要在 8MB 以内": {
+  "en": "The image must be 8 MB or smaller",
+  "ja": "画像は 8MB 以内にしてください",
+  "ko": "이미지는 8MB 이하여야 합니다"
+ },
+ "看不懂这张图片，换一张 PNG 或 JPG 试试": {
+  "en": "This image can't be opened. Try a PNG or JPG.",
+  "ja": "この画像は開けません。PNG か JPG をお試しください。",
+  "ko": "이 이미지를 열 수 없습니다. PNG나 JPG로 해 보세요."
+ },
+ "头像没存好，再试一次": {
+  "en": "The picture wasn't saved. Try again.",
+  "ja": "アイコンを保存できませんでした。もう一度お試しください。",
+  "ko": "사진을 저장하지 못했습니다. 다시 해 보세요."
+ },
+ "确定删除？": {
+  "en": "Delete?",
+  "ja": "削除しますか？",
+  "ko": "삭제할까요?"
+ },
+ "点头像可以换图片（8MB 以内）。在游戏里换账号后，记得在这里也换。": {
+  "en": "Click a picture to change it (up to 8 MB). After switching accounts in the game, switch here too.",
+  "ja": "アイコンをクリックすると画像を変えられます（8MB まで）。ゲームでアカウントを替えたら、ここでも替えてください。",
+  "ko": "사진을 누르면 바꿀 수 있습니다(8MB 이하). 게임에서 계정을 바꾸면 여기서도 바꾸세요."
+ },
+ "是不是换了账号？": {
+  "en": "Did you switch accounts?",
+  "ja": "アカウントを替えましたか？",
+  "ko": "계정을 바꾸셨나요?"
+ },
+ "「{name}」本周跑图的记录说已经跑完，但游戏里的卡带还没完成。": {
+  "en": "\"{name}\" has this week's map runs recorded as done, but the cartridges in the game aren't finished.",
+  "ja": "「{name}」の今週のマップ周回は完了と記録されていますが、ゲーム内のカセットは未完了です。",
+  "ko": "'{name}'의 이번 주 맵 순회는 완료로 기록되어 있지만, 게임 안의 팩은 아직 끝나지 않았습니다."
+ },
+ "跑图先停下了，没有按任何技能。": {
+  "en": "Map runs stopped without pressing any skill.",
+  "ja": "マップ周回はスキルを押さずに止めました。",
+  "ko": "맵 순회는 스킬을 누르지 않고 멈췄습니다."
+ },
+ "请在右上角选对账号，再按开始。": {
+  "en": "Pick the right account at the top right, then press Start.",
+  "ja": "右上で正しいアカウントを選んでから開始してください。",
+  "ko": "오른쪽 위에서 맞는 계정을 고른 뒤 시작하세요."
+ },
+ "就是这个账号，重新看画面": {
+  "en": "It's this account, check the screen again",
+  "ja": "このアカウントで合っています、画面で確認し直す",
+  "ko": "이 계정이 맞습니다, 화면으로 다시 확인"
+ },
+ "切换账号": {
+  "en": "Switch account",
+  "ja": "アカウントを切り替え",
+  "ko": "계정 전환"
+ },
+ "跑的时候游戏静音": {
+  "en": "Mute the game while running",
+  "ja": "実行中はゲームをミュート",
+  "ko": "실행 중 게임 음소거"
+ },
+ "开跑时关掉游戏声音，跑完恢复": {
+  "en": "Turns the game sound off when a run starts and back on when it ends",
+  "ja": "実行を始めるとゲームの音を消し、終わったら元に戻します",
+  "ko": "실행을 시작하면 게임 소리를 끄고, 끝나면 되돌립니다"
+ },
+ "本周代跑 {time}": {
+  "en": "Ran for you this week: {time}",
+  "ja": "今週の代行時間 {time}",
+  "ko": "이번 주 대신 실행한 시간 {time}"
+ },
+ "没有开始跑": {
+  "en": "Didn't start",
+  "ja": "開始しませんでした",
+  "ko": "시작하지 않았습니다"
+ },
+ "游戏语言是繁体中文，工具只认得简体中文。到游戏设置改成简体中文，再按开始。": {
+  "en": "The game language is Traditional Chinese, but the tool only reads Simplified Chinese. Switch the game to Simplified Chinese in its settings, then press start again.",
+  "ja": "ゲームの言語が繁体字中国語になっています。ツールは簡体字中国語しか読めません。ゲームの設定で簡体字中国語（简体中文）に切り替えてから、もう一度開始を押してください。",
+  "ko": "게임 언어가 중국어 번체로 되어 있습니다. 도구는 중국어 간체만 읽을 수 있습니다. 게임 설정에서 중국어 간체(简体中文)로 바꾼 뒤 다시 시작을 눌러 주세요."
+ },
+ "游戏语言是繁体中文，工具只认得简体中文，这次没有开始跑。请到游戏设置把语言改成简体中文，再按开始。": {
+  "en": "The game language is Traditional Chinese, but the tool only reads Simplified Chinese, so this run didn't start. Switch the game language to Simplified Chinese in the game settings, then press start again.",
+  "ja": "ゲームの言語が繁体字中国語になっています。ツールは簡体字中国語しか読めないため、今回は開始しませんでした。ゲームの設定で言語を簡体字中国語（简体中文）に切り替えてから、もう一度開始を押してください。",
+  "ko": "게임 언어가 중국어 번체로 되어 있습니다. 도구는 중국어 간체만 읽을 수 있어서 이번에는 시작하지 않았습니다. 게임 설정에서 언어를 중국어 간체(简体中文)로 바꾼 뒤 다시 시작을 눌러 주세요."
+ },
+ "画面颜色和游戏原本的差很多，可能开着 HDR 或显卡的颜色滤镜，有些判断可能不准。建议关掉后再跑，这次照常执行。": {
+  "en": "The picture's colours are far from the game's own, maybe because HDR or a graphics-card colour filter is on, so some checks may be off. Turning it off is recommended; this run goes on as usual.",
+  "ja": "画面の色がゲーム本来の色と大きく違います。HDR やグラフィックカードのカラーフィルターがオンになっている可能性があり、一部の判定が不正確になるかもしれません。オフにしてから実行するのがおすすめです。今回はそのまま実行します。",
+  "ko": "화면 색이 게임 원래 색과 많이 다릅니다. HDR이나 그래픽카드 색상 필터가 켜져 있을 수 있어 일부 판단이 정확하지 않을 수 있습니다. 끄고 실행하는 것을 권장합니다. 이번에는 그대로 실행합니다."
  }
 }

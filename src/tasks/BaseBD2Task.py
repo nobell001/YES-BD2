@@ -17,7 +17,7 @@ from src.scene.BD2Scene import BD2Scene
 from src.scene.ScreenPosition import ScreenPosition
 from src.tasks import problem_report
 from src.tasks.task_notifications import log_task_completion
-from src.utils import game_language, game_size
+from src.utils import game_language, game_size, keep_awake
 from src.utils.game_day import DAILY_REFRESH_HOUR
 from src.utils.home_confirmation import (
     HOME_ANNOUNCEMENT_CLEAR_RELATIVE_POINT,
@@ -34,6 +34,8 @@ from src.utils.image_utils import (
     to_gray,
 )
 from src.utils.ocr_utils import normalize_ocr_text
+from src.utils.press_confirm import PressOutcome
+from src.utils.press_confirm import press_and_confirm as _press_and_confirm
 from src.utils.template_resolution import offline_template_scale
 
 logger = Logger.get_logger(__name__)
@@ -143,11 +145,20 @@ class BaseBD2Task(BaseTask):
             # A failure after the home checks read 繁中 text says to switch the
             # game to 简体中文 (Leo 2026-10-09: warn now, support 繁中 later).
             started = monotonic()
-            with problem_report.run_scope(self, keep) as scope:
+            # The run the executor started (not a child of 一键日常): ok-script's
+            # display request is given back however it ends (a Stop left it on).
+            top = keep and getattr(getattr(self, "executor", None), "current_task", None) is self
+            with problem_report.run_scope(self, keep) as scope, keep_awake.released_after(top):
                 # Daily and weekly tasks first set a game size the tool was not
                 # tested on to 1920x1080, or say they could not (Leo 2026-10-09).
                 if constructed and (wanted or getattr(type(self), "start_from_home", False)):
                     game_size.fix_or_warn(self)
+                    # A task the player started itself looks at the game's
+                    # settings first, as 一键日常 does (差異化點子 5): a reminder,
+                    # and a game set to 繁中 does not start.
+                    if keep and self._setup_stops():
+                        scope.ended = problem_report.SETUP
+                        return False
                 if constructed and getattr(type(self), "start_from_home", False):
                     self._go_home_before_run()
                 try:
@@ -183,6 +194,13 @@ class BaseBD2Task(BaseTask):
         guarded_run.__qualname__ = run.__qualname__
         guarded_run.__doc__ = run.__doc__
         cls.run = guarded_run
+
+    def _setup_stops(self) -> bool:
+        from src.tasks import setup_check
+
+        if not setup_check.started_alone(self):
+            return False  # 一键日常 looked before its first item
+        return bool(setup_check.look(self))
 
     def _go_home_before_run(self) -> None:
         try:
@@ -443,6 +461,28 @@ class BaseBD2Task(BaseTask):
         self.info_set("鼠标点击", click_log)
         self.sleep(after_sleep)
         return result
+
+    def press_and_confirm(
+        self,
+        label: str,
+        press: Callable[[], object],
+        confirmed: Callable[[], object],
+        **options,
+    ) -> PressOutcome:
+        """Press and count it only once the screen shows it worked.
+
+        See ``src.utils.press_confirm``: one more press after 1.5 s while the
+        screen from before is still shown (``still_before``), never for
+        presses that can spend something (``retries=0``).
+        """
+        return _press_and_confirm(
+            label,
+            press,
+            confirmed,
+            sleep=self.sleep,
+            log=self.log_info,
+            **options,
+        )
 
     @staticmethod
     def _click_log_message(x, y, width: int, height: int, action_name: str) -> str:

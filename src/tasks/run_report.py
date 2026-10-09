@@ -23,6 +23,7 @@ from pathlib import Path
 from ok import Logger
 from ok.util.file import get_relative_path, read_json_file, write_json_file
 
+from src.utils import accounts
 from src.utils.game_day import DAILY_REFRESH_HOUR, GAME_TZ
 
 logger = Logger.get_logger(__name__)
@@ -45,6 +46,8 @@ ENDED_FAILED = "failed"
 ENDED_ABORTED = "aborted"
 ENDED_STOPPED = "stopped"
 ENDED_ERROR = "error"
+# The 开跑前检查 stopped it before anything was pressed (setup_check).
+ENDED_SETUP = "setup"
 
 _lock = threading.RLock()
 _active: dict | None = None
@@ -64,7 +67,8 @@ def set_report_file(path: str | None) -> None:
 
 
 def _report_path() -> str:
-    return _report_file or get_relative_path(*REPORT_FILE)
+    # Each game account has its own last run (GitHub issue #4).
+    return _report_file or accounts.scoped(get_relative_path(*REPORT_FILE))
 
 
 def begin(label: str, mode: str, rows: list[tuple[str, str]]) -> None:
@@ -149,6 +153,13 @@ def add_note(key: str, note: str) -> None:
         row = _row(key)
         if row is not None and note:
             row["note"] = f"{row['note']}，{note}" if row.get("note") else note
+
+
+def set_notice(text: str) -> None:
+    """What the results page says under its title (the 开跑前检查's reminder)."""
+    with _lock:
+        if _active is not None:
+            _active["notice"] = str(text or "")
 
 
 def finish(ended: str) -> dict | None:

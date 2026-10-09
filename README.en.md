@@ -18,6 +18,8 @@
 </p>
 
 > [!IMPORTANT]
+> **Players: download `yes-bd2-win32-online-setup.exe` from [Releases](https://github.com/nobell001/YES-BD2/releases/latest) and install it.** The `Source code` archives and the green **Code → Download ZIP** are the source code, not the installer.
+>
 > **For the PC (desktop app) version of Brown Dust 2 only**; phones and emulators are not supported.
 >
 > **Switch the game language to Simplified Chinese first.** The tool reads the text on the game screen, and for now it only reads Simplified Chinese. **More game languages are coming soon.**

@@ -484,6 +484,11 @@ class SquareGoddessTask(BaseBD2Task):
     # hide the morning's wish: the wish day is kept in its own file.
     WISH_RECORD_PATH = Path("configs") / "goddess_wish.json"
 
+    def _wish_path(self) -> Path:
+        from src.utils import accounts
+
+        return Path(accounts.scoped(self.WISH_RECORD_PATH))
+
     @staticmethod
     def _game_day() -> str:
         from datetime import datetime
@@ -494,15 +499,16 @@ class SquareGoddessTask(BaseBD2Task):
 
     def _wished_today(self) -> bool:
         try:
-            data = json.loads(self.WISH_RECORD_PATH.read_text(encoding="utf-8"))
+            data = json.loads(self._wish_path().read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return False
         return isinstance(data, dict) and data.get("day") == self._game_day()
 
     def _record_wish(self) -> None:
         try:
-            self.WISH_RECORD_PATH.parent.mkdir(parents=True, exist_ok=True)
-            self.WISH_RECORD_PATH.write_text(
+            path = self._wish_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
                 json.dumps({"day": self._game_day()}), encoding="utf-8"
             )
         except OSError:

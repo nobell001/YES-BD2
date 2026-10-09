@@ -5,7 +5,8 @@ import unittest
 from pathlib import Path
 
 from src.tasks import run_log, run_report
-from src.ui.shell.report_page import run_line, task_state
+from src.tasks.run_history import week_start_ts
+from src.ui.shell.report_page import header_line, run_line, task_state
 
 
 class RunLogTest(unittest.TestCase):
@@ -58,3 +59,24 @@ class RunLogTest(unittest.TestCase):
         run_report.finish(run_report.ENDED_DONE)
         entries = run_log.entries(folder=self.path)
         self.assertEqual(["领取邮件"], [entry["name"] for entry in entries])
+
+    def test_week_seconds_counts_this_game_week_only(self):
+        start = week_start_ts(time.time())
+        # Sunday night, before Monday's reset: last week.
+        run_log.add("每日跑商", run_log.DONE, started=start - 600, finished=start - 60,
+                    folder=self.path)
+        run_log.add("领取邮件", run_log.DONE, started=start + 60, finished=start + 120,
+                    folder=self.path)
+        run_log.add("镜中之战", run_log.FAIL, started=start + 3600, finished=start + 3900,
+                    folder=self.path)
+        # Wednesday
+        run_log.add("每周跑图", run_log.DONE, started=start + 2 * 86400,
+                    finished=start + 2 * 86400 + 1200, folder=self.path)
+        now = start + 3 * 86400
+        self.assertEqual(60 + 300 + 1200, run_log.week_seconds(now=now, folder=self.path))
+        self.assertEqual(360, run_log.week_seconds(now=start + 4000, folder=self.path))
+
+    def test_header_shows_the_week_from_one_minute(self):
+        self.assertNotIn("本周代跑", header_line(59))
+        self.assertTrue(header_line(3 * 3600 + 20 * 60 + 29).endswith(" · 本周代跑 3 小时 20 分"))
+        self.assertTrue(header_line(45 * 60 + 40).endswith(" · 本周代跑 46 分"))

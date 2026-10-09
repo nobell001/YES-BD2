@@ -18,6 +18,8 @@
 </p>
 
 > [!IMPORTANT]
+> **플레이어는 [Releases](https://github.com/nobell001/YES-BD2/releases/latest)에서 `yes-bd2-win32-online-setup.exe`를 내려받아 설치하세요.** `Source code`와 초록색 **Code → Download ZIP**은 소스 코드이며 설치 파일이 아닙니다.
+>
 > **브라운더스트2 PC 버전(데스크톱 앱) 전용입니다.** 모바일과 에뮬레이터는 지원하지 않습니다.
 >
 > **먼저 게임 언어를 중국어 간체(简体中文)로 바꿔 주세요.** 도구는 게임 화면의 글자를 읽어서 동작하기 때문에 지금은 중국어 간체만 읽을 수 있습니다. **다른 언어도 곧 지원합니다.**

@@ -1140,3 +1140,162 @@ class OnlyIncompleteFlagTest(unittest.TestCase):
     def test_children_learn_whether_to_skip_their_finished_parts(self):
         self.assertEqual([True], self._run(RUN_MODE_INCOMPLETE))
         self.assertEqual([False], self._run(RUN_MODE_ALL))
+
+
+class CrashRestartTest(unittest.TestCase):
+    """The game closed by itself (闪退) in 一键日常: open it again, log in, run
+    what is left (Leo 2026-10-09)."""
+
+    def setUp(self):
+        self.game = {"running": True}
+        patcher = mock.patch(
+            "src.utils.game_process.game_running", side_effect=lambda: self.game["running"]
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        opener = mock.patch.object(DailyBatchTask, "_open_game")
+        self.open_game = opener.start()
+        self.addCleanup(opener.stop)
+        self.schedule = mock.Mock()
+        self.schedule.is_due.return_value = True
+        store = mock.patch("src.tasks.scheduler.default_store", return_value=self.schedule)
+        store.start()
+        self.addCleanup(store.stop)
+
+    def _batch(self, crash_in_run=True, crash_result=False):
+        from src.tasks.trigger.AutoLoginTask import AutoLoginTask
+
+        class First:
+            pass
+
+        class Crash:
+            pass
+
+        class Later:
+            pass
+
+        calls = []
+        game = self.game
+
+        class Crashing(_ChildTask):
+            def run(self):
+                calls.append((self.name, self.config.get("启用")))
+                if not game.get("crashed"):  # closes once
+                    game["crashed"] = True
+                    game["running"] = False
+                    return crash_result
+                return True
+
+        login = SimpleNamespace(_enabled=False, _finished=True)
+        login._reset_login_state = lambda _action: setattr(login, "_finished", False)
+        children = {
+            First: _ChildTask("first", calls),
+            Crash: Crashing("crash", calls) if crash_in_run else _ChildTask("crash", calls),
+            Later: _ChildTask("later", calls),
+            AutoLoginTask: login,
+        }
+        specs = (
+            DailyBatchChild("第一项", First),
+            DailyBatchChild("闪退项", Crash),
+            DailyBatchChild("后续项", Later),
+        )
+        task, _resets = DailyBatchTaskTest.make_task(
+            self,
+            children,
+            specs,
+            {"启用": True, "第一项": True, "闪退项": True, "后续项": True, "失败后继续": True},
+        )
+        return task, calls, login
+
+    def test_crash_reopens_the_game_and_runs_what_is_left_after_login(self):
+        task, calls, login = self._batch()
+
+        self.assertFalse(DailyBatchTask.run(task))
+
+        self.assertEqual([("first", True), ("crash", True)], calls)
+        self.open_game.assert_called_once()
+        self.assertTrue(login._enabled)
+        self.assertFalse(login._finished)
+        self.assertTrue(task._start_after_login)
+        self.assertEqual(1, task._crash_restarts)
+        # The mode the player picked carries on (here 跑勾选的 / all).
+        self.assertEqual(RUN_MODE_ALL, task._take_run_mode(None))
+        self.assertIn("闪退", task.info["状态"])
+        self.assertEqual(run_report.ENDED_ABORTED, task._report_ended)
+        # Not the child's fault: no failure wait, so the run after the login
+        # does it again; nor for the children cut off.
+        failed_waits = [
+            c for c in self.schedule.delay_after_run.call_args_list if c.kwargs.get("ok") is False
+        ]
+        self.assertEqual([], failed_waits)
+
+    def test_the_run_after_the_restart_goes_on_from_where_it_was(self):
+        # Live 2026-10-10: the run after the restart was 跑没跑完的 and skipped
+        # every ticked item done earlier today ("已执行 0 项").
+        task, calls, login = self._batch()
+        DailyBatchTask.run(task, RUN_MODE_ALL)
+        self.game["running"] = True
+        login._finished = True  # logged in again
+        calls.clear()
+
+        DailyBatchTask.run(task)
+
+        self.assertEqual([("crash", True), ("later", True)], calls)
+        self.assertEqual(run_report.ENDED_DONE, task._report_ended)
+
+    def test_a_left_items_run_stays_left_items_after_the_restart(self):
+        task, _calls, _login = self._batch()
+
+        DailyBatchTask.run(task, RUN_MODE_INCOMPLETE)
+
+        self.assertEqual(RUN_MODE_INCOMPLETE, task._take_run_mode(None))
+
+    def test_a_new_start_by_the_player_runs_everything_again(self):
+        task, calls, login = self._batch()
+        DailyBatchTask.run(task, RUN_MODE_ALL)
+        self.game["running"] = True
+        login._finished = True  # logged in again
+        task._resuming_after_crash = False
+        calls.clear()
+
+        DailyBatchTask.run(task, RUN_MODE_ALL)
+
+        self.assertEqual(("first", True), calls[0])
+
+    def test_closed_between_children_is_a_crash_too(self):
+        task, calls, _login = self._batch(crash_result=True)
+
+        self.assertFalse(DailyBatchTask.run(task))
+
+        self.assertEqual([("first", True), ("crash", True)], calls)
+        self.open_game.assert_called_once()
+        self.assertTrue(task._start_after_login)
+
+    def test_stops_after_the_restarts_run_out(self):
+        task, calls, login = self._batch()
+        task._resuming_after_crash = True
+        task._crash_restarts = 2  # CRASH_RESTARTS_MAX
+
+        self.assertFalse(DailyBatchTask.run(task))
+
+        self.open_game.assert_not_called()
+        self.assertFalse(getattr(task, "_start_after_login", False))
+        self.assertIn("一直闪退", task.info["状态"])
+
+    def test_a_start_by_the_player_counts_again(self):
+        task, _calls, _login = self._batch()
+        task._crash_restarts = 2  # left from an earlier run
+
+        DailyBatchTask.run(task)
+
+        self.open_game.assert_called_once()
+        self.assertEqual(1, task._crash_restarts)
+
+    def test_game_not_open_at_the_start_is_no_crash(self):
+        for running in (False, None):  # closed, or cannot tell
+            with self.subTest(running=running):
+                self.game["running"] = running
+                task, calls, _login = self._batch(crash_in_run=False)
+                self.assertTrue(DailyBatchTask.run(task))
+                self.open_game.assert_not_called()
+                self.assertEqual(3, len(calls))

@@ -349,11 +349,20 @@ class Sidebar(QWidget):
         if map_running:
             self.items["map"].set_badge("", "run")
         elif self._map_badge:
+            from src.utils import accounts
+
+            if self._map_badge_account != accounts.current_id():
+                # Another account was picked: its own 跑图 count, not the last one's.
+                self._refresh_map_now()
             self.items["map"].set_badge(*self._map_badge)
 
     _map_badge: tuple[str, str] | None = None
+    _map_badge_account = ""
 
     def _refresh_map_now(self) -> None:
+        from src.utils import accounts
+
+        self._map_badge_account = accounts.current_id()
         progress = data.map_progress()
         if progress is None or not progress.cards:
             self._map_badge = ("", "")

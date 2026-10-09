@@ -8,6 +8,7 @@ from typing import Callable
 
 from src.tasks.map_trade.models import COLLECTABLE_CARDS
 from src.tasks.map_trade.progress import UTC_PLUS_8, weekly_cycle_key
+from src.utils import accounts
 
 COLLECTION_VISUAL_AUDIT_SCHEMA_VERSION = 1
 DEFAULT_COLLECTION_VISUAL_AUDIT_PATH = Path("configs") / "map_collection_visual_status.json"
@@ -22,9 +23,11 @@ class CollectionVisualAuditStore:
 
     def __init__(
         self,
-        path: Path | str = DEFAULT_COLLECTION_VISUAL_AUDIT_PATH,
+        path: Path | str | None = None,
         now_provider: Callable[[], datetime] | None = None,
     ) -> None:
+        if path is None:
+            path = accounts.scoped(DEFAULT_COLLECTION_VISUAL_AUDIT_PATH)
         self.path = Path(path)
         self.now_provider = now_provider or (lambda: datetime.now(UTC_PLUS_8))
         self.state: dict | None = None

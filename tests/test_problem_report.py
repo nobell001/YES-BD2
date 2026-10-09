@@ -121,6 +121,67 @@ class RecordTest(unittest.TestCase):
         self.assertEqual("一键完成日常", record["label"])
         self.assertEqual("烂装强化分解", record["problem"]["task"])
 
+    def test_info_set_lines_stay_out(self):
+        # YES-BD2 issue #5: the lines of going home after the failure were all
+        # "info_set ..." and the failure itself was lost.
+        task = Task()
+        with problem_report.run_scope(task) as scope:
+            self.log.warning("MapCollectionTask:跑图：地图采集失败，停止后续阶段。")
+            for key in ("主页亮度p95 255", "完成 -", "失败 地图采集", "状态 跑图部分流程未完成。"):
+                self.log.info(f"MapCollectionTask:info_set {key}")
+            problem_report.note_problem(task, "fail")
+            scope.result = False
+        [record] = self.saved()
+        self.assertEqual(
+            ["跑图：地图采集失败，停止后续阶段。"],
+            [line["text"] for line in record["problem"]["logs"]],
+        )
+
+    def test_a_map_phase_failure_is_kept_before_going_home(self):
+        from src.tasks.map_trade.models import NavigationResult, ScreenState
+        from src.tasks.MapTradeTask import MapAutomationTaskBase
+
+        class MapTask(Task):
+            task_log_name = "跑图"
+            diagnostic_prefix = "map_collection"
+            _run_phases = MapAutomationTaskBase._run_phases
+            _note_phase_problem = MapAutomationTaskBase._note_phase_problem
+
+            def __init__(self):
+                super().__init__()
+                self.config = {}
+
+            def info_set(self, key, value):
+                self.info[key] = value
+
+            def log_info(self, *_args, **_kwargs):
+                pass
+
+            log_warning = log_error = _save_diagnostic = log_info
+
+        task = MapTask()
+
+        def collect():
+            task.info_set("当前阶段", "第6章 布鲁斯之馆：使用技能")
+            return SimpleNamespace(
+                success=False, message="Q_sp6主城探查技能操作失败：未确认采集技能栏"
+            )
+
+        def return_home():
+            task.executor._frame = None  # the home screen comes after
+            return NavigationResult(True, ScreenState.HOME)
+
+        with problem_report.run_scope(task) as scope:
+            scope.result = task._run_phases(
+                SimpleNamespace(return_home=return_home),
+                (("地图采集", "地图采集", collect),),
+            )
+        [record] = self.saved()
+        problem = record["problem"]
+        self.assertEqual("第6章 布鲁斯之馆：使用技能", problem["stage"])
+        self.assertEqual("地图采集：Q_sp6主城探查技能操作失败：未确认采集技能栏", problem["note"])
+        self.assertTrue(Path(record["frame_path"]).is_file())
+
     def test_trigger_tasks_and_app_exit_keep_nothing(self):
         task = Task()
         with problem_report.run_scope(task, keep=False):

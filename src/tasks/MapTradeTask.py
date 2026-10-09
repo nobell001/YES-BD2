@@ -8,6 +8,7 @@ from ok.task.exceptions import FinishedException, TaskDisabledException
 from ok.util.file import get_relative_path
 from qfluentwidgets import FluentIcon
 
+from src.tasks import problem_report
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.map_trade.models import OPTIONAL_COOKING_RECIPES
 from src.tasks.map_trade.navigator import Navigator
@@ -129,6 +130,7 @@ class MapAutomationTaskBase(BaseBD2Task):
                         self.log_info(f"{name}：{message}")
                     (completed if success else failed).append(name)
                     if not success:
+                        self._note_phase_problem("fail", f"{name}：{message}" if message else name)
                         self._save_diagnostic(f"{self.diagnostic_prefix}_{name}_failed")
                         self.log_warning(
                             f"{self.task_log_name}：{name}失败，停止后续阶段。"
@@ -138,6 +140,7 @@ class MapAutomationTaskBase(BaseBD2Task):
                     raise
                 except Exception as exc:
                     failed.append(name)
+                    self._note_phase_problem("error", f"{name}：{exc}")
                     self.log_error(f"{self.task_log_name}子流程失败：{name}。", exc)
                     self._save_diagnostic(f"{self.diagnostic_prefix}_{name}_error")
                     self.log_warning(
@@ -171,6 +174,12 @@ class MapAutomationTaskBase(BaseBD2Task):
         self.info_set("状态", f"{self.task_log_name}完成。")
         self.log_completion(f"{self.task_log_name}：所有已开启流程完成。")
         return True
+
+    def _note_phase_problem(self, how: str, note: str) -> None:
+        """Keep the 问题摘要 moment before going home: the step, the reason
+        and the screen where it failed.  Noted later, the summary said
+        「停在 返回章节主页」 with the home screen (YES-BD2 issue #5)."""
+        problem_report.note_problem(self, how, note)
 
     def _recover_home_after_trade(self) -> bool:
         """Never leave the game off home: fall back to back arrows and dialogs.

@@ -38,6 +38,8 @@ RING_SIZE = 600
 # Lines of a record (repeats folded into one).
 LOG_LINES = 6
 FRAME_WIDTH = 1920
+# ok-script's own line for every task.info_set call.
+INFO_SET_PREFIX = "info_set "
 
 # How a run ended, the words of run_report.
 DONE = "done"
@@ -45,6 +47,8 @@ FAILED = "failed"
 ABORTED = "aborted"
 STOPPED = "stopped"
 ERROR = "error"
+# The 开跑前检查 found the game set to 繁中: nothing was pressed (setup_check).
+SETUP = "setup"
 PROBLEM_ENDS = (FAILED, ABORTED, STOPPED, ERROR)
 
 ENDED_TEXT = {
@@ -53,6 +57,7 @@ ENDED_TEXT = {
     ABORTED: "中途停了",
     STOPPED: "手动停止",
     ERROR: "出错停了",
+    SETUP: "没有开始跑",
 }
 
 _lock = threading.RLock()
@@ -75,6 +80,11 @@ class _Ring(logging.Handler):
         try:
             message = record.getMessage()
         except Exception:
+            return
+        # ok-script logs every info_set as a line; a run going home after a
+        # failure wrote enough of them that the summary kept only those and
+        # lost the failure itself (YES-BD2 issue #5, 2026-10-09).
+        if _clean(message).startswith(INFO_SET_PREFIX):
             return
         self.lines.append((record.created, record.levelno, record.thread, message))
 
@@ -442,6 +452,8 @@ class run_scope:
         self.outer = False
         # What the task's run returned (set by the caller), for a single run.
         self.result = None
+        # How it ended when the caller knows better than the result (SETUP).
+        self.ended = None
 
     def __enter__(self):
         self.outer = depth() == 0 and self.keep and _ring is not None
@@ -465,7 +477,7 @@ class run_scope:
         elif kind is not None:
             end(self.task, ERROR, str(error or ""))
         else:
-            end(self.task, None, ok=self.result is not False)
+            end(self.task, self.ended, ok=self.result is not False)
         return False
 
 

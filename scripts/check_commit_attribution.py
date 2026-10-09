@@ -8,6 +8,10 @@ from pathlib import Path
 
 PROHIBITED_IDENTITY = re.compile(r"(?:\bclaude\b|@anthropic\.com\b)", re.IGNORECASE)
 COAUTHOR_TRAILER = re.compile(r"^\s*co-authored-by:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+# bd2-auto-dev already holds commits from before this check was enforced, and
+# its history is never rewritten.  Commits reachable from this one are left
+# alone; everything newer is still checked.
+CHECKED_AFTER = "a9b3f104dae154b02cf8175971965d589ee440c3"
 
 
 def _git(*args: str) -> str:
@@ -44,9 +48,23 @@ def _check_pending_commit(message_file: Path) -> list[str]:
     return violations
 
 
+def _known_commit(revision: str) -> bool:
+    return (
+        subprocess.run(
+            ["git", "cat-file", "-e", f"{revision}^{{commit}}"],
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
 def _check_history(revision: str) -> list[str]:
     violations: list[str] = []
-    for commit in _git("rev-list", revision).splitlines():
+    rev_list = ["rev-list", revision]
+    if _known_commit(CHECKED_AFTER):
+        rev_list.append(f"^{CHECKED_AFTER}")
+    for commit in _git(*rev_list).splitlines():
         record = _git(
             "show",
             "-s",
@@ -72,8 +90,9 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.message_file is not None:
-        violations = _check_history("HEAD")
-        violations.extend(_check_pending_commit(args.message_file))
+        # The commit-msg hook judges the commit being made; history is
+        # checked by CI (no --message-file).
+        violations = _check_pending_commit(args.message_file)
     else:
         violations = _check_history(args.revision)
 

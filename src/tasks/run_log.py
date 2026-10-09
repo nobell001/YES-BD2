@@ -16,6 +16,7 @@ import time
 from ok import Logger
 from ok.util.file import get_relative_path, read_json_file, write_json_file
 
+from src.utils import accounts
 from src.utils.game_day import DAILY_REFRESH_HOUR, GAME_TZ
 
 logger = Logger.get_logger(__name__)
@@ -38,7 +39,8 @@ _lock = threading.RLock()
 def _folder(folder: str | None) -> str:
     """The configs folder; callers pass the folder of their own file so a
     test writing a temporary report never touches the real log."""
-    return folder or os.path.dirname(get_relative_path(*LOG_FILE))
+    # Each game account has its own day (GitHub issue #4).
+    return folder or os.path.dirname(accounts.scoped(get_relative_path(*LOG_FILE)))
 
 
 def _log_path(folder: str | None) -> str:
@@ -122,6 +124,29 @@ def entries(day: str | None = None, folder: str | None = None) -> list[dict]:
         (entry for entry in found if isinstance(entry, dict)),
         key=lambda entry: entry.get("finished") or 0,
     )
+
+
+def week_seconds(now: float | None = None, folder: str | None = None) -> float:
+    """How long tasks ran this game week (since Monday's reset), for 今日报表.
+
+    Leo 2026-10-09: the time the tool really spent, not an estimate of what
+    playing by hand would take.  KEEP_DAYS covers the whole week.
+    """
+    from src.tasks.run_history import week_start_ts
+
+    now = time.time() if now is None else now
+    start = week_start_ts(now)
+    total = 0.0
+    for offset in range(7):
+        moment = start + offset * 86400
+        if moment > now:
+            break
+        for entry in entries(day_key(moment), folder):
+            try:
+                total += max(0.0, float(entry.get("duration") or 0))
+            except (TypeError, ValueError):
+                continue
+    return total
 
 
 def _backfill(key: str, folder: str | None) -> list[dict]:

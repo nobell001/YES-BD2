@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from copy import deepcopy
 
+from src.tasks.map_trade import account_check
 from src.tasks.map_trade.action_icons import ActionIconDetector
 from src.tasks.map_trade.card_status import CollectionCardSelectionOutcome
 from src.tasks.map_trade.collector_constants import (
@@ -94,6 +95,14 @@ class Collector(SkillExecutionMixin):
         state = self.progress.load()
         if state.depleted_today or state.daily_submaps >= self.progress.limit_of("吸收"):
             return CollectionResult(True, depleted=True, message="今日采集技能额度已用尽")
+        # GitHub issue #4: records that call cards finished while the game
+        # shows them untouched belong to another account; stop, press nothing.
+        if account_check.records_from_other_account(
+            self.navigator, state, chapter_filter(self.task.config.get("跑图章节", ""))
+        ):
+            account_check.raise_flag(state.weekly_key)
+            self.task.log_warning(f"地图采集：{account_check.MESSAGE}")
+            return CollectionResult(False, message=account_check.MESSAGE)
         if state.weekly_collection_complete:
             return CollectionResult(
                 True,

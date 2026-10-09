@@ -23,12 +23,14 @@ from src.ui.shell.widgets import (
     Text,
     clear_layout,
     fmt_clock,
+    fmt_duration,
     grid_container,
     hbox,
     t,
     tf,
     vbox,
 )
+from src.utils import accounts
 
 STATE_TEXT = {run_log.DONE: "完成", run_log.FAIL: "失败", run_log.SKIP: "跳过"}
 PICTURE_KINDS = (("gacha", "抽到的", "白嫖抽抽乐"), ("mail", "邮件领到的", "领取邮件"))
@@ -45,6 +47,20 @@ def run_line(entry: dict) -> str:
     if entry.get("duration") is not None:
         parts.append(fmt_clock(entry["duration"]))
     return " · ".join(part for part in parts if part)
+
+
+def header_line(week_seconds: float) -> str:
+    """'10月9日 周五 · 游戏日从 08:00 开始 · 本周代跑 3 小时 20 分'.
+
+    Leo 2026-10-09: the week's run time stays small, in this line only.
+    """
+    line = tf(
+        "{date} · 游戏日从 {time} 开始", date=data.today_title(), time=data.daily_reset_clock()
+    )
+    if week_seconds >= 60:
+        week = tf("本周代跑 {time}", time=fmt_duration(round(week_seconds / 60) * 60))
+        line = f"{line} · {week}"
+    return line
 
 
 def task_state(runs: list[dict]) -> str:
@@ -100,6 +116,7 @@ class ReportPage(Page):
     def __init__(self):
         super().__init__("shellReport", "今日报表")
         self._shown_key = None
+        self._week_seconds = 0.0
 
         boxes, grid = grid_container(120, 12, 4, 78)
         self.stat_tasks = self._stat(grid, "跑过的项目", "")
@@ -160,13 +177,16 @@ class ReportPage(Page):
         day = run_log.day_key()
         entries = run_log.entries(day)
         pictures = today_pictures(day)
-        self.set_sub(tf("{date} · 游戏日从 {time} 开始", date=data.today_title(), time=data.daily_reset_clock()))
         key = (
+            accounts.current_id(),
             day,
             len(entries),
             entries[-1].get("finished") if entries else None,
             tuple((kind, len(paths)) for kind, paths in sorted(pictures.items())),
         )
+        if key != self._shown_key:
+            self._week_seconds = run_log.week_seconds()
+        self.set_sub(header_line(self._week_seconds))
         if key == self._shown_key:
             return
         self._shown_key = key

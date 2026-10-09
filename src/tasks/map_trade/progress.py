@@ -19,8 +19,10 @@ from src.tasks.map_trade.models import (
     CollectionMapRole,
     plausible_limit,
 )
+from src.utils import accounts
 from src.utils.game_day import DAILY_REFRESH_HOUR
 
+DEFAULT_PROGRESS_PATH = Path("configs") / "map_trade_progress.json"
 UTC_PLUS_8 = timezone(timedelta(hours=8), name="UTC+8")
 # Version 3 introduced role-specific weekly cards.  Version 4 added the
 # daily/card/role/action ledger.  Version 5 records cooking per recipe so a
@@ -119,10 +121,11 @@ class ProgressState:
 class ProgressStore:
     def __init__(
         self,
-        path: Path | str = Path("configs") / "map_trade_progress.json",
+        path: Path | str | None = None,
         now_provider: Callable[[], datetime] | None = None,
     ) -> None:
-        self.path = Path(path)
+        # Each game account has its own week (GitHub issue #4).
+        self.path = Path(path) if path is not None else Path(accounts.scoped(DEFAULT_PROGRESS_PATH))
         self.now_provider = now_provider or (lambda: datetime.now(UTC_PLUS_8))
         self.state: ProgressState | None = None
         # A limit read once that differs from today's: (limit, times read).
@@ -1375,6 +1378,29 @@ class ProgressStore:
         if card_id in state.verified_cards:
             state.verified_cards.remove(card_id)
         self.save()
+
+    def forget_collection_week(self) -> Path | None:
+        """Drop this week's 跑图 records after the player said they belong to
+        another game account (GitHub issue #4): the cards, the day's counts and
+        action records.  A copy of the file is kept first; 跑商 stays.
+        Returns the copy's path."""
+        backup = None
+        if self.path.exists():
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            backup = self.path.with_suffix(f".before-account-reset-{stamp}.json")
+            shutil.copy2(self.path, backup)
+        state = self.load()
+        self._archive_daily_actions()
+        state.cards = {}
+        state.verified_cards = []
+        state.daily_submaps = 0
+        state.daily_summons = 0
+        state.daily_suppressions = 0
+        state.depleted_today = False
+        state.observed_counts = {}
+        state.observed_limits = {}
+        self.save()
+        return backup
 
     def mark_depleted_today(self) -> None:
         self._require_state().depleted_today = True

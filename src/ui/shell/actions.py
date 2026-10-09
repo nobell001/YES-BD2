@@ -136,23 +136,10 @@ def bring_game_to_front() -> bool:
 
 def game_running() -> bool:
     """BrownDust II runs on this Windows session (not only on a 桌面分身)."""
-    import ctypes
-    import os
+    from src.utils.game_process import game_running as running
 
-    try:
-        import psutil
-    except ImportError:
-        return True  # cannot tell: start as before
-    own = ctypes.c_ulong(0)
-    ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(own))
-    for process in psutil.process_iter(["pid", "name"]):
-        if (process.info.get("name") or "").lower() != "browndust ii.exe":
-            continue
-        session = ctypes.c_ulong(0)
-        if ctypes.windll.kernel32.ProcessIdToSessionId(process.info["pid"], ctypes.byref(session)):
-            if session.value == own.value:
-                return True
-    return False
+    found = running()
+    return True if found is None else found  # cannot tell: start as before
 
 
 def _ask_to_open_game(window) -> bool:
@@ -185,10 +172,47 @@ def toggle_pause(task) -> None:
 
 
 def stop(task) -> None:
+    if _cancel_login_wait(task):
+        return
     if task is None:
         return
     task.disable()
     task.unpause()
+
+
+def _cancel_login_wait(task) -> bool:
+    """停止 while 一键日常 waits for the login (the tool opened the game, or
+    reopened it after 闪退): stop that run.
+
+    Live 2026-10-10: the press stopped 自动登录 instead, whose disable() saves
+    the setting off and lets the waiting batch go, so it started on the title
+    screen.  Between login checks nothing runs at all and the press did nothing.
+    """
+    waiting = [each for each in data.onetime_tasks() if getattr(each, "_start_after_login", False)]
+    if not waiting:
+        return False
+    for batch in waiting:
+        batch._start_after_login = False
+        batch._requested_run_mode_deadline = 0.0
+        batch.disable()
+    login = _login_task()
+    if login is not None and not bool(login.config.get("_enabled", False)):
+        # It logged in for this run only; the saved setting stays as it is.
+        login._enabled = False
+    if task is not None and task is not login:
+        task.disable()
+        task.unpause()
+    logger.info("stop pressed while the run waited for the login: run cancelled")
+    return True
+
+
+def _login_task():
+    try:
+        from src.tasks.trigger.AutoLoginTask import AutoLoginTask
+
+        return data.executor().get_task_by_class(AutoLoginTask)
+    except Exception:
+        return None
 
 
 def open_logs() -> None:

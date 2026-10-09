@@ -217,7 +217,12 @@ class GamePathTest(unittest.TestCase):
             QueryValueEx=query_value_ex,
         )
 
-        with patch.dict(sys.modules, {"winreg": fake_winreg}):
+        # the fake registry stands in for Windows, so run the Windows path
+        # on any machine
+        with (
+            patch.dict(sys.modules, {"winreg": fake_winreg}),
+            patch("src.game_path.os.name", "nt"),
+        ):
             values = _registry_install_values()
 
         self.assertIn(install_dir, values)

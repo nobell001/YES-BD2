@@ -390,9 +390,17 @@ class MapPage(Page):
         if task is not None:
             self.limit.set_value(str(int(task.config.get(LIMIT_KEY, 0) or 0)))
 
-        if time.time() - self._progress_at > 10 or self._progress is None:
+        from src.utils import accounts
+
+        account_id = accounts.current_id()
+        if (
+            time.time() - self._progress_at > 10
+            or self._progress is None
+            or getattr(self, "_progress_account", "") != account_id
+        ):
             self._progress = data.map_progress()
             self._progress_at = time.time()
+            self._progress_account = account_id
         progress = self._progress
         if progress is None:
             self.week_value.set_text("-")

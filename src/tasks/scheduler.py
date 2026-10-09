@@ -28,6 +28,7 @@ from ok import Logger
 from ok.util.file import get_relative_path, read_json_file, write_json_file
 
 from src.tasks.run_history import BEIJING_TZ, DAILY_REFRESH_HOUR
+from src.utils import accounts
 
 logger = Logger.get_logger(__name__)
 
@@ -244,16 +245,21 @@ class TaskScheduleStore:
 
 
 _default_store: TaskScheduleStore | None = None
+_default_store_own = True  # False while a test put its own store in
 
 
 def default_store() -> TaskScheduleStore:
+    """The current game account's store (GitHub issue #4): switching accounts
+    hands out the other account's file from the next call on."""
     global _default_store
-    if _default_store is None:
-        _default_store = TaskScheduleStore()
+    wanted = accounts.scoped(get_relative_path(*DEFAULT_FILE))
+    if _default_store is None or (_default_store_own and _default_store.path != wanted):
+        _default_store = TaskScheduleStore(wanted)
     return _default_store
 
 
 def set_default_store(store: TaskScheduleStore | None) -> None:
     """Override the process-wide store (tests); None restores lazy creation."""
-    global _default_store
+    global _default_store, _default_store_own
     _default_store = store
+    _default_store_own = store is None

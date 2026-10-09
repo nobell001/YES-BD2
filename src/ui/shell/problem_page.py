@@ -54,7 +54,7 @@ def state_of(record: dict) -> str:
     ended = record.get("ended")
     if ended == problem_report.DONE:
         return "done"
-    if ended == problem_report.STOPPED:
+    if ended in (problem_report.STOPPED, problem_report.SETUP):
         return "skip"
     return "fail"
 

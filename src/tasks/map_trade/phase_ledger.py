@@ -15,6 +15,7 @@ from typing import Callable
 
 from src.tasks.map_trade.calendar import sale_price_calendar_date
 from src.tasks.map_trade.progress import UTC_PLUS_8, daily_cycle_key
+from src.utils import accounts
 
 LEDGER_PATH = Path("configs") / "map_trade_phases.json"
 # Set by the batches in 执行剩余 mode (and so by automatic retries): only
@@ -32,10 +33,11 @@ def period_key(phase: str, now: datetime) -> str:
 class PhaseLedger:
     def __init__(
         self,
-        path: Path | str = LEDGER_PATH,
+        path: Path | str | None = None,
         now_provider: Callable[[], datetime] | None = None,
     ) -> None:
-        self.path = Path(path)
+        # One ledger per game account (GitHub issue #4).
+        self.path = Path(path) if path is not None else Path(accounts.scoped(LEDGER_PATH))
         self.now_provider = now_provider or (lambda: datetime.now(UTC_PLUS_8))
 
     def _read(self) -> dict[str, str]:

@@ -44,6 +44,7 @@ from src.tasks.GearTasks import (
     DailyRefineTask,
 )
 from src.tasks.task_vision_mixin import REFERENCE_HEIGHT, REFERENCE_WIDTH
+from src.utils import accounts
 from src.utils.colour_check import (
     check_capture_colours,
     distorted_colour_warning,
@@ -120,6 +121,15 @@ PENDING_FILE = Path("configs") / "junk_gear_pending.json"
 PENDING_MATCH_MIN = 0.85
 PENDING_SEARCH_CELLS = 16
 PENDING_MAX_AGE_SECONDS = 3 * 24 * 3600
+
+
+def _pending_file() -> Path:
+    """Each game account has its own bag (GitHub issue #4)."""
+    return Path(accounts.scoped(PENDING_FILE))
+
+
+def _sort_state_file() -> Path:
+    return Path(accounts.scoped(SORT_STATE_FILE))
 
 
 # A rarity glued to the end of a Chinese name: "冰雪红宝石R" -> "冰雪红宝石 R".
@@ -353,8 +363,8 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
             if ok:
                 icons.append(base64.b64encode(png.tobytes()).decode("ascii"))
         try:
-            PENDING_FILE.parent.mkdir(parents=True, exist_ok=True)
-            PENDING_FILE.write_text(
+            _pending_file().parent.mkdir(parents=True, exist_ok=True)
+            _pending_file().write_text(
                 json.dumps({"saved": time.time(), "icons": icons}), encoding="utf-8"
             )
             self.log_info(f"{LABEL}：{len(icons)} 件爛装这次没分解，已记下，下次接着处理。")
@@ -363,14 +373,14 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
 
     def _clear_pending(self) -> None:
         try:
-            PENDING_FILE.unlink(missing_ok=True)
+            _pending_file().unlink(missing_ok=True)
         except OSError:
             pass
 
     def _pending_cells(self, frame) -> list[tuple[int, int]]:
         """Cells showing the icons a failed run saved, or [] (all or none)."""
         try:
-            data = json.loads(PENDING_FILE.read_text(encoding="utf-8"))
+            data = json.loads(_pending_file().read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return []
         if time.time() - float(data.get("saved", 0)) > PENDING_MAX_AGE_SECONDS:
@@ -488,15 +498,16 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
     @staticmethod
     def _saved_sort() -> str | None:
         try:
-            return json.loads(SORT_STATE_FILE.read_text(encoding="utf-8")).get("original") or None
+            saved = json.loads(_sort_state_file().read_text(encoding="utf-8"))
+            return saved.get("original") or None
         except (OSError, ValueError):
             return None
 
     @staticmethod
     def _save_sort(original: str) -> None:
         try:
-            SORT_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            SORT_STATE_FILE.write_text(
+            _sort_state_file().parent.mkdir(parents=True, exist_ok=True)
+            _sort_state_file().write_text(
                 json.dumps({"original": original}, ensure_ascii=False), encoding="utf-8"
             )
         except OSError:
@@ -505,7 +516,7 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
     @staticmethod
     def _clear_saved_sort() -> None:
         try:
-            SORT_STATE_FILE.unlink()
+            _sort_state_file().unlink()
         except OSError:
             pass
 

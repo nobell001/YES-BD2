@@ -10,7 +10,7 @@ from ok import BaseTask
 from ok.task.exceptions import FinishedException, TaskDisabledException
 from qfluentwidgets import FluentIcon
 
-from src.tasks import problem_report, run_report, weekly_ticks
+from src.tasks import problem_report, run_report, setup_check, weekly_ticks
 from src.tasks.CraftGearTask import CraftGearTask
 from src.tasks.DailyTask import DailyTask
 from src.tasks.DoomBookTask import DoomBookTask
@@ -32,7 +32,7 @@ from src.tasks.task_notifications import (
     suppress_task_completion_notifications,
 )
 from src.tasks.WeeklyTasks import ArcadeBrowseTask, HomePopularityTask
-from src.utils import game_size
+from src.utils import game_process, game_size, keep_awake
 
 RUN_MODE_ALL = "all"
 RUN_MODE_INCOMPLETE = "incomplete"
@@ -42,6 +42,10 @@ _VALID_RUN_MODES = frozenset({RUN_MODE_ALL, RUN_MODE_INCOMPLETE})
 REQUESTED_RUN_MODE_VALIDITY_SECONDS = 600.0
 # 「完成日常后自动关机」的关机倒计时秒数：留出执行 shutdown /a 取消的窗口。
 SHUTDOWN_COUNTDOWN_SECONDS = 60
+# 游戏闪退后最多重开几次（同一次开始的一键日常里）；再闪退就停下。
+CRASH_RESTARTS_MAX = 2
+CRASH_NOTE = "游戏闪退了"
+CRASH_DONE_NOTE = "闪退前已经做完"
 
 
 def _schedule_system_shutdown(seconds: int) -> bool:
@@ -326,6 +330,12 @@ class ChildBatchTask(BaseTask):
             self.log_info(f"{self.batch_label}：自动登录未完成，待登录完成后自动开始。")
             return True
         run_mode = self._take_run_mode(run_mode)
+        if not getattr(self, "_resuming_after_crash", False):
+            # A start by the player: the count of 闪退 restarts begins again.
+            self._crash_restarts = 0
+            self._done_before_crash = set()
+        self._run_mode = run_mode
+        self._resuming_after_crash = False
         if not bool(self.config.get("启用", True)):
             self.info_set("状态", f"{self.batch_label}已禁用。")
             return True
@@ -334,12 +344,15 @@ class ChildBatchTask(BaseTask):
         # notice still within its gap.
         game_size.fix_or_warn(self)
         # The 问题摘要 record of the whole batch; its children's problems go in it.
-        with problem_report.run_scope(self):
+        # ok-script's display request is given back however the run ends.
+        with problem_report.run_scope(self), keep_awake.released_after(True):
             # The 跑完的结算 page reads this report; it is saved however the run
             # ends (Stop and errors included).
             self._begin_report(run_mode)
             self._report_ended = run_report.ENDED_ERROR
             try:
+                if self._setup_stops():
+                    return False
                 return self._run_children(run_mode)
             except (TaskDisabledException, FinishedException):
                 self._report_ended = run_report.ENDED_STOPPED
@@ -347,6 +360,21 @@ class ChildBatchTask(BaseTask):
                 raise
             finally:
                 run_report.finish(self._report_ended)
+
+    def _setup_stops(self) -> bool:
+        """One look at the game's settings before the first item (差異化點子 5).
+
+        A reminder only (Leo 2026-10-09 「5提醒就好了」); a game set to 繁中
+        cannot be read at all, so then nothing starts.
+        """
+        self.info_set("状态", f"{self.batch_label}：开跑前看一眼游戏设定。")
+        notice = setup_check.look(self)
+        if not notice:
+            return False
+        run_report.set_notice(notice)
+        self.info_set("状态", f"{self.batch_label}中止：游戏语言要改成简体中文，没有开始跑。")
+        self._report_ended = run_report.ENDED_SETUP
+        return True
 
     def _record_stopped_progress(self) -> None:
         """Stop pressed: keep the children done so far so 继续 skips them."""
@@ -407,6 +435,9 @@ class ChildBatchTask(BaseTask):
         schedule_store = task_scheduler.default_store()
 
         completed: list[str] = []
+        # Read by _restart_after_crash: what the run after the restart skips.
+        self._completed_keys = completed
+        done_before_crash = set(getattr(self, "_done_before_crash", None) or ())
         # 运行前就已完成而跳过的子任务：关机判定不能依赖运行结束后的
         # is_completed_today 重算，否则运行跨过 08:00（UTC+8）日界后
         # 这些记录不再算「今日」，会漏关机。
@@ -419,6 +450,10 @@ class ChildBatchTask(BaseTask):
         self._child_finished: dict[str, float] = {}
         self._child_started: dict[str, float] = {}
         self._title_screen_hit = False
+        self._game_crashed = False
+        # 闪退 is only told when the game ran at the start: a game that was not
+        # open (or a PC where this cannot be told) never counts as one.
+        self._game_seen = game_process.game_running() is True
 
         def publish_outcome() -> None:
             # Live per-child progress feeds the run panel's segments and
@@ -443,7 +478,7 @@ class ChildBatchTask(BaseTask):
                     run_report.row_ended(child.config_key, run_report.SKIP, self._stopped_note())
                 if (
                     stop_remaining
-                    and not self._title_screen_hit
+                    and not self._resume_after_login_set()
                     and bool(self.config.get(child.config_key, True))
                 ):
                     # Otherwise the auto-scheduler relaunches the aborted
@@ -460,6 +495,16 @@ class ChildBatchTask(BaseTask):
                 run_report.row_ended(child.config_key, run_report.FAIL, "找不到这个任务")
                 stop_remaining = True
                 self.log_error(f"{self.batch_label}：未找到子任务 {child.config_key}。")
+                continue
+
+            if child.config_key in done_before_crash:
+                # Done before the game closed: the run after the restart goes
+                # on from where it was, in the mode the player picked.
+                skipped.append(child.config_key)
+                pre_completed.append(child.config_key)
+                publish_outcome()
+                run_report.row_ended(child.config_key, run_report.SKIP, CRASH_DONE_NOTE)
+                self.log_info(f"{self.batch_label}：{child.config_key} 闪退前已做完，跳过。")
                 continue
 
             if history is not None and self._completed_this_period(history, str(task.name)):
@@ -483,6 +528,15 @@ class ChildBatchTask(BaseTask):
                     f"{self.batch_label}：{child.config_key} 调度未到期"
                     f"（约 {remaining:.0f} 分钟后可执行），跳过。"
                 )
+                continue
+
+            if self._game_closed():
+                # Closed after the last child ended: nothing to run it on.
+                stop_remaining = True
+                self._restart_after_crash()
+                skipped.append(child.config_key)
+                publish_outcome()
+                run_report.row_ended(child.config_key, run_report.SKIP, self._stopped_note())
                 continue
 
             self.info_set("当前子任务", child.config_key)
@@ -521,12 +575,15 @@ class ChildBatchTask(BaseTask):
                     else:
                         failed.append(child.config_key)
                         publish_outcome()
+                        crashed = self._game_closed()
                         run_report.row_ended(
-                            child.config_key, run_report.FAIL, failure_note(task)
+                            child.config_key,
+                            run_report.FAIL,
+                            CRASH_NOTE if crashed else failure_note(task),
                         )
-                        self._delay_child_schedule(schedule_store, str(task.name), False)
-                        stop_remaining = not self._continue_after_failure(task, child)
-                        self._note_recovery(child, stop_remaining)
+                        stop_remaining = self._after_child_failed(
+                            task, child, schedule_store, crashed
+                        )
             except (TaskDisabledException, FinishedException):
                 # Stop pressed (or the app finishing): never treat it as a
                 # child failure, or 失败后继续 would recover and carry on.
@@ -536,17 +593,22 @@ class ChildBatchTask(BaseTask):
                 self._child_finished[child.config_key] = time.time()
                 failed.append(child.config_key)
                 publish_outcome()
-                run_report.row_ended(child.config_key, run_report.FAIL, "程序出错")
-                self._delay_child_schedule(schedule_store, str(task.name), False)
+                crashed = self._game_closed()
+                run_report.row_ended(
+                    child.config_key, run_report.FAIL, CRASH_NOTE if crashed else "程序出错"
+                )
                 self.log_error(f"{self.batch_label}：{child.config_key} 异常。", exc)
-                stop_remaining = not self._continue_after_failure(task, child)
-                self._note_recovery(child, stop_remaining)
+                stop_remaining = self._after_child_failed(task, child, schedule_store, crashed)
             finally:
                 task.config = original_config
                 self.executor.reset_scene(check_enabled=False)
 
         self.info_set("当前子任务", "-")
         publish_outcome()
+        if self._game_crashed:
+            # The status says whether the game is being opened again.
+            self._report_ended = run_report.ENDED_ABORTED
+            return False
         if failed:
             # 中止 only when the batch really stopped early; with 失败后继续 it
             # ran to the end, and "中止" made users think it broke (2026-09-27).
@@ -574,6 +636,10 @@ class ChildBatchTask(BaseTask):
         return history.is_completed_today(task_name)
 
     def _stopped_note(self) -> str:
+        if self._game_crashed:
+            if self._resume_after_login_set():
+                return "游戏闪退了，重新打开后再跑"
+            return "游戏一直闪退，先停下来"
         if self._title_screen_hit:
             return "游戏回到了标题画面，登录后再跑"
         if not bool(self.config.get("失败后继续", True)):
@@ -581,7 +647,12 @@ class ChildBatchTask(BaseTask):
         return "前面有一项失败且回不到主页，没有跑"
 
     def _note_recovery(self, child: DailyBatchChild, stopped: bool) -> None:
-        if self._title_screen_hit:
+        if self._game_crashed:
+            if self._resume_after_login_set():
+                run_report.add_note(child.config_key, "重新打开游戏，登录后接着跑")
+            else:
+                run_report.add_note(child.config_key, "游戏一直闪退，先停下来")
+        elif self._title_screen_hit:
             run_report.add_note(child.config_key, "游戏回到了标题画面")
         elif stopped and bool(self.config.get("失败后继续", True)):
             run_report.add_note(child.config_key, "回不到主页，后面的停了")
@@ -616,6 +687,95 @@ class ChildBatchTask(BaseTask):
 
         if not getattr(self, "_enabled", True):
             raise TaskDisabledException()
+
+    def _resume_after_login_set(self) -> bool:
+        """This run ends early and runs again (what is left) after a login."""
+        return bool(getattr(self, "_start_after_login", False)) and (
+            self._title_screen_hit or self._game_crashed
+        )
+
+    def _after_child_failed(self, task, child: DailyBatchChild, schedule_store, crashed) -> bool:
+        """After a child failed: True when the children after it must stop."""
+        if crashed:
+            # Not the child's fault: no failure wait, so the run after the
+            # restart does it again.
+            stopped = True
+            self._restart_after_crash()
+        else:
+            self._delay_child_schedule(schedule_store, str(task.name), False)
+            stopped = not self._continue_after_failure(task, child)
+        self._note_recovery(child, stopped)
+        return stopped
+
+    def _game_closed(self) -> bool:
+        """The game ran when this run started and is gone now (闪退)."""
+        if self._game_crashed or not getattr(self, "_game_seen", False):
+            return self._game_crashed
+        return game_process.game_running() is False
+
+    def _restart_after_crash(self) -> bool:
+        """The game closed by itself (Leo 2026-10-09): open it again, log in,
+        then go on from where it was.  True when the restart is on its way.
+
+        At most ``CRASH_RESTARTS_MAX`` times for one start by the player; the
+        run after the login comes back here if the game closes again.
+        """
+        self._game_crashed = True
+        restarts = int(getattr(self, "_crash_restarts", 0) or 0)
+        if restarts >= CRASH_RESTARTS_MAX:
+            self.info_set("状态", "游戏一直闪退，先停下来。")
+            self.log_warning(
+                f"{self.batch_label}：游戏又闪退了（已重新打开 {restarts} 次），先停下来。"
+            )
+            return False
+        if not self._arm_login_after_crash():
+            self.log_warning(f"{self.batch_label}：游戏闪退了，找不到自动登录，没有重新打开。")
+            return False
+        self._crash_restarts = restarts + 1
+        self._resuming_after_crash = True
+        self._start_after_login = True
+        # The mode the player picked, not 跑没跑完的: a 跑勾选的 run must not
+        # skip ticked items done earlier today (live 2026-10-10).  Only what
+        # this run finished before the game closed is skipped.
+        self._done_before_crash = set(getattr(self, "_done_before_crash", None) or ()) | set(
+            getattr(self, "_completed_keys", None) or ()
+        )
+        self.request_run_mode(getattr(self, "_run_mode", None) or RUN_MODE_INCOMPLETE)
+        self.info_set("状态", "游戏闪退了，重新打开游戏，登录后接着跑没做完的。")
+        self.log_warning(
+            f"{self.batch_label}：游戏闪退了，重新打开游戏，登录后接着跑没做完的"
+            f"（第 {self._crash_restarts} 次）。"
+        )
+        self._open_game()
+        return True
+
+    def _arm_login_after_crash(self) -> bool:
+        """Log in after the restart, even with 自动登录游戏 off: for this
+        run only, as a run on the 桌面分身 does (the setting is not saved)."""
+        try:
+            from src.tasks.trigger.AutoLoginTask import AutoLoginTask
+        except ImportError:  # pragma: no cover
+            return False
+        login = self.executor.get_task_by_class(AutoLoginTask)
+        if login is None:
+            return False
+        login._enabled = True
+        reset = getattr(login, "_reset_login_state", None)
+        if callable(reset):
+            reset("游戏闪退后重新打开，自动登录。")
+        else:
+            login._finished = False
+        return True
+
+    def _open_game(self) -> None:
+        """Start the game the way a start does when it is closed; the
+        auto-login then logs in and lets this batch run again."""
+        try:
+            from ok import og
+
+            og.app.start_controller.start(None)
+        except Exception as exc:
+            self.log_error(f"{self.batch_label}：重新打开游戏失败。", exc)
 
     def _continue_after_failure(self, task, child: DailyBatchChild) -> bool:
         """Return True when the batch may go on after ``child`` failed."""
