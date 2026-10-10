@@ -150,6 +150,10 @@ SALE_MARKER_MIN_MARGIN = 0.03
 # 单字母噪声框（如卡带缩略图旁的杂散"C"）不得命中英文别名而被当成商品
 # 仍在售；正向匹配（框包含完整商品名）不受此限制。
 SALE_NAME_FRAGMENT_MIN_CHARS = 2
+# A 价目表 name one OCR character off (4+ characters: ratio 0.75) still names
+# the planned item; 3-character names only match by a held fragment.
+OWNED_NAME_FUZZY_MIN_CHARS = 4
+OWNED_NAME_FUZZY_RATIO = 0.75
 # The item list right of the cartridge column.  The shop keeper's line above
 # it can name the day's item ("这里好像正在收购黄金罗勒", live 2026-09-26),
 # which must not count as the item itself.

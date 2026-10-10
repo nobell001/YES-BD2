@@ -150,17 +150,20 @@ _IDS = {PAUSE: 0xB201, STOP: 0xB202}
 # A key another program already registered (often a second copy of the tool)
 # is read straight from the keyboard instead, and registering is tried again
 # now and then (Leo 2026-10-10: F9/F10 did nothing mid-run after the log said
-# 「taken by another program」).
-POLL_MS = 100
+# 「taken by another program」).  Polling every 100 ms missed quick taps on the
+# 4K PC (60 ms taps: 4 of 10), so it reads every 25 ms and also takes the
+# 「pressed since the last read」 bit, which keeps a tap shorter than that.
+POLL_MS = 25
 RETRY_MS = 5000
 
 
 class KeyWatch:
     """Presses of keys the tool could not register, read by polling.
 
-    ``tick(is_down, now_ms)`` gets the actions whose key went down since the
+    ``tick(read, now_ms)`` gets the actions whose key went down since the
     last tick (one per press, holding the key does not repeat) and whether it
-    is time to try registering them again.
+    is time to try registering them again.  ``read(code)`` is
+    ``(down now, pressed since the last read)``.
     """
 
     def __init__(self):
@@ -177,13 +180,18 @@ class KeyWatch:
         self.keys.pop(action, None)
         self._down.pop(action, None)
 
-    def tick(self, is_down: Callable[[int], bool], now_ms: float) -> tuple[list[str], bool]:
+    def tick(
+        self, read: Callable[[int], tuple[bool, bool]], now_ms: float
+    ) -> tuple[list[str], bool]:
         pressed = []
         for action, code in self.keys.items():
-            down = bool(is_down(code))
-            if down and not self._down.get(action):
+            down, tapped = read(code)
+            # Up before and now down, or a whole tap between two reads.  A key
+            # that was already down is the same press (its auto-repeat also
+            # sets the tapped bit).
+            if not self._down.get(action) and (down or tapped):
                 pressed.append(action)
-            self._down[action] = down
+            self._down[action] = bool(down)
         retry = bool(self.keys) and now_ms - self._last_retry >= RETRY_MS
         if retry:
             self._last_retry = now_ms
@@ -230,13 +238,15 @@ class HotkeyListener:
                     f"hotkeys: {current[action]} for {action} is taken by another program;"
                     " reading the key directly"
                 )
-                self.watch.watch(action, code, self._is_down(user32, code))
+                self.watch.watch(action, code, self._read(user32, code)[0])
         self._set_timer(user32)
         logger.info(f"hotkeys: {LABELS[PAUSE]} {current[PAUSE]}, {LABELS[STOP]} {current[STOP]}")
 
     @staticmethod
-    def _is_down(user32, code: int) -> bool:
-        return bool(user32.GetAsyncKeyState(code) & 0x8000)
+    def _read(user32, code: int) -> tuple[bool, bool]:
+        """Only the watched pause/stop keys are read; nothing is logged."""
+        state = user32.GetAsyncKeyState(code)
+        return bool(state & 0x8000), bool(state & 0x0001)
 
     def _set_timer(self, user32) -> None:
         if self.watch.keys and not self._timer:
@@ -247,7 +257,7 @@ class HotkeyListener:
 
     def _poll(self, user32) -> None:
         pressed, retry = self.watch.tick(
-            lambda code: self._is_down(user32, code), time.monotonic() * 1000
+            lambda code: self._read(user32, code), time.monotonic() * 1000
         )
         for action in pressed:
             self._press(action)

@@ -212,7 +212,9 @@ class StoryCardNavigationMixin:
             return "活动游戏卡", EVENT_CATEGORY_POINT, EVENT_CATEGORY_HIGHLIGHT_REGION
         return "剧情游戏卡", STORY_CATEGORY_POINT, STORY_CATEGORY_HIGHLIGHT_REGION
 
-    def _click_quick_switch(self, timeout: float, after_sleep: float) -> bool:
+    def _click_quick_switch(
+        self, timeout: float, after_sleep: float, window_samples: int | None = None
+    ) -> bool:
         """Press the field's quick-switch (P) button.
 
         The see-through button scores 0.69 on snow at 1080p (ch13 town, live
@@ -223,7 +225,10 @@ class StoryCardNavigationMixin:
         """
         first = min(QUICK_SWITCH_FALLBACK_AFTER, timeout)
         if self.vision.click_stable_template(
-            QUICK_SWITCH_TEMPLATE, timeout=first, after_sleep=after_sleep
+            QUICK_SWITCH_TEMPLATE,
+            timeout=first,
+            after_sleep=after_sleep,
+            window_samples=window_samples,
         ):
             return True
         frame = self.vision.capture()
@@ -241,6 +246,7 @@ class StoryCardNavigationMixin:
             QUICK_SWITCH_TEMPLATE,
             timeout=max(0.0, timeout - first),
             after_sleep=after_sleep,
+            window_samples=window_samples,
         )
 
     def _open_story_quick_switcher(self, category: str = "story") -> NavigationResult:
@@ -2609,11 +2615,12 @@ class StoryCardNavigationMixin:
 
         self._status("导航状态", "从卡带箱庭识别快速切换按钮")
         # The field was just confirmed still, so three agreeing samples do
-        # instead of six (~0.7 s per cartridge switch).
-        if not self.vision.click_stable_template(
-            QUICK_SWITCH_TEMPLATE,
-            timeout=QUICK_SWITCH_CLICK_TIMEOUT,
-            after_sleep=QUICK_SWITCH_CLICK_AFTER_SLEEP,
+        # instead of six (~0.7 s per cartridge switch).  The see-through
+        # button can stay unseen on snow; the key caps fallback presses its
+        # calibrated place and the page check below still has to pass.
+        if not self._click_quick_switch(
+            QUICK_SWITCH_CLICK_TIMEOUT,
+            QUICK_SWITCH_CLICK_AFTER_SLEEP,
             window_samples=3,
         ):
             return NavigationResult(

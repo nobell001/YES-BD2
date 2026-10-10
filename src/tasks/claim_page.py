@@ -71,7 +71,12 @@ SETTLED_BRIGHTNESS_RATIO = 0.8
 # Title-bar brightness before and after a blind tap counts as unchanged.
 SAME_BRIGHTNESS_DELTA = 3.0
 SETTLED_CALM_SECONDS = 1.2
-CLAIM_BUTTON_GREY_MAX = 170.0
+# Live 2K: lit 252 (pass) / 213 (mission), grey 127 / 82.  Under the grey
+# line only when clearly grey: a lit mission pill darkened a quarter by a
+# screen filter or HDR reads 160 and must still be pressed, while a grey one
+# washed out (x0.7 + 60) reads 149.  A grey press does nothing (Leo
+# 2026-10-10 「亮了沒按很麻煩 暗了又按就頂多沒反應」).
+CLAIM_BUTTON_GREY_MAX = 152.0
 # Tab and card clicks are confirmed by the clicked area changing (frame diff,
 # grey thumbnails): a tab that keeps the page title (邮箱's two tabs, the pass
 # tabs) gave a stale grey button from the previous tab and "nothing to claim".

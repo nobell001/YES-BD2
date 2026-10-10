@@ -3,7 +3,7 @@
     # The version our patched launcher reports. Installed launchers replace
     # themselves only with a higher one (ok's update_pyappify), so bump this
     # whenever the launcher patches below change.
-    [string]$LauncherVersion = "1.2.5",
+    [string]$LauncherVersion = "1.2.6",
     [string]$BuildDir = "pyappify_build",
     [ValidateSet("zlib", "lzma")]
     [string]$NsisCompression = "lzma",
@@ -378,6 +378,70 @@ $appService = Replace-Once $appService `
      "        }`n" +
      "        let previous_known_version = app.current_version.clone();") `
     "open with the local copy when the fetch fails"
+
+# Download again when an earlier install stopped halfway (player report
+# 2026-10-10: install failed with 「Could not open requirements file」). A
+# clone that is cut off (launcher closed, PC asleep, network dropped) leaves a
+# repo folder that git can open but whose files are missing; the next install
+# saw the folder, only fetched, and copied the missing files on to pip. Setup
+# now checks the files against the checked-out version and clones again when
+# any are missing; if that still fails it says what the player can do.
+$appService = Replace-Once $appService `
+    (@'
+#[tauri::command]
+pub async fn setup_app(app_name: &str, profile_name: &str) -> Result<(), Error> {
+'@ -replace "`r`n", "`n") `
+    (@'
+fn repo_checkout_complete(repo_path: &Path) -> bool {
+    let Ok(repo) = git2::Repository::open(repo_path) else {
+        return false;
+    };
+    let Ok(tree) = repo.head().and_then(|head| head.peel_to_tree()) else {
+        return false;
+    };
+    let missing = match repo.diff_tree_to_workdir(Some(&tree), None) {
+        Ok(diff) => diff
+            .deltas()
+            .any(|delta| delta.status() == git2::Delta::Deleted),
+        Err(_) => true,
+    };
+    !missing
+}
+
+#[tauri::command]
+pub async fn setup_app(app_name: &str, profile_name: &str) -> Result<(), Error> {
+'@ -replace "`r`n", "`n") `
+    "check the downloaded files"
+$appService = Replace-Once $appService `
+    (@'
+    ensure_repository(&app).await?;
+
+    let working_dir_path = get_app_working_dir_path(app_name);
+'@ -replace "`r`n", "`n") `
+    (@'
+    ensure_repository(&app).await?;
+    if !repo_checkout_complete(&repo_path) {
+        warn!(
+            "Repository for '{}' at {} is missing files (an earlier download stopped halfway). Downloading it again.",
+            app_name,
+            repo_path.display()
+        );
+        emit_info!(
+            app_name,
+            "The last download did not finish; downloading again."
+        );
+        delete_dir_if_exist(&repo_path).await?;
+        ensure_repository(&app).await?;
+        if !repo_checkout_complete(&repo_path) {
+            return Err(err!(
+                "下载不完整：请确认能连上 GitHub（可以先开加速器），再按一次安装。The download is incomplete: make sure GitHub can be reached, then press install again."
+            ));
+        }
+    }
+
+    let working_dir_path = get_app_working_dir_path(app_name);
+'@ -replace "`r`n", "`n") `
+    "download again when the files are missing"
 
 # Update before starting, even when 「启动应用」 is pressed during the update
 # check (player report 2026-10-10: auto start ticked, v0.1.11 started although

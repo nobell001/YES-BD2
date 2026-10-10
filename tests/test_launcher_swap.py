@@ -204,6 +204,52 @@ class StartSwapTest(unittest.TestCase):
                 )
             )
 
+    def _swap_after(self, log_text):
+        with tempfile.TemporaryDirectory() as root:
+            working = self.install(root)
+            if log_text is not None:
+                Path(working, "logs").mkdir()
+                Path(working, "logs", "launcher-update.log").write_text(log_text, encoding="utf-8")
+            popen = Mock()
+            started = start_launcher_swap(
+                working, read_version=lambda _: "1.2.3", popen=popen, platform="nt"
+            )
+        return started, popen
+
+    def test_after_a_failed_swap_it_retries_without_saying_next_open(self):
+        # Audit #61: offline, every open said 「下次打开生效」 and every swap failed.
+        log = (
+            "2026-10-10 09:00:00 launcher swap: downloading https://x\n"
+            "2026-10-10 09:00:09 launcher swap: failed, launcher left as is: download failed\n"
+        )
+        started, popen = self._swap_after(log)
+        self.assertTrue(started)
+        popen.assert_called_once()
+        self.assertFalse(launcher_self_update.swap_started)
+
+    def test_after_a_success_or_a_first_try_it_says_so(self):
+        for log in (None, "", "x launcher swap: success, launcher is now abc\n"):
+            with self.subTest(log=log):
+                started, _popen = self._swap_after(log)
+                self.assertTrue(started)
+                self.assertTrue(launcher_self_update.swap_started)
+
+    def test_the_latest_result_decides(self):
+        log = (
+            "a launcher swap: checksum mismatch 00, launcher left as is\n"
+            "b launcher swap: success, launcher is now abc\n"
+            "c launcher swap: downloading https://x\n"
+        )
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root, "launcher-update.log")
+            path.write_text(log, encoding="utf-8")
+            self.assertFalse(launcher_self_update.last_swap_failed(path))
+            path.write_text(
+                log + "d launcher swap: written launcher differs, old launcher restored\n"
+            )
+            self.assertTrue(launcher_self_update.last_swap_failed(path))
+            self.assertFalse(launcher_self_update.last_swap_failed(Path(root, "missing.log")))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -159,6 +159,12 @@ AUTO_MOVE_TEXT_RELATIVE_ROI = (560 / 1920, 80 / 1080, 1360 / 1920, 980 / 1080)
 TELEPORT_PAGE_ARROW_REFERENCE = {"left": (380, 520), "right": (1540, 520)}
 
 
+# A story entry keeps this much of its wait for a reward page (赛季奖励 and
+# the like) that hides the field, and gives the field at least this long
+# after such a page was dismissed.
+STORY_ENTRY_PAGE_RESERVE_SECONDS = 5.0
+STORY_ENTRY_AFTER_PAGE_SECONDS = 10.0
+
 class SandboxNavigationMixin:
     @staticmethod
     def _format_sandbox_matches(
@@ -881,7 +887,9 @@ class SandboxNavigationMixin:
                     return NavigationResult(True, last_state, success_message)
             else:
                 hits = 0
-                if last_state != ScreenState.LOADING and self._auto_moving(frame):
+                # A loading screen is progress too (audit #10: on a slow PC the
+                # loading used up the stall and the entry was judged failed).
+                if last_state == ScreenState.LOADING or self._auto_moving(frame):
                     end_at = min(max(end_at, monotonic() + stall), walk_cap)
                 if handle_intermediate and last_state != ScreenState.LOADING:
                     handled = self._handle_story_card_intermediate(frame)
@@ -903,6 +911,13 @@ class SandboxNavigationMixin:
         deadline = monotonic() + max(0.0, wait_seconds)
         for attempt in range(2):
             remaining = max(0.0, deadline - monotonic())
+            if attempt:
+                # The page was dismissed: the field shows in a moment.
+                remaining = max(remaining, STORY_ENTRY_AFTER_PAGE_SECONDS)
+            elif remaining > 2 * STORY_ENTRY_PAGE_RESERVE_SECONDS:
+                # Audit #9: the first wait took the whole budget, so the
+                # season-reward page check after it never ran.
+                remaining -= STORY_ENTRY_PAGE_RESERVE_SECONDS
             result = self._wait_for_field_hud(
                 timeout=remaining,
                 interval=interval,
@@ -919,7 +934,7 @@ class SandboxNavigationMixin:
             if remaining <= 0.0:
                 return result
             if self.task._handle_recent_cartridge_special_pages(
-                timeout=remaining,
+                timeout=min(remaining, STORY_ENTRY_PAGE_RESERVE_SECONDS),
                 allow_pvp_pages=False,
             ) is not CartridgeSpecialPageResult.HANDLED:
                 return result
@@ -1412,7 +1427,7 @@ class SandboxNavigationMixin:
     def _walk_to_sandbox_teleport_interaction(self) -> NavigationResult:
         """Use the sandbox navigation map to walk back to a portal interaction prompt."""
 
-        self._status("导航状态", "传送阵技能失败，转入导航/徒步回退")
+        self._status("导航状态", "改用导航/徒步前往传送阵")
         # The minimap itself opens the area map (as M does).  The icon
         # templates matched beside the ≡ button in 阿尔卡迪亚居住区域 and opened
         # the navigation menu instead (live 2K 2026-09-30).

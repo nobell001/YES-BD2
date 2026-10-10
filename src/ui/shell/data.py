@@ -91,7 +91,17 @@ def current_task():
 
 
 def busy() -> bool:
-    return current_task() is not None
+    """A run is going: a task the player (or a batch) started.
+
+    The trigger tasks (自动登录游戏) are not runs: the executor makes each one
+    the current task for its check every second.  Live 4K 2026-10-10 with the
+    game on a menu: the login check never found a login screen, kept
+    waiting, and every 开始 for 2 minutes was refused with "自动登录游戏 is
+    running".  A started task runs after that check; a batch still waits for
+    a login that is really going on (DailyBatchTask._auto_login_pending).
+    """
+    task = current_task()
+    return task is not None and not any(task is each for each in trigger_tasks())
 
 
 # ---------------------------------------------------------------- accounts

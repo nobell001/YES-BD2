@@ -4,6 +4,10 @@ MAIN_WINDOW_GEOMETRY_DEBOUNCE_MS = 500
 FIRST_OPEN_SCREEN_SHARE = 0.92
 _PATCH_MARKER = "_ok_bd2_geometry_debounce_enabled"
 _FIT_MARKER = "_ok_bd2_first_open_fit_enabled"
+# A saved window must show at least this much on some screen, or it opens
+# centred (audit #54: saved on a monitor that was later unplugged).
+VISIBLE_MIN_WIDTH = 100
+VISIBLE_MIN_HEIGHT = 50
 
 
 def fit_first_open_size(
@@ -16,8 +20,53 @@ def fit_first_open_size(
     return max(width, min_width), max(height, min_height)
 
 
-def patch_main_window_first_open_size(main_window_class: type) -> None:
-    """Fit the configured default size to the screen; a saved size is left alone."""
+def visible_on_a_screen(
+    rect: tuple[int, int, int, int], screens: list[tuple[int, int, int, int]]
+) -> bool:
+    """True when the (x, y, width, height) window shows enough on one screen."""
+
+    x, y, width, height = rect
+    for sx, sy, sw, sh in screens:
+        overlap_w = min(x + width, sx + sw) - max(x, sx)
+        overlap_h = min(y + height, sy + sh) - max(y, sy)
+        if overlap_w >= VISIBLE_MIN_WIDTH and overlap_h >= VISIBLE_MIN_HEIGHT:
+            return True
+    return False
+
+
+def _available_screens() -> list[tuple[int, int, int, int]]:
+    from PySide6.QtGui import QGuiApplication
+
+    rects = []
+    for screen in QGuiApplication.screens():
+        geometry = screen.availableGeometry()
+        rects.append((geometry.x(), geometry.y(), geometry.width(), geometry.height()))
+    return rects
+
+
+def forget_off_screen_position(config, screens: list[tuple[int, int, int, int]]) -> bool:
+    """Clear a saved position no screen shows, so ok opens the window centred."""
+
+    if config is None or not screens:
+        return False
+    try:
+        rect = tuple(
+            int(config.get(key, 0) or 0)
+            for key in ("window_x", "window_y", "window_width", "window_height")
+        )
+    except (TypeError, ValueError):
+        return False
+    if rect[2] <= 0 or rect[3] <= 0 or visible_on_a_screen(rect, screens):
+        return False
+    config["window_x"] = 0
+    config["window_y"] = 0
+    config["window_maximized"] = False
+    return True
+
+
+def patch_main_window_first_open_size(main_window_class: type, screens=_available_screens) -> None:
+    """Fit the configured default size to the screen; a saved size is left
+    alone unless no screen shows it any more."""
 
     if getattr(main_window_class, _FIT_MARKER, False):
         return
@@ -25,6 +74,10 @@ def patch_main_window_first_open_size(main_window_class: type) -> None:
     original_set_window_size = main_window_class.set_window_size
 
     def fitted_set_window_size(self, width, height, min_width, min_height):
+        try:
+            forget_off_screen_position(getattr(self, "ok_config", None), screens())
+        except Exception:  # noqa: BLE001 - never block the window from opening
+            pass
         screen = self.screen()
         if screen is not None:
             available = screen.availableGeometry()

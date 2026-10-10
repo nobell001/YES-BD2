@@ -246,6 +246,20 @@ def load(label: str) -> dict | None:
     return report if isinstance(report, dict) else None
 
 
+def load_run(label: str, started) -> dict | None:
+    """The saved report of the run that began at ``started``; None when the
+    saved one is an older run (audit #50: the 桌面分身 closed or the tool
+    crashed before saving, and the last run's 结算 showed as this one)."""
+    report = load(label)
+    if report is None or started is None:
+        return report
+    try:
+        same = abs(float(report.get("started") or 0.0) - float(started)) < 0.001
+    except (TypeError, ValueError):
+        return None
+    return report if same else None
+
+
 def saved() -> list[dict]:
     """Every finished saved report (one per batch), newest first."""
     try:

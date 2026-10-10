@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 import cv2
 import numpy as np
@@ -49,14 +50,37 @@ class ButtonLitTest(unittest.TestCase):
     def _box(self):
         return SimpleNamespace(x=100, y=100, width=80, height=30)
 
+    def _page(self, button, look=lambda image: image):
+        """A dark page with white text (as every event page has) and the button."""
+        frame = _frame()
+        frame[20:60, 300:1600] = (255, 255, 255)
+        frame[100:130, 100:180] = button
+        return look(frame.astype(np.float32)).clip(0, 255).astype(np.uint8)
+
     def test_white_pill_is_lit_and_grey_is_not(self):
-        self.assertTrue(button_lit(_frame(color=(255, 255, 255)), self._box()))
-        self.assertFalse(button_lit(_frame(color=(128, 128, 128)), self._box()))
+        self.assertTrue(button_lit(self._page((255, 255, 255)), self._box()))
+        self.assertFalse(button_lit(self._page((128, 128, 128)), self._box()))
 
     def test_blue_claim_all_lit_and_dim(self):
         # 全部领取 live 4K 2026-10-04: lit BGR (231,134,107), dim (137,82,63).
-        self.assertTrue(button_lit(_frame(color=(231, 134, 107)), self._box()))
-        self.assertFalse(button_lit(_frame(color=(137, 82, 63)), self._box()))
+        self.assertTrue(button_lit(self._page((231, 134, 107)), self._box()))
+        self.assertFalse(button_lit(self._page((137, 82, 63)), self._box()))
+
+    def test_a_darker_or_washed_out_screen_reads_the_same(self):
+        # A fixed 185 skipped a lit 全部领取 under a filter darkening by a
+        # quarter (lit 173); against the page's own white it stays lit.
+        looks = {
+            "darker": lambda image: image * 0.75,
+            "much darker": lambda image: image * 0.6,
+            "gamma": lambda image: 255 * (image / 255) ** 1.5,
+            "washed out": lambda image: image * 0.7 + 60,
+            "hdr": lambda image: image * 0.85 + 15,
+        }
+        for name, look in looks.items():
+            with self.subTest(look=name):
+                self.assertTrue(button_lit(self._page((231, 134, 107), look), self._box()))
+                self.assertFalse(button_lit(self._page((137, 82, 63), look), self._box()))
+                self.assertFalse(button_lit(self._page((128, 128, 128), look), self._box()))
 
 
 class RedShareTest(unittest.TestCase):
@@ -306,3 +330,101 @@ class LostScrollTest(unittest.TestCase):
         task._sweep_list(set())
         self.assertEqual("活动列表：这轮往下滚动了 2 次，处理 1 个。", state["logs"][-1])
         self.assertEqual([], state["diagnostics"])
+
+
+class BadgesLeftTest(unittest.TestCase):
+    """YES-BD2 #11: the run ended fine with red dots left on some events, and
+    nothing said which.  A fine run's 问题摘要 keeps only its last few lines,
+    so the run ends on one line naming each event left and why."""
+
+    def _page_task(self, panel_boxes):
+        from src.tasks.EventRewardTask import EventRewardTask
+
+        task = object.__new__(EventRewardTask)
+        task.capture_frame = lambda: _frame()
+        task.info_set = lambda *a, **k: None
+        task.log_info = lambda *a, **k: None
+        task.sleep = lambda *_a: None
+        task._save_flow_diagnostic = lambda *_a: None
+        task._reference_boxes = lambda _frame, roi, _name: panel_boxes if roi == PANEL_ROI else []
+        task._hand_points = lambda *_a: []
+        task._click_reference_box = lambda *a, **k: self.fail("pressed on a skipped page")
+        return task
+
+    def test_an_unknown_page_says_so(self):
+        task = self._page_task([_box("每日签到", 700, 300)])
+        task._page_skip_why = ""
+        clock = iter(range(0, 100))
+        with mock.patch("src.tasks.EventRewardTask.monotonic", lambda: next(clock)):
+            self.assertFalse(task._handle_page("登录加成"))
+        self.assertEqual("页面上没有认得的按钮", task._page_skip_why)
+
+    def test_a_paid_page_says_so(self):
+        task = self._page_task([_box("付费钻石兑换所", 700, 300, w=200)])
+        task._page_skip_why = ""
+        self.assertFalse(task._handle_page("满月兑换所"))
+        self.assertEqual("有钻石，不碰", task._page_skip_why)
+
+    def _sweep_task(self, handle):
+        from src.tasks.EventRewardTask import EventRewardTask
+
+        task = object.__new__(EventRewardTask)
+        state = {"opened": 0}
+        task.info_set = lambda *a, **k: None
+        task.log_info = lambda *a, **k: None
+        task.sleep = lambda *_a: None
+        task._list_to_top = lambda: None
+        task.capture_frame = lambda: _frame()
+        task._list_text = lambda _frame: "活动列表"
+        task._next_badge = lambda _frame, skipped: (
+            None if "拼图活动" in skipped else (400, "拼图活动")
+        )
+        task._click_reference = lambda *a, **k: None
+        task.scroll_client = lambda *a, **k: None
+
+        def handle_page(caption):
+            state["opened"] += 1
+            return handle(task)
+
+        task._handle_page = handle_page
+        return task, state
+
+    def test_the_sweep_keeps_why_each_event_was_left(self):
+        def paid(task):
+            task._page_skip_why = "有钻石，不碰"
+            return False
+
+        task, _state = self._sweep_task(paid)
+        skipped = {}
+        self.assertEqual(0, task._sweep_list(skipped))
+        self.assertEqual({"拼图活动": "有钻石，不碰"}, skipped)
+
+    def test_a_badge_still_there_after_two_claims(self):
+        task, state = self._sweep_task(lambda _task: True)
+        skipped = {}
+        task._sweep_list(skipped)
+        self.assertEqual(2, state["opened"])
+        self.assertEqual({"拼图活动": "处理两次还在"}, skipped)
+
+    def _run(self, left):
+        from src.tasks.EventRewardTask import EventRewardTask
+
+        logs = []
+        task = object.__new__(EventRewardTask)
+        task.info_set = lambda *a, **k: None
+        task.log_info = lambda message, *a, **k: logs.append(message)
+        task._open_page_from_home = lambda *a: True
+        task._leave_to_home = lambda *a: logs.append("回到主页") or True
+        task._sweep_list = lambda skipped: skipped.update(left) or 0
+        self.assertTrue(task.run_claim())
+        return logs
+
+    def test_the_run_ends_naming_the_events_left(self):
+        logs = self._run({"拼图活动": "页面上没有认得的按钮", "满月兑换所": "有钻石，不碰"})
+        self.assertEqual(
+            "活动：这些还有红点，没领：「拼图活动」页面上没有认得的按钮、「满月兑换所」有钻石，不碰。",
+            logs[-1],
+        )
+
+    def test_nothing_left_says_nothing(self):
+        self.assertEqual(["回到主页"], self._run({}))

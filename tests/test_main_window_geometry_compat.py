@@ -3,8 +3,10 @@ import unittest
 from src.compat.main_window_geometry import (
     MAIN_WINDOW_GEOMETRY_DEBOUNCE_MS,
     fit_first_open_size,
+    forget_off_screen_position,
     patch_main_window_first_open_size,
     patch_main_window_geometry_events,
+    visible_on_a_screen,
 )
 
 
@@ -168,8 +170,8 @@ class FirstOpenSizeTest(unittest.TestCase):
             def set_window_size(self, width, height, min_width, min_height):
                 self.calls.append((width, height, min_width, min_height))
 
-        patch_main_window_first_open_size(FakeMainWindow)
-        patch_main_window_first_open_size(FakeMainWindow)
+        patch_main_window_first_open_size(FakeMainWindow, screens=lambda: [])
+        patch_main_window_first_open_size(FakeMainWindow, screens=lambda: [])
 
         small = FakeMainWindow(_Screen(1536, 824))
         small.set_window_size(1335, 997, 600, 450)
@@ -178,6 +180,69 @@ class FirstOpenSizeTest(unittest.TestCase):
 
         self.assertEqual([(1335, 758, 600, 450)], small.calls)
         self.assertEqual([(1335, 997, 600, 450)], no_screen.calls)
+
+
+class OffScreenWindowTest(unittest.TestCase):
+    """Audit #54: saved on a second monitor that was later unplugged."""
+
+    MAIN = (0, 0, 2560, 1400)
+    RIGHT = (2560, 0, 1920, 1040)
+
+    def test_a_window_on_a_screen_is_visible(self):
+        self.assertTrue(visible_on_a_screen((300, 200, 1335, 997), [self.MAIN]))
+        self.assertTrue(visible_on_a_screen((3000, 100, 1335, 997), [self.MAIN, self.RIGHT]))
+        # Mostly off the edge, but the title bar still shows.
+        self.assertTrue(visible_on_a_screen((2400, 100, 1335, 997), [self.MAIN]))
+
+    def test_a_window_on_an_unplugged_monitor_is_not(self):
+        self.assertFalse(visible_on_a_screen((3000, 100, 1335, 997), [self.MAIN]))
+        self.assertFalse(visible_on_a_screen((2500, 100, 1335, 997), [self.MAIN]))
+
+    def test_the_saved_position_is_forgotten_only_when_off_screen(self):
+        config = {
+            "window_x": 3000,
+            "window_y": 100,
+            "window_width": 1335,
+            "window_height": 997,
+            "window_maximized": True,
+        }
+        self.assertTrue(forget_off_screen_position(config, [self.MAIN]))
+        self.assertEqual(
+            (0, 0, False), (config["window_x"], config["window_y"], config["window_maximized"])
+        )
+        self.assertEqual(1335, config["window_width"])
+
+        kept = {"window_x": 300, "window_y": 200, "window_width": 1335, "window_height": 997}
+        self.assertFalse(forget_off_screen_position(kept, [self.MAIN]))
+        self.assertEqual(300, kept["window_x"])
+
+    def test_no_screens_or_no_saved_size_changes_nothing(self):
+        config = {"window_x": 3000, "window_y": 100, "window_width": 1335, "window_height": 997}
+        self.assertFalse(forget_off_screen_position(config, []))
+        self.assertFalse(forget_off_screen_position({"window_x": 3000}, [self.MAIN]))
+        self.assertFalse(forget_off_screen_position(None, [self.MAIN]))
+
+    def test_the_patch_clears_it_before_ok_restores_it(self):
+        class FakeMainWindow:
+            def __init__(self):
+                self.ok_config = {
+                    "window_x": 3000,
+                    "window_y": 100,
+                    "window_width": 1335,
+                    "window_height": 997,
+                }
+                self.seen = None
+
+            def screen(self):
+                return None
+
+            def set_window_size(self, *_args):
+                self.seen = self.ok_config["window_x"]
+
+        patch_main_window_first_open_size(FakeMainWindow, screens=lambda: [self.MAIN])
+        window = FakeMainWindow()
+        window.set_window_size(1335, 997, 600, 450)
+        self.assertEqual(0, window.seen)
 
 
 if __name__ == "__main__":

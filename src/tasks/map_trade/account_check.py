@@ -46,8 +46,11 @@ def _untouched(result) -> bool | None:
 
 
 def card_ids_to_check(state, allowed) -> list[str]:
+    """The last finished cards in run order: two accounts that both ran this
+    week share the front cards, so checking the first two missed the switch
+    (audit #3); the cards run last are the ones the other account lacks."""
     picked = []
-    for card in COLLECTABLE_CARDS:
+    for card in reversed(COLLECTABLE_CARDS):
         if card.number in UNSUPPORTED_COLLECTION_CARD_NUMBERS:
             continue
         if card.card_id in SUPPRESS_ONLY_VERIFIED_CARD_IDS:

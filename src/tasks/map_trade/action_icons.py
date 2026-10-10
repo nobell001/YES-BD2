@@ -41,6 +41,49 @@ SKILL_GROUP_CENTERS_REFERENCE = {
     2: (1749, 1011),
     3: (1824, 1011),
 }
+# The selected group's pin button is yellow, the others grey.  Yellow share
+# in a 22 px (1080p) circle on 13 real 1080p frames (robustness/2026-10-10-
+# ch18傳送陣): selected 0.73-0.75, others 0.00; maps and menus 0.00 for all.
+SKILL_GROUP_BUTTON_RADIUS_REFERENCE = 22
+SKILL_GROUP_SELECTED_MIN_YELLOW = 0.35
+SKILL_GROUP_OTHER_MAX_YELLOW = 0.10
+
+
+def skill_group_yellow_shares(frame) -> dict[int, float]:
+    """How much of each group button is yellow (HSV, OpenCV hue 15-35)."""
+    import cv2
+
+    height, width = frame.shape[:2]
+    scale = width / FHD_1080.width
+    radius = max(2, round(SKILL_GROUP_BUTTON_RADIUS_REFERENCE * scale))
+    hsv = cv2.cvtColor(frame[..., :3], cv2.COLOR_BGR2HSV)
+    yy, xx = np.mgrid[-radius:radius, -radius:radius]
+    disc = (xx * xx + yy * yy) <= radius * radius
+    shares = {}
+    for group, (x, y) in SKILL_GROUP_CENTERS_REFERENCE.items():
+        cx, cy = round(x * scale), round(y * height / FHD_1080.height)
+        patch = hsv[cy - radius : cy + radius, cx - radius : cx + radius]
+        if patch.shape[:2] != disc.shape:
+            shares[group] = 0.0
+            continue
+        hue, sat, val = patch[..., 0][disc], patch[..., 1][disc], patch[..., 2][disc]
+        yellow = (hue >= 15) & (hue <= 35) & (sat >= 90) & (val >= 110)
+        shares[group] = float(yellow.mean())
+    return shares
+
+
+def selected_skill_group(frame) -> int | None:
+    """The skill group selected on the field, or None when it is not clear."""
+    if frame is None:
+        return None
+    shares = skill_group_yellow_shares(frame)
+    lit = [group for group, share in shares.items() if share >= SKILL_GROUP_SELECTED_MIN_YELLOW]
+    if len(lit) != 1:
+        return None
+    others = [share for group, share in shares.items() if group != lit[0]]
+    if any(share > SKILL_GROUP_OTHER_MAX_YELLOW for share in others):
+        return None
+    return lit[0]
 ACTION_SLOT_SEARCH_RADII_REFERENCE = {
     "search": (82, 72),
     "absorb": (82, 72),

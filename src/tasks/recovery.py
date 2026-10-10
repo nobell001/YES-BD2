@@ -242,6 +242,8 @@ def recover_to_home(task, attempts: int = RECOVERY_ATTEMPTS) -> bool:
     for attempt in range(1, attempts + 1):
         if _home_now(navigator):
             return True
+        if attempt == 1:
+            _note_leaving_step(task, navigator)
         state = navigator.classify()
         task.info_set("恢复主页", f"第{attempt}次：{state.value}")
         if state == ScreenState.HOME:
@@ -296,6 +298,18 @@ def recover_to_home(task, attempts: int = RECOVERY_ATTEMPTS) -> bool:
         return True
     _keep_failure_picture(task, navigator)
     return False
+
+
+def _note_leaving_step(task, navigator) -> None:
+    """The screen the task is leaving, for its 问题摘要 if it fails."""
+    try:
+        from src.tasks import problem_report
+
+        problem_report.note_leaving_step(task, navigator.vision.capture())
+    except (TaskDisabledException, FinishedException):
+        raise
+    except Exception:
+        pass  # the record must never break the way home
 
 
 def _keep_failure_picture(task, navigator) -> None:

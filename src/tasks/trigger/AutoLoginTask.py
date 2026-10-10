@@ -38,6 +38,11 @@ PRELOGIN_STATES = frozenset({"waiting", "browndustx", "waiting_update", "downloa
 # budget ran out: the title still showing this long after the press, on 2
 # frames, is pressed again (at most this many presses per login).
 LOGIN_RECLICK_AFTER_SECONDS = 5.0
+# Home never showed after the login this many times in a row (5 min each):
+# the waiting 一键日常/周常 is cancelled with the reason, and only the first
+# timeout and the give-up notify (audit #39/#72: it waited and notified
+# forever).  The login itself keeps trying.
+LOGIN_TIMEOUTS_BEFORE_GIVING_UP = 3
 LOGIN_RECLICK_HITS = 2
 LOGIN_MAX_CLICKS = 3
 # After a login timeout the task went back to 'waiting' and could sit there
@@ -147,6 +152,7 @@ class AutoLoginTask(BaseBD2Task):
         self._login_clicked_at: float | None = None
         self._waiting_home_since: float | None = None
         self._login_retry_not_before = 0.0
+        self._login_timeouts = 0
         self._last_clear_click_at = 0.0
         self._clear_clicks = 0
         self._last_confirm_click_at = 0.0
@@ -639,14 +645,38 @@ class AutoLoginTask(BaseBD2Task):
     def _handle_login_wait_timeout(self, now: float) -> None:
         waited = now - (self._login_clicked_at or 0.0)
         retry_delay = float(self.config.get("登录超时重试间隔秒数", 60.0))
+        timeouts = getattr(self, "_login_timeouts", 0) + 1
+        self._login_timeouts = timeouts
         self.log_warning(
-            f"自动登录：登录后等待主页 UI 超时，已等待 {waited:.0f} 秒，"
+            f"自动登录：登录后等待主页 UI 超时（第 {timeouts} 次），已等待 {waited:.0f} 秒，"
             f"重置登录流程并延后 {retry_delay:.0f} 秒重试。",
-            notify=True,
+            notify=timeouts == 1,
         )
         self.info_set("状态", "登录后等待主页超时")
+        if timeouts >= LOGIN_TIMEOUTS_BEFORE_GIVING_UP and self._cancel_login_gated_batches():
+            self.log_warning(
+                f"一键日常/周常失败：登录后连续 {timeouts} 次没有等到主页，已取消这次执行。"
+                "请看一下游戏画面，进到主页后再按开始。",
+                notify=True,
+            )
         self._reset_login_state()
         self._login_retry_not_before = now + retry_delay
+
+    def _cancel_login_gated_batches(self) -> bool:
+        """Cancel the 一键日常/周常 still waiting for this login; True when one was."""
+        try:
+            from src.tasks.DailyBatchTask import DailyBatchTask, WeeklyBatchTask
+        except ImportError:  # pragma: no cover
+            return False
+        cancelled = False
+        for batch_class in (DailyBatchTask, WeeklyBatchTask):
+            batch = self.executor.get_task_by_class(batch_class)
+            if batch is None or not getattr(batch, "_start_after_login", False):
+                continue
+            batch.cancel_resume()
+            batch.disable()
+            cancelled = True
+        return cancelled
 
     def _clear_popups_until_home(
         self,
@@ -713,6 +743,7 @@ class AutoLoginTask(BaseBD2Task):
                 self._state = "done"
                 self._release_login_gated_batch()
                 self._login_retry_not_before = 0.0
+                self._login_timeouts = 0
                 self._set_stage("已完成")
                 self._set_action("主页三项信号已连续确认，自动登录流程结束。")
                 self.log_info(

@@ -237,6 +237,18 @@ class AccountCheckTest(_InFolder):
         nav = _Navigator([_reading(CardActionState.UNKNOWN, CardActionState.PENDING)])
         self.assertFalse(account_check.records_from_other_account(nav, self._state()))
 
+    def test_the_cards_run_last_are_checked(self):
+        # Audit #3: both accounts ran the front cards this week; the records
+        # (account A) went further than account B, now in the game.
+        recorded = self._state(10)
+        picked = account_check.card_ids_to_check(recorded, None)
+        verified = [c.card_id for c in COLLECTABLE_CARDS if recorded.card_verified(c.card_id)]
+        self.assertEqual(list(reversed(verified[-2:])), picked)
+        pending = _reading(CardActionState.PENDING, CardActionState.PENDING)
+        nav = _Navigator([pending] * 4)
+        self.assertTrue(account_check.records_from_other_account(nav, recorded))
+        self.assertEqual(sorted(set(nav.asked)), sorted(verified[-2:]))
+
     def test_no_finished_card_means_nothing_to_check(self):
         nav = _Navigator([])
         self.assertFalse(account_check.records_from_other_account(nav, self._state(0)))

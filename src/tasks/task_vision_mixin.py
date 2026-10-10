@@ -404,6 +404,12 @@ class TaskVisionMixin:
             raise
         except Exception as exc:
             self.info_set(f"{name} OCR 错误", str(exc))
+            # Audit #64: an OCR error read as "no text" silently; written to
+            # the log once per name, so a problem summary shows the cause.
+            reported = self.__dict__.setdefault("_ocr_error_names", set())
+            if name not in reported:
+                reported.add(name)
+                self.log_warning(f"{name}：文字识别出错，当作没读到字；{exc}")
             return ""
 
         return " ".join(box.name for box in boxes if getattr(box, "name", ""))

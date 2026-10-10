@@ -79,21 +79,32 @@ class BD2Interaction(PostMessageInteraction):
         button press, cursor restored afterwards.  Client coordinates."""
         with self._input_lock:
             old = GetCursorPos()
+            held = None  # where the button went down and is not up yet
             try:
                 self.post(win32con.WM_MOUSEMOVE, 0, win32api.MAKELONG(x1, y1))
                 SetCursorPos(self.capture.get_abs_cords(x1, y1))
                 time.sleep(0.03)
                 self.post(win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, win32api.MAKELONG(x1, y1))
+                held = (x1, y1)
                 time.sleep(0.05)
                 for index in range(1, steps + 1):
                     x = round(x1 + (x2 - x1) * index / steps)
                     y = round(y1 + (y2 - y1) * index / steps)
                     SetCursorPos(self.capture.get_abs_cords(x, y))
                     self.post(win32con.WM_MOUSEMOVE, win32con.MK_LBUTTON, win32api.MAKELONG(x, y))
+                    held = (x, y)
                     time.sleep(duration / steps)
                 time.sleep(0.05)
                 self.post(win32con.WM_LBUTTONUP, 0, win32api.MAKELONG(x2, y2))
+                held = None
             finally:
+                if held is not None:
+                    # Stopped mid-swipe (audit #63): never leave the game's
+                    # left button held down.
+                    try:
+                        self.post(win32con.WM_LBUTTONUP, 0, win32api.MAKELONG(*held))
+                    except Exception:
+                        pass
                 time.sleep(0.03)
                 try:
                     SetCursorPos(old)
@@ -154,8 +165,12 @@ class BD2Interaction(PostMessageInteraction):
                 btn_up = win32con.WM_RBUTTONUP
             clone = _in_clone()
             self.post(btn_down, btn_mk, click_pos)
-            time.sleep(max(down_time, CLONE_DOWN_SECONDS if clone else DESKTOP_DOWN_SECONDS))
-            self.post(btn_up, 0, click_pos)
+            try:
+                time.sleep(max(down_time, CLONE_DOWN_SECONDS if clone else DESKTOP_DOWN_SECONDS))
+            finally:
+                # The up always follows the down, even when the run stops
+                # in between (audit #63).
+                self.post(btn_up, 0, click_pos)
             time.sleep(CLONE_AFTER_UP_SECONDS if clone else DESKTOP_AFTER_UP_SECONDS)
 
             if should_restore and not clone:

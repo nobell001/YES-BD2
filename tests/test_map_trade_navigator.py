@@ -1263,7 +1263,7 @@ class NavigatorTest(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual(ScreenState.CARD_MENU, result.state)
-        self.assertEqual([(QUICK_SWITCH_TEMPLATE, 10.0, 1.0)], template_clicks)
+        self.assertEqual([(QUICK_SWITCH_TEMPLATE, 3.0, 1.0)], template_clicks)
         self.assertEqual([(*STORY_CATEGORY_POINT, 0.5)], fixed_clicks)
 
     def test_open_story_quick_switcher_from_sandbox_stops_before_click_when_unconfirmed(self):
@@ -1313,7 +1313,7 @@ class NavigatorTest(unittest.TestCase):
         )
 
         self.assertTrue(result.success)
-        self.assertEqual([(QUICK_SWITCH_TEMPLATE, 10.0, 1.0)], template_clicks)
+        self.assertEqual([(QUICK_SWITCH_TEMPLATE, 3.0, 1.0)], template_clicks)
 
     def test_current_sandbox_confirmation_requires_consecutive_frames(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)

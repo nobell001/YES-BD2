@@ -29,6 +29,21 @@ class ClaimButtonLitTest(unittest.TestCase):
         self.assertTrue(claim_button_dimmed(_frame(127), BOX))
         self.assertTrue(claim_button_dimmed(_frame(82), BOX))
 
+    def test_a_darker_or_washed_out_screen_reads_the_same(self):
+        # A filter or HDR changes the whole screen; lit is still pressed.
+        looks = {
+            "darker": lambda value: value * 0.75,
+            "gamma": lambda value: 255 * (value / 255) ** 1.5,
+            "washed out": lambda value: value * 0.7 + 60,
+            "hdr": lambda value: value * 0.85 + 15,
+        }
+        for name, look in looks.items():
+            with self.subTest(look=name):
+                for lit in (252, 213):
+                    self.assertFalse(claim_button_dimmed(_frame(round(look(lit))), BOX))
+                for grey in (127, 82):
+                    self.assertTrue(claim_button_dimmed(_frame(round(look(grey))), BOX))
+
     def test_unreadable_box_counts_as_lit(self):
         self.assertFalse(claim_button_dimmed(_frame(127), SimpleNamespace(x=0, y=0, width=2, height=2)))
         self.assertFalse(claim_button_dimmed(None, BOX))

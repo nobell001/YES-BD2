@@ -290,6 +290,8 @@ class BaseBD2Task(BaseTask):
             raise
         except Exception:
             pass  # the task's own home check still decides
+        # The screen the player started on is not a step of this run.
+        problem_report.forget_give_up()
 
     def _leave_home_after_failed_run(self) -> None:
         from src.tasks.recovery import recover_to_home
@@ -365,6 +367,8 @@ class BaseBD2Task(BaseTask):
             return super().info_add_to_list(key, item)
 
     def info_set(self, key, value):
+        if key == "当前阶段":
+            problem_report.note_stage(self)
         with self._task_info_lock():
             return super().info_set(key, value)
 

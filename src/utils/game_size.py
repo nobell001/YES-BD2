@@ -108,9 +108,23 @@ def resize_to_fix(executor) -> str:
     return ""
 
 
+def _refresh_capture(executor) -> None:
+    """The capture's size only follows the window on a new frame; nothing
+    else captures before the run starts (audit #65: a resize that took was
+    reported as failed and not tried again for ten minutes)."""
+    method = getattr(getattr(executor, "device_manager", None), "capture_method", None)
+    get_frame = getattr(method, "get_frame", None)
+    if callable(get_frame):
+        try:
+            get_frame()
+        except Exception:
+            pass
+
+
 def _wait_for_supported(executor, sleep, monotonic) -> bool:
     deadline = monotonic() + FIX_SETTLE_SECONDS
     while True:
+        _refresh_capture(executor)
         size = current_size(executor)
         if size is not None and supported(*size):
             return True

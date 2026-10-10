@@ -22,7 +22,33 @@ from src.compat.launcher_swap import (
 
 LOG_NAME = "launcher-update.log"
 # 这次打开有没有开始换：主视窗出来时据此提示玩家（launcher_update_notice）。
+# 上一次已经换失败（例如连不上 GitHub）时照样再试，但不再说「下次生效」
+# （审查 #61：每次打开都这样说，其实每次都失败）。
 swap_started = False
+# launcher_swap.py 写的结果行：成功一种，失败三种。
+_SWAP_SUCCESS = "success"
+_SWAP_FAILURES = ("failed", "checksum mismatch", "written launcher differs")
+_LOG_TAIL_BYTES = 8192
+
+
+def last_swap_failed(log_path: str | os.PathLike) -> bool:
+    """日志里最后一次换的结果是失败时回 True；没有日志或没有结果都回 False。"""
+    try:
+        with open(log_path, "rb") as file:
+            file.seek(0, os.SEEK_END)
+            file.seek(max(0, file.tell() - _LOG_TAIL_BYTES))
+            tail = file.read().decode("utf-8", errors="replace")
+    except OSError:
+        return False
+    for line in reversed(tail.splitlines()):
+        _, marker, message = line.partition("launcher swap: ")
+        if not marker:
+            continue
+        if message.startswith(_SWAP_SUCCESS):
+            return False
+        if message.startswith(_SWAP_FAILURES):
+            return True
+    return False
 
 
 def helper_python(executable: str = sys.executable) -> str:
@@ -51,6 +77,7 @@ def start_launcher_swap(
             return False
         logs = Path(script_dir) / "logs"
         logs.mkdir(exist_ok=True)
+        failed_before = last_swap_failed(logs / LOG_NAME)
         flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
             subprocess, "CREATE_NEW_PROCESS_GROUP", 0
         )
@@ -71,7 +98,7 @@ def start_launcher_swap(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        swap_started = True
+        swap_started = not failed_before
         return True
     except Exception:
         # 换不了就照旧用旧启动器，下次开工具再试；绝不挡住工具打开。

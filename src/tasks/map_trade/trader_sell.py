@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from difflib import SequenceMatcher
 from time import monotonic
 from types import SimpleNamespace
 
@@ -23,6 +24,7 @@ from src.tasks.map_trade.models import (
     CalendarEntry,
     ScreenState,
 )
+from src.tasks.map_trade.phase_ledger import PhaseDeferred
 from src.tasks.map_trade.sale_days import (
     apply_sale_checklist,
     bundled_sale_days,
@@ -30,6 +32,8 @@ from src.tasks.map_trade.sale_days import (
 )
 from src.tasks.map_trade.trader_constants import (
     CALENDAR_DIR,
+    OWNED_NAME_FUZZY_MIN_CHARS,
+    OWNED_NAME_FUZZY_RATIO,
     SALE_120_PERCENT_MARKER_MAX_RESULTS,
     SALE_120_PERCENT_MARKER_PEAK_RADIUS,
     SALE_120_PERCENT_MARKER_TEMPLATE,
@@ -89,12 +93,90 @@ from src.utils.image_utils import relative_roi_frame, template_match_response, t
 SALE_ITEM_CANDIDATES_WAIT_TIMEOUT = 8.0
 SALE_ITEM_CANDIDATES_POLL_INTERVAL = 0.5
 
+# The reason a planned item is left unsold because its marker went unread.
+UNCONFIRMED_MARKER_REASON = "未确认↑120%标志"
+
 
 def _with_one_extra_digit(longer: int, shorter: int) -> bool:
     """``longer`` reads as ``shorter`` with one digit added (40245 -> 140245)."""
 
     a, b = str(longer), str(shorter)
     return len(a) == len(b) + 1 and any(a[:i] + a[i + 1 :] == b for i in range(len(a)))
+
+
+def owned_name_score(owned_name: str, names: tuple[str, ...]) -> float:
+    """How loosely a 价目表 name read by OCR fits one good's names (0.0 is
+    no fit).  It fits when it holds a name, is a fragment of at least half a
+    name, or (4+ characters) is one character off; the score is similarity,
+    so the closest good wins."""
+
+    if not owned_name:
+        return 0.0
+    best = 0.0
+    for name in names:
+        if not name:
+            continue
+        if name == owned_name:
+            return 1.0
+        ratio = SequenceMatcher(None, name, owned_name).ratio()
+        if (
+            (len(name) >= SALE_NAME_FRAGMENT_MIN_CHARS and name in owned_name)
+            or (
+                len(owned_name) >= max(SALE_NAME_FRAGMENT_MIN_CHARS, (len(name) + 1) // 2)
+                and owned_name in name
+            )
+            or (
+                min(len(name), len(owned_name)) >= OWNED_NAME_FUZZY_MIN_CHARS
+                and ratio >= OWNED_NAME_FUZZY_RATIO
+            )
+        ):
+            best = max(best, ratio)
+    return best
+
+
+def confusable_goods(goods: dict[str, tuple[str, ...]]) -> frozenset[str]:
+    """Goods whose own name loosely fits another good (铜块 and 黄铜块,
+    巧克力 and 巧克力鸡尾酒, 三文鱼 and 炸三文鱼便当...): only an exact read
+    may name them."""
+
+    confusable = set()
+    for good, names in goods.items():
+        for other, other_names in goods.items():
+            if other != good and any(owned_name_score(name, other_names) for name in names):
+                confusable.update((good, other))
+    return frozenset(confusable)
+
+
+def owned_name_owner(
+    owned_name: str,
+    goods: dict[str, tuple[str, ...]],
+    exact_only: frozenset[str] = frozenset(),
+) -> str | None:
+    """The one known good a 价目表 name stands for, or None.  An exact name
+    always wins.  A loose read (OCR slip or cut name) counts only for its
+    single closest good, and never when it also fits a confusable good:
+    dropping it leaves a 120% item unsold, a wrong keep costs one shop visit
+    that sells nothing (the shop still checks the name, the ↑120% mark and
+    the sale dialog title)."""
+
+    if not owned_name:
+        return None
+    for good, names in goods.items():
+        if owned_name in names:
+            return good
+    scores = sorted(
+        (
+            (score, good)
+            for good, names in goods.items()
+            if (score := owned_name_score(owned_name, names)) > 0.0
+        ),
+        reverse=True,
+    )
+    if not scores or any(good in exact_only for _score, good in scores):
+        return None
+    if len(scores) > 1 and scores[1][0] >= scores[0][0]:
+        return None
+    return scores[0][1]
 
 
 class SellFlowMixin:
@@ -112,7 +194,7 @@ class SellFlowMixin:
     _sale_dialog_rejected = False
     _sale_title_catalog_cache: dict[str, set[str]] | None = None
 
-    def run_sell(self) -> bool:
+    def run_sell(self) -> bool | PhaseDeferred:
         entries = self._resolve_sale_entries()
         if entries is None:
             self._buy_completed_in_current_shop = False
@@ -159,19 +241,43 @@ class SellFlowMixin:
         if owned is None:
             return entries  # unreadable list: search the shops as before
         owned_names = {self._normal(name) for name in owned}
+        goods = self._known_goods(entries)
+        exact_only = confusable_goods(goods)
+        owners = {name: owned_name_owner(name, goods, exact_only) for name in owned_names}
+        planned = {self._normal(entry.item) for entry in entries}
         keep, missing = [], []
         for entry in entries:
-            names = {self._normal(name) for name in (entry.item, *entry.aliases)}
-            if names & owned_names:
+            if self._normal(entry.item) in owners.values():
                 keep.append(entry)
             else:
                 missing.append(entry.item)
         if missing:
+            self._status("价目表未见", "、".join(missing))
             self.task.log_info(f"卖：背包里没有今天120%的{'、'.join(missing)}，不去它们的商店。")
-        extra = sorted(owned_names - {self._normal(entry.item) for entry in entries})
+        extra = sorted(name for name, owner in owners.items() if owner not in planned)
         if extra:
             self.task.log_info(f"卖：价目表另有120%但不在今日清单的：{'、'.join(extra)}（不卖）。")
         return keep
+
+    def _known_goods(self, entries: list[CalendarEntry]) -> dict[str, tuple[str, ...]]:
+        """Every good's names (bundled 价表, aliases, today's plan), so a
+        价目表 name is matched against all goods, not only the planned ones."""
+
+        bundled = parse_calendar_payload(
+            (CALENDAR_DIR / "price_calendar.v1.json").read_text(encoding="utf-8")
+        )
+        sources = [item for items in bundled.days.values() for item in items]
+        sources.extend(CalendarEntry(item, "") for item in ITEM_ALIASES)
+        sources.extend(self._sale_title_entries)
+        sources.extend(entries)
+        goods: dict[str, set[str]] = {}
+        for item in sources:
+            names = goods.setdefault(self._normal(item.item), set())
+            for name in (item.item, *item.aliases, *ITEM_ALIASES.get(item.item, ())):
+                normalized = self._normal(name)
+                if normalized:
+                    names.add(normalized)
+        return {good: tuple(sorted(names)) for good, names in goods.items() if good}
 
     def _ensure_sell_page(
         self,
@@ -211,7 +317,7 @@ class SellFlowMixin:
         )
         return False
 
-    def sell_max_price_items(self) -> bool:
+    def sell_max_price_items(self) -> bool | PhaseDeferred:
         entries = self._sale_entries_override
         if entries is None:
             entries = self._resolve_sale_entries()
@@ -311,7 +417,7 @@ class SellFlowMixin:
         except KeyError:
             return len(SHOP_CARTRIDGE_ROW_INDEX)
 
-    def _sell_resolved_entries(self, entries: list[CalendarEntry]) -> bool:
+    def _sell_resolved_entries(self, entries: list[CalendarEntry]) -> bool | PhaseDeferred:
 
         failed = []
         unavailable: list[str] = []
@@ -363,7 +469,18 @@ class SellFlowMixin:
             self._status("未出售商品", "无")
         if failed:
             self.task.log_warning("最高价出售失败：" + "、".join(entry.item for entry in failed))
-        return not failed
+            return False
+        unconfirmed = [
+            detail for detail in unavailable if UNCONFIRMED_MARKER_REASON in detail
+        ]
+        if unconfirmed:
+            # Audit #18: an unread ↑120% marker sold nothing for that item;
+            # recorded as sold, it waited for the next day.  Not recorded, the
+            # next run tries again (the 价目表 drops what was sold meanwhile).
+            return PhaseDeferred(
+                "未确认↑120%标志，不记为今日已卖，下次再试：" + "、".join(unconfirmed)
+            )
+        return True
 
     def _sell_entry_with_retry(self, entry: CalendarEntry) -> bool:
         """Sell one entry; after a failure, retry it once on the spot.
@@ -435,7 +552,7 @@ class SellFlowMixin:
                     # stopping every later sale.
                     self._last_sale_unavailable = True
                     self._last_sale_reason = (
-                        f"未确认↑120%标志：{self._last_sale_reason or '未知原因'}"
+                        f"{UNCONFIRMED_MARKER_REASON}：{self._last_sale_reason or '未知原因'}"
                     )
                 return False
 

@@ -494,6 +494,7 @@ class HomePage(Page):
         self._mode = ""
         self._summary: dict | None = None
         self._watching_label: str | None = None
+        self._watching_started: float | None = None
         self._logs: deque = deque(maxlen=3)
         self._last_log = ""
 
@@ -1270,10 +1271,17 @@ class HomePage(Page):
         self.live.set_remote(clone_desktop.LIVE_FILE if self._remote else None)
         if report is not None:
             self._watching_label = report.get("label")
+            self._watching_started = report.get("started")
         elif self._watching_label is not None:
-            # The batch just ended: open its 结算 once.
-            self._summary = run_report.load(self._watching_label) or self._summary
+            # The batch just ended: open its 结算 once, never an older run's.
+            finished = run_report.load_run(
+                self._watching_label, getattr(self, "_watching_started", None)
+            )
+            # Not saved (closed or crashed mid-run): the home page, not the
+            # summary from before.
+            self._summary = finished
             self._watching_label = None
+            self._watching_started = None
         if report is not None or task is not None:
             mode = "run"
         elif self._summary is not None:

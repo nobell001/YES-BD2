@@ -59,9 +59,19 @@ CONFIRM_BUTTONS = ("即刻刷新", "全部解锁")
 BUTTON_TEXT_SLACK = 4
 EXCHANGE_PATTERN = re.compile(r"兑换(\d+)次")
 
-# A lit button's brightest channel: white pills 255 / grey 128, blue
-# 「全部领取」 231 / 137 (live 4K 2026-10-04).
-BUTTON_LIT_MIN_VALUE = 185.0
+# A lit button's brightest channel against the page's own white (its text
+# and card faces): white pills 255 / grey 128, blue 「全部领取」 231 / 137
+# with the page white at 255 (live 4K 2026-10-04): 1.00 / 0.50, 0.91 / 0.54.
+# A fixed 185 skipped a lit 全部领取 once a screen filter or HDR darkened
+# the game by a quarter (173); the share stays 0.91 (0.86-0.93 under the
+# darkening, gamma and washed-out looks tried on the 10-03 frame, dim at
+# most 0.65).
+BUTTON_LIT_MIN_SHARE = 0.75
+# The page white: the brightest 1% of the page (every event page has white
+# text), never under this, so a page with no white at all still leaves a
+# grey 128 button unlit while a lit one dimmed to 0.6 (139) stays lit.
+PAGE_WHITE_PERCENTILE = 99
+PAGE_WHITE_FLOOR = 176.0
 # An unaffordable exchange shows its cost in red (18% red pixels vs 0%).
 RED_COST_SHARE = 0.08
 
@@ -82,8 +92,15 @@ PAGE_LOAD_SECONDS = 4.0
 _diamond_template = None
 
 
+def page_white(frame) -> float:
+    """How bright white text is on this screen (filters and HDR change it)."""
+    value = frame[::4, ::4, :3].max(axis=2)
+    return max(float(np.percentile(value, PAGE_WHITE_PERCENTILE)), PAGE_WHITE_FLOOR)
+
+
 def button_lit(frame, box) -> bool:
-    """A button's own colour: lit when its brightest channel is high."""
+    """A button's own colour: lit when its brightest channel is close to the
+    page's white."""
     if frame is None or box is None:
         return False
     height, width = frame.shape[:2]
@@ -92,7 +109,7 @@ def button_lit(frame, box) -> bool:
     if x1 - x0 < 4 or y1 - y0 < 4:
         return False
     value = frame[y0:y1, x0:x1, :3].max(axis=2)
-    return float(np.median(value)) >= BUTTON_LIT_MIN_VALUE
+    return float(np.median(value)) >= BUTTON_LIT_MIN_SHARE * page_white(frame)
 
 
 def red_share(frame, rect) -> float:
@@ -191,7 +208,7 @@ class EventRewardTask(_ClaimTaskBase):
     def run_claim(self) -> bool:
         if not self._open_page_from_home("活动", EVENT_ENTRY_POINT, EVENT_TITLE_KEYWORDS):
             return self._claim_fail("打开活动页")
-        skipped: set[str] = set()
+        skipped: dict[str, str] = {}  # card -> why its badge was left
         claimed = 0
         # Leo 10-04: a second pass from the top, since a claim can badge
         # another card; skipped pages (diamonds, unknown) do not count.
@@ -206,6 +223,11 @@ class EventRewardTask(_ClaimTaskBase):
         self.info_set("活动领取结果", f"处理 {claimed} 个，跳过 {len(skipped)} 个")
         if not self._leave_to_home("活动", EVENT_TITLE_KEYWORDS):
             return self._claim_fail("活动页返回主页")
+        if skipped:
+            # YES-BD2 #11: the run ends fine with badges left, and a fine run's
+            # 问题摘要 keeps only its last lines; this says which and why.
+            left = "、".join(f"「{key}」{why}" for key, why in skipped.items())
+            self.log_info(f"活动：这些还有红点，没领：{left}。")
         return True
 
     def _reopen_event_page(self) -> bool:
@@ -216,7 +238,7 @@ class EventRewardTask(_ClaimTaskBase):
             return False
         return self._open_page_from_home("活动", EVENT_ENTRY_POINT, EVENT_TITLE_KEYWORDS)
 
-    def _sweep_list(self, skipped: set[str]) -> int:
+    def _sweep_list(self, skipped: dict[str, str]) -> int:
         self._list_to_top()
         handled = 0
         visits: dict[str, int] = {}
@@ -236,14 +258,15 @@ class EventRewardTask(_ClaimTaskBase):
                     # Handled twice and still badged: something on it is
                     # not claimable this way; do not loop on it.
                     self.log_info(f"活动「{key}」：处理两次后红点仍在，跳过。")
-                    skipped.add(key)
+                    skipped[key] = "处理两次还在"
                     continue
                 self.info_set("当前阶段", f"打开活动：{key}")
                 self._click_reference(LIST_CARD_X, badge_y + BADGE_TO_CARD_CENTER, after_sleep=1.2)
+                self._page_skip_why = ""
                 if self._handle_page(caption):
                     handled += 1
                 else:
-                    skipped.add(key)
+                    skipped[key] = self._page_skip_why or "跳过"
                 continue  # same scroll position: look again
             list_text = self._list_text(frame)
             if not list_text.strip() and empty_reads < 4:
@@ -300,7 +323,7 @@ class EventRewardTask(_ClaimTaskBase):
     def _list_text(self, frame) -> str:
         return self._boxes_text(self._reference_boxes(frame, LIST_CAPTION_ROI, "活动列表"))
 
-    def _next_badge(self, frame, skipped: set[str]):
+    def _next_badge(self, frame, skipped: dict[str, str]):
         badges = find_badges(frame)
         self.info_set("活动红点", ",".join(str(y) for y in badges) or "-")
         if not badges:
@@ -350,6 +373,7 @@ class EventRewardTask(_ClaimTaskBase):
             self.sleep(0.5)
         if not known:
             self.log_info(f"活动「{label}」：页面上没有认得的按钮，跳过。")
+            self._page_skip_why = "页面上没有认得的按钮"
             self._save_flow_diagnostic(f"event_reward_unknown_{label}")
             return False
         self.sleep(0.4)
@@ -365,9 +389,11 @@ class EventRewardTask(_ClaimTaskBase):
         self.info_set("活动页 OCR", text[:160] or "-")
         if any(word in text for word in DIAMOND_WORDS):
             self.log_info(f"活动「{label}」：页面有钻石／付费字样，整页跳过。")
+            self._page_skip_why = "有钻石，不碰"
             return True
         if diamond_icon(frame, (PANEL_ROI, CURRENCY_ROI)):
             self.log_info(f"活动「{label}」：页面有钻石图案，整页跳过。")
+            self._page_skip_why = "有钻石，不碰"
             return True
         return False
 

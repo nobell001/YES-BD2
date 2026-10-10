@@ -8,7 +8,11 @@ from pathlib import Path
 from time import monotonic
 
 from src.tasks.map_trade import trade_detail
-from src.tasks.map_trade.action_icons import COOKING_ICON, SKILL_GROUP_CENTERS_REFERENCE
+from src.tasks.map_trade.action_icons import (
+    COOKING_ICON,
+    SKILL_GROUP_CENTERS_REFERENCE,
+    selected_skill_group,
+)
 from src.tasks.map_trade.models import (
     COOKING_RECIPE_TEMPLATES,
     DEFAULT_COOKING_RECIPES,
@@ -170,6 +174,16 @@ COOKING_BACK_TEMPLATE = TemplateSpec(
 MAIN_COOKING_RECIPES = (*DEFAULT_COOKING_RECIPES, FINAL_COOKING_RECIPE)
 
 
+
+def _stopping() -> bool:
+    """A stop (or the player taking over) is unwinding the cooking right now."""
+    import sys
+
+    from ok.task.exceptions import FinishedException, TaskDisabledException
+
+    error = sys.exc_info()[1]
+    return isinstance(error, (TaskDisabledException, FinishedException))
+
 class CookingRecipeOutcome(str, Enum):
     COOKED = "cooked"
     UNAVAILABLE = "unavailable"
@@ -254,6 +268,8 @@ class CookingFlowMixin:
         pending = selected
 
         self._cooking_opened = False
+        self._group_before_cooking = None
+        self._group_switched = False
         flow_success = False
         unavailable: list[str] = []
         absent: list[str] = []
@@ -281,6 +297,7 @@ class CookingFlowMixin:
             if self._cooking_opened:
                 exited = self._leave_cooking_to_q_sp6()
                 flow_success = flow_success and exited
+            self._restore_skill_group(stopped=_stopping())
             if unavailable:
                 self.task.log_info(
                     "料理：材料不足或按钮不可用，保留为下次重试："
@@ -348,8 +365,13 @@ class CookingFlowMixin:
             after_sleep=0.0,
         ):
             return True
+        if not getattr(self, "_group_switched", False):
+            # The player's own group (Leo keeps 跑图 on group 2): put back
+            # after cooking, never left on the cooking group (4K 2026-10-10).
+            self._group_before_cooking = self._read_skill_group()
         for index, point in enumerate(COOKING_SKILL_GROUP_POINTS, start=1):
             self._status("料理状态", f"切换技能组{index}")
+            self._group_switched = True
             self.task.operate_click(*point, after_sleep=0.0)
             self.task.sleep(COOKING_SKILL_GROUP_SWITCH_SETTLE_SECONDS)
             if self.vision.click_stable_template(
@@ -359,6 +381,45 @@ class CookingFlowMixin:
             ):
                 return True
         return False
+
+    def _read_skill_group(self) -> int | None:
+        capture = getattr(self.vision, "capture", None)
+        if not callable(capture):
+            return None
+        return selected_skill_group(capture())
+
+    def _restore_skill_group(self, *, stopped: bool = False) -> None:
+        """Back to the group the player had before cooking switched it."""
+
+        if not getattr(self, "_group_switched", False):
+            return
+        self._group_switched = False
+        before = getattr(self, "_group_before_cooking", None)
+        if stopped:
+            # Stop (or the player's own mouse) means no more presses.
+            if before is not None:
+                self.task.log_warning(
+                    f"料理：停止时技能组可能还在料理那一组，原本是第{before}组，请切回去。"
+                )
+            return
+        if before is None:
+            self.task.log_warning("料理：切换技能组前没认出原本是第几组，没有切回，请检查技能栏。")
+            return
+        now = self._read_skill_group()
+        if now == before:
+            self.task.log_info(f"料理：技能组已是原本的第{before}组。")
+            return
+        point = COOKING_SKILL_GROUP_POINTS[before - 1]
+        self.task.operate_click(*point, after_sleep=0.0)  # 不用确认：下面读技能组确认
+        self.task.sleep(COOKING_SKILL_GROUP_SWITCH_SETTLE_SECONDS)
+        after = self._read_skill_group()
+        if after == before:
+            self.task.log_info(f"料理：做完料理，技能组从第{now or '?'}组切回原本的第{before}组。")
+        else:
+            self.task.log_warning(
+                f"料理：想把技能组切回原本的第{before}组，但现在认到的是"
+                f"{f'第{after}组' if after else '认不出'}，请检查技能栏。"
+            )
 
     def _reclick_cooking_skill(self) -> bool:
         """Press the cooking skill again only while it is still stably shown."""

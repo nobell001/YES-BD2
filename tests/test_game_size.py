@@ -152,6 +152,33 @@ class GameSizeTest(unittest.TestCase):
         # It waited for the picture to follow before giving up.
         self.assertGreaterEqual(clock.now, 1000.0 + game_size.FIX_SETTLE_SECONDS)
 
+    def test_the_new_size_is_read_from_a_new_frame(self):
+        # Audit #65: the capture kept the old size until a frame was taken.
+        found = executor(1467, 824)
+        method = found.device_manager.capture_method
+        frames = []
+
+        def get_frame():
+            frames.append(1)
+            method.width, method.height = window_now
+
+        method.get_frame = get_frame
+        window_now = (1467, 824)
+
+        def resize(_executor):
+            nonlocal window_now
+            window_now = (1920, 1080)  # the window took it; the capture lags
+            return ""
+
+        task = Recorder(found)
+        clock = Clock()
+        self.assertFalse(
+            game_size.fix_or_warn(task, resize=resize, sleep=clock.sleep, monotonic=clock)
+        )
+        self.assertTrue(frames)
+        self.assertEqual([], task.warnings)
+        self.assertLess(clock.now, 1000.0 + game_size.FIX_SETTLE_SECONDS)
+
     def test_failed_resize_is_not_retried_for_each_child(self):
         found = executor(1600, 900)
         resize = resizes_to(found, size=(1600, 900), reason="窗口无法容纳")

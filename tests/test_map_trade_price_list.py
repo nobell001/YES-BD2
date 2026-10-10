@@ -71,6 +71,77 @@ class KeepOwnedTest(unittest.TestCase):
         kept = trader._keep_owned_at_max_rate([CalendarEntry("苹果", "S6")])
         self.assertEqual(["苹果"], [e.item for e in kept])
 
+    def test_a_name_one_character_off_still_sells(self):
+        # Audit #13: an OCR slip dropped a 120% item from the sale.
+        trader, logs = self._trader({"穿山甲麟片"})
+        kept = trader._keep_owned_at_max_rate([CalendarEntry("穿山甲鳞片", "S16")])
+        self.assertEqual(["穿山甲鳞片"], [e.item for e in kept])
+        self.assertFalse(any("不在今日清单" in message for message in logs))
+
+    def test_a_cut_name_still_sells(self):
+        trader, _ = self._trader({"山甲鳞片"})
+        kept = trader._keep_owned_at_max_rate([CalendarEntry("穿山甲鳞片", "S16")])
+        self.assertEqual(["穿山甲鳞片"], [e.item for e in kept])
+
+    def test_a_different_item_is_not_taken_for_a_planned_one(self):
+        trader, logs = self._trader({"火圣石"})
+        kept = trader._keep_owned_at_max_rate([CalendarEntry("水圣石", "S6")])
+        self.assertEqual([], kept)
+        self.assertTrue(any("火圣石" in message and "不卖" in message for message in logs))
+
+    def test_dropped_items_are_shown(self):
+        statuses = {}
+        trader, _ = self._trader({"苹果"})
+        trader._status = statuses.__setitem__
+        trader._keep_owned_at_max_rate([CalendarEntry("苹果", "S6"), CalendarEntry("火圣石", "S6")])
+        self.assertEqual("火圣石", statuses["价目表未见"])
+
+    def test_a_good_inside_another_goods_name_is_not_taken_for_it(self):
+        # 铜块 sits inside 黄铜块, 巧克力 inside 巧克力鸡尾酒: exact names only.
+        trader, logs = self._trader({"铜块", "巧克力"})
+        kept = trader._keep_owned_at_max_rate(
+            [CalendarEntry("黄铜块", "S6"), CalendarEntry("巧克力鸡尾酒", "S6")]
+        )
+        self.assertEqual([], kept)
+        self.assertTrue(any("铜块" in message and "不卖" in message for message in logs))
+
+    def test_a_loose_read_of_a_confusable_good_is_not_kept(self):
+        trader, _ = self._trader({"炸三文鱼便"})
+        self.assertEqual([], trader._keep_owned_at_max_rate([CalendarEntry("三文鱼", "S6")]))
+        self.assertEqual(
+            [], trader._keep_owned_at_max_rate([CalendarEntry("炸三文鱼便当", "S6")])
+        )
+
+    def test_the_exact_confusable_name_still_sells(self):
+        trader, _ = self._trader({"黄铜块"})
+        kept = trader._keep_owned_at_max_rate(
+            [CalendarEntry("黄铜块", "S6"), CalendarEntry("铜块", "S6")]
+        )
+        self.assertEqual(["黄铜块"], [e.item for e in kept])
+
+
+class KnownGoodsTest(unittest.TestCase):
+    def test_every_known_name_names_only_its_own_good(self):
+        from src.tasks.map_trade.trader import Trader
+        from src.tasks.map_trade.trader_sell import confusable_goods, owned_name_owner
+
+        trader = object.__new__(Trader)
+        trader.vision = SimpleNamespace(simplify=lambda value: value)
+        goods = trader._known_goods([])
+        exact_only = confusable_goods(goods)
+        self.assertIn("黄铜块", exact_only)
+        self.assertIn("铜块", exact_only)
+        self.assertNotIn("穿山甲鳞片", exact_only)
+        for good, names in goods.items():
+            for name in names:
+                self.assertEqual(good, owned_name_owner(name, goods, exact_only), name)
+
+    def test_a_short_fragment_of_a_long_name_does_not_count(self):
+        from src.tasks.map_trade.trader_sell import owned_name_owner
+
+        goods = {"维生素B浓缩液": ("vitaminbconcentrate",), "玉米": ("corn",)}
+        self.assertIsNone(owned_name_owner("con", goods))
+
 
 if __name__ == "__main__":
     unittest.main()

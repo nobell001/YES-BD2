@@ -65,6 +65,7 @@ class FakeUser32:
     def __init__(self, taken=()):
         self.taken = set(taken)
         self.down = set()
+        self.tapped = set()  # pressed and let go since the last read
         self.registered = {}
         self.timers = 0
 
@@ -79,7 +80,9 @@ class FakeUser32:
         return 1
 
     def GetAsyncKeyState(self, code):
-        return -32768 if code in self.down else 0
+        state = (-32768 if code in self.down else 0) | (1 if code in self.tapped else 0)
+        self.tapped.discard(code)
+        return state
 
     def SetTimer(self, *_args):
         self.timers += 1
@@ -138,12 +141,28 @@ class TakenKeyTest(unittest.TestCase):
         self.assertIn(self.f10, user32.registered.values())
         self.assertEqual(0, user32.timers)
 
+    def test_a_tap_between_two_reads_still_counts(self):
+        # 4K PC 10-10: 60 ms taps were missed 6 of 10 times at a 100 ms poll.
+        self.assertLessEqual(hotkeys.POLL_MS, 30)
+        user32 = FakeUser32(taken={self.f10})
+        self.listener._bind(user32)
+        user32.tapped.add(self.f10)  # down and up again before the next read
+        self.listener._poll(user32)
+        self.listener._poll(user32)
+        self.assertEqual(["stop"], self.pressed)
+
     def test_a_key_held_when_watching_starts_is_not_a_press(self):
         watch = hotkeys.KeyWatch()
         watch.watch("stop", 1, is_down=True)
-        self.assertEqual([], watch.tick(lambda _code: True, 0)[0])
-        self.assertEqual([], watch.tick(lambda _code: False, 10)[0])
-        self.assertEqual(["stop"], watch.tick(lambda _code: True, 20)[0])
+        self.assertEqual([], watch.tick(lambda _code: (True, False), 0)[0])
+        self.assertEqual([], watch.tick(lambda _code: (False, False), 10)[0])
+        self.assertEqual(["stop"], watch.tick(lambda _code: (True, True), 20)[0])
+
+    def test_holding_a_key_with_auto_repeat_is_one_press(self):
+        watch = hotkeys.KeyWatch()
+        watch.watch("pause", 1)
+        presses = [watch.tick(lambda _code: (True, True), t)[0] for t in range(0, 100, 25)]
+        self.assertEqual([["pause"], [], [], []], presses)
 
 
 if __name__ == "__main__":

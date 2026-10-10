@@ -363,7 +363,54 @@ def note_give_up(task, frame, now: float | None = None) -> None:
             "task": str(getattr(task, "name", "") or ""),
             "frame": kept,
             "before": [(at, small) for at, small in _before if at <= now - BEFORE_SKIP],
+            # Not yet followed by the trip home (note_leaving_step).
+            "recovered": False,
         }
+
+
+def note_leaving_step(task, frame, now: float | None = None) -> None:
+    """The task starts going home from a screen that is not home: keep it.
+
+    Most failures go home first and say why after (a 认不准就不按 retry from
+    主城, a task's own return), so the record's frame and the seconds before
+    it showed the way home, not the step that failed (下一批 #2, the gap
+    #142 left).  A give-up just noted for this task keeps its own frame:
+    this trip home is its recovery.  Dropped again once the task goes on to
+    another step (note_stage).
+    """
+    if _current is None or frame is None:
+        return
+    with _lock:  # re-entrant: note_give_up takes it too
+        current = _current
+        if current is None or current.get("thread") != threading.get_ident():
+            return
+        kept = current.get("give_up")
+        if not (
+            kept is not None
+            and kept.get("task") == str(getattr(task, "name", "") or "")
+            and not kept.get("recovered")
+        ):
+            note_give_up(task, frame, now)
+            kept = current.get("give_up")
+        if kept is not None:
+            kept["recovered"] = True
+
+
+def note_stage(task) -> None:
+    """The task set a new 当前阶段: a trip home before it is not where it stops."""
+    if _current is None:
+        return
+    with _lock:
+        current = _current
+        if current is None or current.get("thread") != threading.get_ident():
+            return
+        kept = current.get("give_up")
+        if (
+            kept is not None
+            and kept.get("recovered")
+            and kept.get("task") == str(getattr(task, "name", "") or "")
+        ):
+            current.pop("give_up", None)
 
 
 # ------------------------------------------------------------------ files
