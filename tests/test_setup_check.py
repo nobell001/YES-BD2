@@ -21,13 +21,16 @@ SIMPLIFIED_LEFT = "我的小屋 格鲁TALK 街机游戏"
 
 class _Task:
     def __init__(self, frames=None):
-        self.frames = list(frames if frames is not None else [np.zeros((4, 4, 3), np.uint8)] * 3)
+        self.frames = list(frames if frames is not None else [np.zeros((4, 4, 3), np.uint8)] * 8)
         self.info = {}
         self.warnings = []
         self.config = {}
 
     def next_frame(self):
         return self.frames.pop(0) if self.frames else None
+
+    def sleep(self, _seconds):
+        pass
 
     def info_set(self, key, value):
         self.info[key] = value
@@ -62,6 +65,8 @@ class LookTest(unittest.TestCase):
     def setUp(self):
         setup_check.reset()
         self.addCleanup(setup_check.reset)
+        colour_check.forget_capture()
+        self.addCleanup(colour_check.forget_capture)
         previous = colour_check.last_check()
         self.addCleanup(lambda: colour_check.remember(previous))
 
@@ -102,6 +107,19 @@ class LookTest(unittest.TestCase):
         with reads, _colours(None):
             self.assertEqual("", setup_check.look(task))
         self.assertEqual([], task.warnings)
+
+    def test_a_traditional_guild_description_is_no_reminder(self):
+        # Live 2K 10-10: a 简中 client left on the guild page, whose player-written
+        # description is 繁中, refused every start 76 times.
+        guild = "8 30/30 审核 申請請DC聯絡公 #zaga12022"
+        for gacha in ("", "小尤里樂園Ⅱ 申請請DC聯絡公會長"):
+            with self.subTest(gacha=gacha):
+                task = _Task()
+                reads, _calls = _reads(guild, guild, gacha=gacha)
+                with reads, _colours(None):
+                    self.assertEqual("", setup_check.look(task))
+                self.assertEqual([], task.warnings)
+                self.assertNotIn(run_history.NOT_STARTED_KEY, task.info)
 
     def test_no_frame_or_a_broken_reading_never_stops_the_run(self):
         self.assertEqual("", setup_check.look(_Task(frames=[])))

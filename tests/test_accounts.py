@@ -11,7 +11,11 @@ from src.tasks import setup_check
 from src.tasks.map_trade import account_check
 from src.tasks.map_trade.card_status import CardActionState
 from src.tasks.map_trade.collector_constants import UNSUPPORTED_COLLECTION_CARD_NUMBERS
-from src.tasks.map_trade.models import COLLECTABLE_CARDS, SUPPRESS_ONLY_VERIFIED_CARD_IDS
+from src.tasks.map_trade.models import (
+    ABSORB_ONLY_VERIFIED_CARD_IDS,
+    COLLECTABLE_CARDS,
+    SUPPRESS_ONLY_VERIFIED_CARD_IDS,
+)
 from src.tasks.map_trade.progress import UTC_PLUS_8, ProgressStore
 from src.tasks.run_history import NOT_STARTED_KEY
 from src.utils import accounts
@@ -216,6 +220,7 @@ class AccountCheckTest(_InFolder):
             for c in COLLECTABLE_CARDS
             if c.number not in UNSUPPORTED_COLLECTION_CARD_NUMBERS
             and c.card_id not in SUPPRESS_ONLY_VERIFIED_CARD_IDS
+            and c.card_id not in ABSORB_ONLY_VERIFIED_CARD_IDS
         ][:count]
         return SimpleNamespace(card_verified=lambda card_id: card_id in verified)
 
@@ -248,6 +253,14 @@ class AccountCheckTest(_InFolder):
         nav = _Navigator([pending] * 4)
         self.assertTrue(account_check.records_from_other_account(nav, recorded))
         self.assertEqual(sorted(set(nav.asked)), sorted(verified[-2:]))
+
+    def test_a_card_without_a_suppress_badge_is_never_checked(self):
+        # Nightmare Winter has only 吸取: an untouched one reads as unsure,
+        # so it would hide a switched account.
+        everything = SimpleNamespace(card_verified=lambda card_id: True)
+        picked = account_check.card_ids_to_check(everything, None)
+        self.assertEqual(account_check.CARDS_TO_CHECK, len(picked))
+        self.assertFalse(set(picked) & ABSORB_ONLY_VERIFIED_CARD_IDS)
 
     def test_no_finished_card_means_nothing_to_check(self):
         nav = _Navigator([])

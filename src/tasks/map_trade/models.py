@@ -235,6 +235,10 @@ STORY_COLLECTION_ROLES: dict[int, tuple[CollectionMapRole, ...]] = {}
 # does not collect.  Chapter 6 (Leo 2026-10-05): 吸取 keeps 2 after all three
 # maps, as some chapters do.
 SUPPRESS_ONLY_VERIFIED_CARD_IDS = frozenset({"Q_sp6", "Q_sp18"})
+# Cards counted done once their 吸取 badge completes: Nightmare Winter shows
+# no 压制 badge at all, before or after the run (live 4K 2026-10-09: only ✦,
+# ticked after its three maps; Leo 2026-10-11: nothing left under it = done).
+ABSORB_ONLY_VERIFIED_CARD_IDS = frozenset({"Q_ep2"})
 
 
 # (card, from map, to map) walked through the area map instead of teleporting:

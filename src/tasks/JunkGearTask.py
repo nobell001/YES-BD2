@@ -47,7 +47,7 @@ from src.tasks.GearTasks import (
 from src.tasks.task_vision_mixin import REFERENCE_HEIGHT, REFERENCE_WIDTH
 from src.utils import accounts
 from src.utils.colour_check import (
-    check_capture_colours,
+    check_settled,
     distorted_colour_warning,
     last_check,
     remember,
@@ -383,7 +383,7 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
             raise
         except Exception:  # the bag step captures again and reports a real failure
             frame = None
-        check = check_capture_colours(frame)
+        check = check_settled(frame, self._frame_or_none, self.sleep)
         if check.distance is None:
             check = last_check() or check
         else:
@@ -392,6 +392,14 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
         if check.distorted:
             self.log_warning(f"{LABEL}：{distorted_colour_warning(check)}", notify=True)
         return check.distorted
+
+    def _frame_or_none(self):
+        try:
+            return self.capture_frame()
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception:
+            return None
 
     # -- carried-over junk ----------------------------------------------------------------
 

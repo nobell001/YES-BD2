@@ -20,7 +20,11 @@ from pathlib import Path
 
 from src.tasks.map_trade.card_status import CardActionState
 from src.tasks.map_trade.collector_constants import UNSUPPORTED_COLLECTION_CARD_NUMBERS
-from src.tasks.map_trade.models import COLLECTABLE_CARDS, SUPPRESS_ONLY_VERIFIED_CARD_IDS
+from src.tasks.map_trade.models import (
+    ABSORB_ONLY_VERIFIED_CARD_IDS,
+    COLLECTABLE_CARDS,
+    SUPPRESS_ONLY_VERIFIED_CARD_IDS,
+)
 from src.utils import accounts
 
 CARDS_TO_CHECK = 2
@@ -55,6 +59,8 @@ def card_ids_to_check(state, allowed) -> list[str]:
             continue
         if card.card_id in SUPPRESS_ONLY_VERIFIED_CARD_IDS:
             continue  # their 吸取 badge never settles; not clear enough
+        if card.card_id in ABSORB_ONLY_VERIFIED_CARD_IDS:
+            continue  # no 压制 badge to read; not clear enough
         if allowed is not None and card.filter_key not in allowed:
             continue
         if state.card_verified(card.card_id):

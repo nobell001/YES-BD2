@@ -21,6 +21,10 @@ TRADITIONAL_ONLY = frozenset(
 )
 # Two different such characters in one read: a lone misread is not enough.
 MIN_TRADITIONAL_CHARS = 2
+# Home's own labels on the 繁中 client.  Other pages show players' own text
+# in the same box: live 2K 10-10 a 繁中 guild description (申請請DC聯絡公會長)
+# on the guild page of a 简中 client refused every start 76 times.
+TRADITIONAL_HOME_LABELS = ("格魯", "街機遊戲", "抽抽樂", "經營管理")
 
 NOTICE_KEY = "游戏语言提醒"
 MESSAGE = (
@@ -39,9 +43,15 @@ def looks_traditional(text: object) -> bool:
     return len(found) >= MIN_TRADITIONAL_CHARS
 
 
+def traditional_home_labels(text: object) -> int:
+    """How many of home's 繁中 labels the read holds (a player's text has none)."""
+    compact = "".join(str(text or "").split())
+    return sum(1 for label in TRADITIONAL_HOME_LABELS if label in compact)
+
+
 def note_text(text: object, now: float | None = None) -> bool:
-    """Called with home-check OCR text; remembers when 繁中 text was seen."""
-    if not looks_traditional(text):
+    """Called with home-check OCR text; remembers when 繁中 home text was seen."""
+    if not looks_traditional(text) or not traditional_home_labels(text):
         return False
     with _lock:
         _state["seen_at"] = time.monotonic() if now is None else now

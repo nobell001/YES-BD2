@@ -176,19 +176,37 @@ def find_badges(frame) -> list[int]:
     return sorted(found)
 
 
-def diamond_icon(frame, rois) -> bool:
-    """True when the paid-diamond gem shows inside any reference ROI."""
+def diamond_template_ready() -> bool:
     global _diamond_template
     if _diamond_template is None:
         _diamond_template = cv2.imread(str(DIAMOND_TEMPLATE))
-    if frame is None or _diamond_template is None:
-        return False
+    return _diamond_template is not None
+
+
+def diamond_icon(frame, rois) -> bool:
+    """True when the paid-diamond gem shows inside any reference ROI.
+
+    Fails closed (audit #77): without the gem template or a frame the gem
+    cannot be ruled out, so it counts as shown and nothing is pressed."""
+    if frame is None or not diamond_template_ready():
+        return True
     reference = cv2.resize(frame[:, :, :3], (1920, 1080), interpolation=cv2.INTER_AREA)
     for x, y, w, h in rois:
         result = template_match_response(reference[y : y + h, x : x + w], _diamond_template)
         if result is not None and result.size and float(result.max()) >= DIAMOND_MATCH:
             return True
     return False
+
+
+# Two reads of one 确认 button land within a few reference pixels.
+SAME_PLACE_PIXELS = 12
+
+
+def _same_place(first, second) -> bool:
+    return (
+        abs((first.x + first.width / 2) - (second.x + second.width / 2)) <= SAME_PLACE_PIXELS
+        and abs((first.y + first.height / 2) - (second.y + second.height / 2)) <= SAME_PLACE_PIXELS
+    )
 
 
 class EventRewardTask(_ClaimTaskBase):
@@ -391,6 +409,9 @@ class EventRewardTask(_ClaimTaskBase):
             self.log_info(f"活动「{label}」：页面有钻石／付费字样，整页跳过。")
             self._page_skip_why = "有钻石，不碰"
             return True
+        if not diamond_template_ready():
+            self.log_warning(f"活动「{label}」：缺少钻石图案模板，认不出有没有钻石，整页不碰。")
+            return True
         if diamond_icon(frame, (PANEL_ROI, CURRENCY_ROI)):
             self.log_info(f"活动「{label}」：页面有钻石图案，整页跳过。")
             self._page_skip_why = "有钻石，不碰"
@@ -510,22 +531,28 @@ class EventRewardTask(_ClaimTaskBase):
         return tokens
 
     def _confirm_dialog(self, label: str) -> bool:
-        """Press 确认 on the 兑换／即刻刷新 dialog; False when none appeared."""
+        """Press 确认 on the 兑换／即刻刷新 dialog; False when none appeared.
+
+        确认 is pressed only when two frames in a row show it at the same
+        place with no 钻石 word or gem (audit #77: one frame was enough, so a
+        dialog still drawing its cost could be confirmed)."""
         end_at = monotonic() + 4.0
+        previous = None
         while monotonic() < end_at:
             frame = self.capture_frame()
             boxes = self._reference_boxes(frame, DIALOG_ROI, f"{label}确认")
             text = self._boxes_text(boxes)
             if any(word in text for word in DIAMOND_WORDS) or diamond_icon(frame, (DIALOG_ROI,)):
-                self.log_info(f"活动「{label}」：确认框有钻石图案或字样，取消。")
+                self.log_info(f"活动「{label}」：确认框有钻石图案或字样，或认不出有没有钻石，取消。")
                 cancel = self._box_with(boxes, ("取消",))
                 if cancel is not None:
                     self._click_reference_box(cancel, after_sleep=0.8)
                 return False
             confirm = self._box_with(boxes, ("确认",))
-            if confirm is not None:
+            if confirm is not None and previous is not None and _same_place(previous, confirm):
                 self._click_reference_box(confirm, after_sleep=1.5)
                 return True
+            previous = confirm
             self.sleep(0.4)
         return False
 

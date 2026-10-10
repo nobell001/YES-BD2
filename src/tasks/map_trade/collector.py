@@ -26,6 +26,7 @@ from src.tasks.map_trade.models import (
 )
 from src.tasks.map_trade.navigator import Navigator
 from src.tasks.map_trade.progress import ProgressStore
+from src.tasks.map_trade.skill_group_keeper import SkillGroupKeeper, stopping
 from src.tasks.map_trade.vision import Vision
 
 # "卡带单步重试次数"未配置时的默认值。
@@ -78,6 +79,8 @@ class Collector(SkillExecutionMixin):
         self._last_skill_geometry: dict[str, object] = {}
         self._group_one_recovery_attempted = False
         self._last_count_window_stable = False
+        # The player's skill group, put back after the group search switched it.
+        self.skill_group_keeper = SkillGroupKeeper(task, vision, "地图采集")
 
     def run(self) -> CollectionResult:
         # A Collector instance can be reused by the task scheduler.  Recovery
@@ -93,6 +96,8 @@ class Collector(SkillExecutionMixin):
                 False,
                 message=f"地图采集流程异常：{exc}",
             )
+        finally:
+            self._restore_skill_group(stopped=stopping(), final=True)
 
     def _run_collection(self) -> CollectionResult:
         state = self.progress.load()
@@ -329,6 +334,8 @@ class Collector(SkillExecutionMixin):
             if card in self._skipped_cards:
                 continue
 
+            # Still on the card's last map: the skill bar is on screen.
+            self._restore_skill_group()
             # Straight to the card's own tab (Leo 2026-10-01: character cards went to
             # the story tab first and back).
             reopened = self.navigator.open_story_quick_switcher_from_sandbox(
@@ -438,6 +445,11 @@ class Collector(SkillExecutionMixin):
         )
         return True
 
+    def _restore_skill_group(self, **kwargs) -> None:
+        keeper = getattr(self, "skill_group_keeper", None)
+        if keeper is not None:
+            keeper.restore(**kwargs)
+
     def _go_to_collection_target(self, card, current, target):
         """None when already there, else the navigation result."""
         if current is not None and current.key == target.key:
@@ -461,6 +473,7 @@ class Collector(SkillExecutionMixin):
         None = go on; a result = stop, home was not reached."""
         self._skipped_cards.append(card)
         self.task.log_warning(f"地图采集：{card.label}{reason}，先跳过，继续下一张。")
+        self._restore_skill_group()
         returned = self.navigator.return_home()
         if returned.success:
             return None

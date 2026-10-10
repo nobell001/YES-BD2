@@ -334,6 +334,9 @@ class SkillExecutionMixin:
         # The collection skills may sit in any group (the user keeps cooking
         # in group 1 and 探查/吸收/召集/压制 in group 2, 2026-09-28): try the
         # groups in turn and stay on the one that shows them.
+        keeper = getattr(self, "skill_group_keeper", None)
+        if keeper is not None:
+            keeper.before_switch()
         for group, point in sorted(SKILL_GROUP_RELATIVE_POINTS.items()):
             self._status("技能组切换", f"采集技能未显示，切换到技能组{group}")
             self.task.operate_click(*point, after_sleep=SKILL_GROUP_SWITCH_SETTLE_SECONDS)

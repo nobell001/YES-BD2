@@ -19,6 +19,7 @@ from src.tasks.map_trade.card_status import (
 from src.tasks.map_trade.models import (
     CARD_BY_ID,
     SUPPRESS_ONLY_VERIFIED_CARD_IDS,
+    ABSORB_ONLY_VERIFIED_CARD_IDS,
     MatchResult,
     NavigationResult,
     ScreenState,
@@ -2497,11 +2498,25 @@ class StoryCardNavigationMixin:
                 f"{completion.suppress.state.value}: {completion.suppress.reason}",
             )
             self._status("卡带完成度", completion.state.value)
-            if completion.state == CardActionState.COMPLETED and not enter_visually_complete:
+            # Before entering, a card with no 压制 badge counts as done once
+            # its 吸取 is ticked, as in inspect_collection_card_completion
+            # (live clone 2026-10-11: Q_ep2 missing from the records was
+            # entered again, and its 吸收 was already grey).
+            absorb_only_done = (
+                card_id in ABSORB_ONLY_VERIFIED_CARD_IDS
+                and completion.absorb.state == CardActionState.COMPLETED
+            )
+            if (
+                completion.state == CardActionState.COMPLETED or absorb_only_done
+            ) and not enter_visually_complete:
                 navigation = NavigationResult(
                     True,
                     ScreenState.CARD_MENU,
-                    f"{card_id}视觉确认吸取与压制均完成",
+                    (
+                        f"{card_id}视觉确认吸取完成（这张卡没有压制）"
+                        if absorb_only_done
+                        else f"{card_id}视觉确认吸取与压制均完成"
+                    ),
                 )
                 return CollectionCardSelectionResult(
                     CollectionCardSelectionOutcome.VISUALLY_COMPLETE,
@@ -2578,9 +2593,16 @@ class StoryCardNavigationMixin:
             f"{completion.suppress.state.value}: {completion.suppress.reason}",
         )
         self._status("卡带完成度", completion.state.value)
-        completed = completion.state == CardActionState.COMPLETED or (
-            card_id in SUPPRESS_ONLY_VERIFIED_CARD_IDS
-            and completion.suppress.state == CardActionState.COMPLETED
+        completed = (
+            completion.state == CardActionState.COMPLETED
+            or (
+                card_id in SUPPRESS_ONLY_VERIFIED_CARD_IDS
+                and completion.suppress.state == CardActionState.COMPLETED
+            )
+            or (
+                card_id in ABSORB_ONLY_VERIFIED_CARD_IDS
+                and completion.absorb.state == CardActionState.COMPLETED
+            )
         )
         return CollectionCardSelectionResult(
             (
@@ -2592,7 +2614,9 @@ class StoryCardNavigationMixin:
                 completed,
                 ScreenState.CARD_MENU,
                 (
-                    f"{card_id}视觉确认吸取与压制均完成"
+                    f"{card_id}视觉确认吸取完成（这张卡没有压制）"
+                    if completed and card_id in ABSORB_ONLY_VERIFIED_CARD_IDS
+                    else f"{card_id}视觉确认吸取与压制均完成"
                     if completed
                     else f"{card_id}未同时确认吸取与压制完成"
                 ),

@@ -49,6 +49,12 @@ class GameLanguageTest(unittest.TestCase):
         home_left_column_hits("我的小屋格魯TALK街機遊戲")
         self.assertTrue(game_language.seen_since(0.0))
 
+    def test_a_players_traditional_text_leaves_no_trace(self):
+        # A 繁中 guild description read where home's left column would be.
+        home_left_column_hits("8 30/30 审核 申請請DC聯絡公 #zaga12022")
+        home_gacha_ocr_matches("小尤里樂園Ⅱ 申請請DC聯絡公會長")
+        self.assertFalse(game_language.seen_since(0.0))
+
     def test_simplified_home_leaves_no_trace(self):
         home_left_column_hits("我的小屋格鲁TALK街机游戏")
         home_gacha_ocr_matches("抽抽乐")

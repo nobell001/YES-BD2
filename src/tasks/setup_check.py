@@ -77,15 +77,24 @@ def started_alone(task) -> bool:
     return executor is not None and getattr(executor, "current_task", None) is task
 
 
+def _traditional_home(text: str) -> bool:
+    """Two of home's own 繁中 labels: 繁中 text alone may be a player's
+    (a guild description on the guild page, live 2K 10-10)."""
+    return (
+        game_language.traditional_home_labels(text) >= HOME_LEFT_COLUMN_REQUIRED_HITS
+        and game_language.looks_traditional(text)
+    )
+
+
 def _home_traditional(task, frame) -> bool:
-    """True only when home's own labels read 繁中 (never a player's name)."""
+    """True only when home's own labels read 繁中 (never a player's text)."""
     from src.tasks.map_trade.vision import Vision
 
     vision = Vision(task)
     left = vision.ocr_text(
         frame, "开跑前检查 左列", relative_roi=HOME_LEFT_COLUMN_OCR_RELATIVE_ROI
     )
-    if game_language.looks_traditional(left):
+    if _traditional_home(left):
         return True
     if home_left_column_hits(left) >= HOME_LEFT_COLUMN_REQUIRED_HITS:
         return False  # the 简中 home
@@ -95,7 +104,7 @@ def _home_traditional(task, frame) -> bool:
         relative_roi=HOME_GACHA_OCR_RELATIVE_ROI,
         ocr_scale=GACHA_OCR_SCALE,
     )
-    return game_language.looks_traditional(f"{left} {gacha}")
+    return _traditional_home(f"{left} {gacha}")
 
 
 def _remind(task, text: str, notify: bool = True) -> None:
@@ -117,9 +126,9 @@ def _colour_notify(now: float) -> bool:
 
 
 def _check_colours(task, frame, now: float) -> None:
-    check = colour_check.check_capture_colours(frame)
+    check = colour_check.check_settled(frame, task.next_frame, task.sleep)
     if check.distance is None:
-        return  # the home top bar is not on screen
+        return  # the home top bar is not on screen, or the colours were off only once
     colour_check.remember(check)
     try:
         task.info_set(COLOUR_KEY, check.detail)

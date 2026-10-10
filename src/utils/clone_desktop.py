@@ -79,12 +79,67 @@ def viewer_removed() -> bool:
 
 
 def hello_only() -> bool:
-    """A Microsoft account limited to Windows Hello cannot sign in to the clone."""
+    """A Microsoft account limited to Windows Hello cannot sign in to the clone.
+
+    The setting is machine-wide but only bites a Microsoft account: a local
+    account has no such switch in Settings and must not be stopped by it
+    (clone thread 2026-10-10).  Not sure what the account is -> still stop.
+    """
     value = _read_hklm(
         r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device",
         "DevicePasswordLessBuildVersion",
     )
-    return value == 2
+    return value == 2 and microsoft_account() is not False
+
+
+def microsoft_account() -> bool | None:
+    """The current Windows user signs in with a Microsoft account; None = can't tell.
+
+    Windows keeps the provider of each signed-in account under
+    IdentityStore\\Cache\\<SID>; without that entry, a Microsoft account
+    signed in to Windows leaves its identity under HKCU IdentityCRL.
+    """
+    try:
+        import winreg
+    except ImportError:
+        return None
+    sid = _current_user_sid()
+    if sid:
+        provider = _read_hklm(
+            rf"SOFTWARE\Microsoft\IdentityStore\Cache\{sid}\IdentityCache\{sid}",
+            "ProviderName",
+        )
+        if isinstance(provider, str) and provider:
+            return "microsoftaccount" in provider.replace(" ", "").lower()
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\IdentityCRL\UserExtendedProperties",
+        ) as key:
+            return winreg.QueryInfoKey(key)[0] > 0
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return None
+
+
+@functools.lru_cache(maxsize=1)
+def _current_user_sid() -> str | None:
+    """``whoami /user``: S-1-5-21-... of the user running the tool."""
+    try:
+        result = subprocess.run(
+            ["whoami", "/user", "/fo", "csv", "/nh"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for part in result.stdout.replace('"', "").replace("\n", ",").split(","):
+        if part.strip().startswith("S-1-"):
+            return part.strip()
+    return None
 
 
 def viewer_running() -> bool:

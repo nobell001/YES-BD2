@@ -12,7 +12,7 @@ from src.tasks.map_trade.models import MatchResult, TemplateSpec
 from src.utils import task_vision
 from src.utils.calibration import FHD_1080
 from src.utils.colour_check import (
-    check_capture_colours,
+    check_settled,
     distorted_colour_warning,
     last_check,
     remember,
@@ -33,7 +33,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATE_DIR = PROJECT_ROOT / "recognition-assets" / "template-assets"
 # Clear clicks without reaching home before checking whether the game is already in.
 CLEAR_CLICKS_BEFORE_RECOVERY = 5
-PRELOGIN_STATES = frozenset({"waiting", "browndustx", "waiting_update", "downloading"})
+PRELOGIN_STATES = frozenset(
+    {"waiting", "browndustx", "waiting_update", "downloading", "terms"}
+)
+# The game's 「同意《棕色尘埃2》使用条款」 dialog (全部同意 → 开始游戏): the
+# player's own agreement, never pressed for them.  Live 10-10 on the 4K PC the
+# tool sat 10 minutes on it logging only "state=browndustx".  One frame with it
+# already stops every press; two in a row tell the player.
+TERMS_WORDS = ("使用条款", "使用條款", "服务条款", "服務條款", "利用規約", "이용약관", "termsof")
+AGREE_WORDS = ("同意", "동의", "agree")
+AGREE_ALL_WORDS = ("全部同意", "すべて同意", "모두동의", "agreeall", "agreetoall")
+TERMS_HITS_NEEDED = 2
+TERMS_MESSAGE = (
+    "游戏在问你是否同意《棕色尘埃2》使用条款。这要你本人同意，"
+    "工具不会替你按「全部同意」或「开始游戏」；请自己看过后按下去，按完工具会接着登录。"
+)
 # A swallowed TOUCH TO START press sat in waiting_loading until the 5-min
 # budget ran out: the title still showing this long after the press, on 2
 # frames, is pressed again (at most this many presses per login).
@@ -164,6 +178,8 @@ class AutoLoginTask(BaseBD2Task):
         self._missing_template_names: set[str] = set()
         self._match_error_names: set[str] = set()
         self._match_pause_until = 0.0
+        self._terms_hits = 0
+        self._terms_warned = False
 
     def on_create(self):
         self._enabled = bool(self.config.get("_enabled", True))
@@ -230,6 +246,14 @@ class AutoLoginTask(BaseBD2Task):
                 )
                 return False
 
+        if self._state in ("clearing", "waiting_loading", "loading", "waiting_home"):
+            boxes, _text = self._login_page_ocr(frame)
+            if self._terms_dialog_blocks(boxes):
+                # Waiting on the player is not the game failing to load.
+                if self._login_clicked_at is not None:
+                    self._login_clicked_at = monotonic()
+                return False
+
         if self._state == "clearing":
             # clearing 帧不经过 _wait_loading_then_home 的超时检查，必须
             # 在这里补上登录后总等待预算，超时走统一的重置+退避。
@@ -261,6 +285,8 @@ class AutoLoginTask(BaseBD2Task):
             # A confirm / update / download step was seen: the login screen is up.
             self._no_login_signal_since = None
         boxes, login_text = self._login_page_ocr(frame)
+        if self._terms_dialog_blocks(boxes):
+            return False
         download_button = self._find_update_download_button(boxes)
         if download_button is not None:
             self._handle_update_download_prompt(download_button)
@@ -335,6 +361,50 @@ class AutoLoginTask(BaseBD2Task):
             f"touch={touch_to_start.score:.3f}, state={self._state}"
         )
         return False
+
+    def _terms_dialog_blocks(self, boxes: list) -> bool:
+        """The terms dialog is up: press nothing, and say why on 2 frames."""
+        if not self._is_terms_dialog(boxes):
+            if getattr(self, "_terms_hits", 0) and self._state == "terms":
+                self._state = "waiting"
+                self.log_info("自动登录：使用条款的窗口已经关掉，接着登录。")
+            self._terms_hits = 0
+            self._terms_warned = False
+            return False
+        self._terms_hits = getattr(self, "_terms_hits", 0) + 1
+        if self._terms_hits < TERMS_HITS_NEEDED:
+            return True
+        if self._state in ("waiting", "browndustx", "waiting_update", "downloading"):
+            self._state = "terms"
+        self._no_login_signal_since = None
+        self.info_set("状态", "等你同意使用条款")
+        self._set_stage("等你同意使用条款")
+        self._set_action(TERMS_MESSAGE)
+        if not getattr(self, "_terms_warned", False):
+            self._terms_warned = True
+            self.log_warning(f"自动登录：{TERMS_MESSAGE}", notify=True)
+            self._tell_waiting_batches(f"{TERMS_MESSAGE}按完自动开始。")
+        return True
+
+    def _is_terms_dialog(self, boxes: list) -> bool:
+        text = self._normalize_ocr_text(
+            " ".join(str(getattr(box, "name", "")) for box in boxes)
+        )
+        if any(word in text for word in AGREE_ALL_WORDS):
+            return True
+        return any(word in text for word in TERMS_WORDS) and any(
+            word in text for word in AGREE_WORDS
+        )
+
+    def _tell_waiting_batches(self, status: str) -> None:
+        try:
+            from src.tasks.DailyBatchTask import DailyBatchTask, WeeklyBatchTask
+        except ImportError:  # pragma: no cover
+            return
+        for batch_class in (DailyBatchTask, WeeklyBatchTask):
+            batch = self.executor.get_task_by_class(batch_class)
+            if batch is not None and getattr(batch, "_start_after_login", False):
+                batch.info_set("状态", status)
 
     def _quiet_prelogin_recovery(self) -> bool:
         """No login screen for long while a batch waits: maybe already in game."""
@@ -764,7 +834,9 @@ class AutoLoginTask(BaseBD2Task):
         if last_check() is not None:
             return
         try:
-            check = check_capture_colours(frame)
+            check = check_settled(frame, self.next_frame, self.sleep)
+        except (TaskDisabledException, FinishedException):
+            raise
         except Exception as exc:  # a diagnostic must never stop the login flow
             self.info_set("画面颜色", f"检查失败：{exc}")
             return
