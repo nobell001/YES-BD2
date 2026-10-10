@@ -59,5 +59,92 @@ class HotkeysTest(unittest.TestCase):
         self.assertEqual(hotkeys.keys(task), hotkeys.set_key("pause", "F1", task))
 
 
+class FakeUser32:
+    """RegisterHotKey fails for keys in ``taken``; ``down`` is the keyboard."""
+
+    def __init__(self, taken=()):
+        self.taken = set(taken)
+        self.down = set()
+        self.registered = {}
+        self.timers = 0
+
+    def RegisterHotKey(self, _hwnd, hotkey_id, _mods, code):
+        if code in self.taken:
+            return 0
+        self.registered[hotkey_id] = code
+        return 1
+
+    def UnregisterHotKey(self, _hwnd, hotkey_id):
+        self.registered.pop(hotkey_id, None)
+        return 1
+
+    def GetAsyncKeyState(self, code):
+        return -32768 if code in self.down else 0
+
+    def SetTimer(self, *_args):
+        self.timers += 1
+        return 7
+
+    def KillTimer(self, *_args):
+        self.timers -= 1
+        return 1
+
+
+class TakenKeyTest(unittest.TestCase):
+    """Leo 2026-10-10: F9/F10 did nothing mid-run; the log said another
+    program held them, so the tool never heard them."""
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        patcher = patch.object(hotkeys, "KEYS_FILE", Path(self.folder.name) / "hotkeys.json")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch.object(hotkeys, "_record_task", lambda: None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.pressed = []
+        self.listener = hotkeys.HotkeyListener(self.pressed.append)
+        self.f9, self.f10 = hotkeys.key_code("F9"), hotkeys.key_code("F10")
+
+    def test_a_taken_key_is_read_directly(self):
+        user32 = FakeUser32(taken={self.f9, self.f10})
+        self.listener._bind(user32)
+        self.assertEqual({"pause": self.f9, "stop": self.f10}, self.listener.watch.keys)
+        self.assertEqual(1, user32.timers)
+        user32.down.add(self.f10)
+        self.listener._poll(user32)
+        self.listener._poll(user32)  # held: still one press
+        user32.down.clear()
+        self.listener._poll(user32)
+        user32.down.add(self.f9)
+        self.listener._poll(user32)
+        self.assertEqual(["stop", "pause"], self.pressed)
+
+    def test_free_keys_need_no_reading(self):
+        user32 = FakeUser32()
+        self.listener._bind(user32)
+        self.assertEqual({}, self.listener.watch.keys)
+        self.assertEqual(0, user32.timers)
+
+    def test_registered_again_once_the_other_program_lets_go(self):
+        user32 = FakeUser32(taken={self.f10})
+        self.listener._bind(user32)
+        self.assertEqual({"stop": self.f10}, self.listener.watch.keys)
+        user32.taken.clear()
+        with patch.object(hotkeys.time, "monotonic", return_value=1e6):
+            self.listener._poll(user32)
+        self.assertEqual({}, self.listener.watch.keys)
+        self.assertIn(self.f10, user32.registered.values())
+        self.assertEqual(0, user32.timers)
+
+    def test_a_key_held_when_watching_starts_is_not_a_press(self):
+        watch = hotkeys.KeyWatch()
+        watch.watch("stop", 1, is_down=True)
+        self.assertEqual([], watch.tick(lambda _code: True, 0)[0])
+        self.assertEqual([], watch.tick(lambda _code: False, 10)[0])
+        self.assertEqual(["stop"], watch.tick(lambda _code: True, 20)[0])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,7 @@ from qfluentwidgets import FluentIcon
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.task_vision_mixin import LOADING_TEMPLATE, TaskVisionMixin
 from src.utils.ocr_utils import keyword_match_count
+from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS
 
 KEYWORD_MATCH_RATIO = 0.9
 
@@ -27,6 +28,7 @@ SKIP_BUTTON_REFERENCE_POINT = (1770, 60)
 # request 2026-09-27), so the burst is 4 s.
 RESULT_SKIP_BURST_KEY = "结果跳过连续点击秒数"
 RESULT_SKIP_BURST_SECONDS = 4.0
+CONFIRM_GONE_RECHECK_SECONDS = 0.5
 # Saved configs still hold the old default; a stored 3.0 is that default, not
 # a user choice, so it is raised to the new one when the config loads.
 LEGACY_RESULT_SKIP_BURST_SECONDS = 3.0
@@ -172,6 +174,13 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
         verify_finished: bool,
     ) -> bool:
         available, _text, judged = self._wait_for_free_gacha(section_name)
+        if not available and judged:
+            # A slow PC can draw the free entry after the wait: look again
+            # before 「跳过」, which marks the day's free pull done.
+            available, _text, judged_again = self._wait_for_free_gacha(
+                section_name, timeout=SLOW_PC_GRACE_SECONDS
+            )
+            judged = judged or judged_again
         self.info_set(
             f"{section_name} 免费抽",
             "可领取" if available else ("无" if judged else "无法判断"),
@@ -433,16 +442,33 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
         return False
 
     def _confirm_dialog_still_open(self, section_name: str) -> bool:
-        """同一新帧判定确认弹窗是否仍在；loading 视为提交已生效进入转场。"""
+        """确认弹窗是否仍在；loading 视为提交已生效进入转场。
+
+        没看到弹窗时隔 0.5 秒再看一帧：慢电脑重绘中的一帧会漏读弹窗，接着的
+        跳过连点就会点在弹窗上（Leo 2026-10-10「都可以適當加個1~2秒等看看」）。
+        看到 loading 或弹窗就立刻下结论。
+        """
+        for look in range(2):
+            if look:
+                self.sleep(CONFIRM_GONE_RECHECK_SECONDS)
+            state = self._confirm_dialog_frame_state(section_name)
+            if state != "gone":
+                return state == "open"
+        return False
+
+    def _confirm_dialog_frame_state(self, section_name: str) -> str:
+        """同一新帧：loading / open / gone。"""
         frame = self.capture_frame()
         loading = self._match(frame, LOADING_TEMPLATE)
         self.info_set(f"{section_name}_submit_loading", f"{loading.score:.3f}")
         if self._passes(loading, LOADING_TEMPLATE):
-            return False
+            return "loading"
         text = self._ocr_text(frame, name=f"{section_name}_submit")
         dialog_hits = self._keyword_match_count(text, CONFIRM_DIALOG_KEYWORDS)
         self.info_set(f"{section_name}_submit 关键字", f"弹窗{dialog_hits}")
-        return dialog_hits >= int(self.config.get("确认弹窗关键词最低命中数", 2))
+        if dialog_hits >= int(self.config.get("确认弹窗关键词最低命中数", 2)):
+            return "open"
+        return "gone"
 
     def _free_entry_retry_state(self, section_name: str) -> str:
         """同一新帧判定能否重试免费入口，四路信号不得跨帧拼接。"""

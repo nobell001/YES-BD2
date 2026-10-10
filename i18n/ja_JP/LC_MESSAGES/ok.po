@@ -2396,3 +2396,12 @@ msgstr "調理"
 
 msgid "5星"
 msgstr "5つ星"
+
+msgid "正在停止…"
+msgstr "停止中…"
+
+msgid "正在停止：{name}"
+msgstr "停止中：{name}"
+
+msgid "正在收尾，请稍等"
+msgstr "今の手順を終えています。少々お待ちください"

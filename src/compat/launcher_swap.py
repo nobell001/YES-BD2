@@ -22,16 +22,15 @@ import time
 import urllib.request
 import zipfile
 
-# v0.1.13 发布的启动器（1.2.4，自动启动倒数）。钉在那个发布和它的检查码：
-# 更新仓库比发布附件先出来，用 latest 可能拿到旧启动器。启动器再改时，
-# 指向第一次带它的发布（tag + win32_sha256.txt），并调高 LAUNCHER_VERSION
-# （要跟 scripts/prepare_pyappify_launcher.ps1 的 $LauncherVersion 一样）。
-# 1.2.5（连不上 GitHub 也能用装好的版本启动；检查更新时按「启动应用」也会先更新
-# 再启动；启动器日志改叫 app.<日期>.txt）还没发布：带它的发布出来后，
-# 再把这里指向那个发布。
-LAUNCHER_VERSION = "1.2.4"
-LAUNCHER_RELEASE = "v0.1.13"
-LAUNCHER_SHA256 = "11fccb5df3512fee2e9a59c74d7bc1f9bd14acad90cdb7651dd4e96a5d8a44f1"
+# v0.1.18 发布的启动器（1.2.5：连不上 GitHub 也能用装好的版本启动；检查更新时
+# 按「启动应用」也会先更新再启动；启动器日志改叫 app.<日期>.txt）。钉在那个发布
+# 和它的检查码：更新仓库比发布附件先出来，用 latest 可能拿到旧启动器。启动器
+# 再改时，指向第一次带它的发布（tag + win32_sha256.txt），并调高
+# LAUNCHER_VERSION（要跟 scripts/prepare_pyappify_launcher.ps1 的
+# $LauncherVersion 一样）。
+LAUNCHER_VERSION = "1.2.5"
+LAUNCHER_RELEASE = "v0.1.18"
+LAUNCHER_SHA256 = "a6100bfab748595f2ae430e3e76127fa6ce247523efa86dc361b0b1d575834a9"
 LAUNCHER_ZIP_URL = "https://github.com/nobell001/YES-BD2/releases/download/{tag}/yes-bd2-win32.zip"
 
 DOWNLOAD_TIMEOUT = 60

@@ -25,6 +25,10 @@ from typing import Callable, TypeVar
 RETRY_AFTER_SECONDS = 1.5
 CONFIRM_TIMEOUT_SECONDS = 3.0
 POLL_SECONDS = 0.25
+# A cue not seen yet gets this much more looking before it counts as absent:
+# slow PCs draw late (Leo 2026-10-10 「都可以適當加個1~2秒等看看」「但不要有
+# 已經判斷到 又空等的情況」).  A cue that is read ends the wait at once.
+SLOW_PC_GRACE_SECONDS = 2.0
 
 T = TypeVar("T")
 

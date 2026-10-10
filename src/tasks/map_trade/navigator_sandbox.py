@@ -12,7 +12,6 @@ from src.tasks.map_trade.action_icons import (
     ACTION_SLOT_CENTERS_REFERENCE,
     ACTION_SLOT_RELATIVE_ROIS,
     ACTION_SLOT_SEARCH_RADII_REFERENCE,
-    SANDBOX_TELEPORT_ICON,
     SKILL_REFERENCE_HEIGHT,
     SKILL_REFERENCE_WIDTH,
     ActionIconDetection,
@@ -22,6 +21,7 @@ from src.tasks.map_trade.action_icons import (
 from src.tasks.map_trade.collector_constants import SEARCH_COUNTDOWN_RELATIVE_ROI
 from src.tasks.map_trade.models import (
     CARD_BY_ID,
+    CIRCLE_EXIT_WALKS,
     EVENT_WALK_EDGES,
     RESTART_NAV_ENTRIES,
     RESUMING_WALK_CARD_IDS,
@@ -115,9 +115,6 @@ from src.tasks.map_trade.navigator_constants import (
     SANDBOX_SKILL_STATE_TEMPLATES,
     SANDBOX_SKILL_UNSELECTED_YELLOW_MAX_RATIO,
     SANDBOX_TELEPORT_SKILL_FAILURE_GROUPS,
-    SANDBOX_TELEPORT_SKILL_POLL_INTERVAL,
-    SANDBOX_TELEPORT_SKILL_TEMPLATE,
-    SANDBOX_TELEPORT_SKILL_TIMEOUT,
     SANDBOX_TEMPLATES,
     STORY_SANDBOX_STABLE_HITS,
     STORY_SANDBOX_SWITCH_WINDOW,
@@ -1525,171 +1522,8 @@ class SandboxNavigationMixin:
             detect_skill_failure=False,
         )
 
-    @staticmethod
-    def _sandbox_same_action_identity(
-        previous: ActionIconDetection,
-        current: ActionIconDetection,
-    ) -> bool:
-        if previous.state is not current.state:
-            return False
-        first = previous.match
-        second = current.match
-        if first.size[0] <= 0 or second.size[0] <= 0:
-            return False
-        scale = max(0.2, min(float(first.scale), float(second.scale)))
-        tolerance = max(3, round(6.0 * scale))
-        return (
-            abs(first.center[0] - second.center[0]) <= tolerance
-            and abs(first.center[1] - second.center[1]) <= tolerance
-            and abs(first.size[0] - second.size[0]) <= max(3, tolerance)
-            and abs(first.size[1] - second.size[1]) <= max(3, tolerance)
-        )
-
-    def _click_sandbox_teleport_skill_with_evidence(
-        self,
-        timeout: float = SANDBOX_TELEPORT_SKILL_TIMEOUT,
-    ) -> bool:
-        """Require two consistent local evidence observations before clicking."""
-
-        end_at = monotonic() + max(0.0, timeout)
-        detector = ActionIconDetector(self.vision)
-        previous = None
-        stable_hits = 0
-        last = ActionIconDetection(
-            ActionIconState.ABSENT,
-            MatchResult(-1.0, (0, 0), (0, 0)),
-            reason="未执行识别",
-            semantic_state="absent",
-        )
-        while monotonic() <= end_at:
-            frame = self.vision.capture()
-            geometry = self._sandbox_frame_geometry(frame)
-            if geometry is False or (geometry is not None and not geometry.accepted):
-                reason = (
-                    "画面几何检查异常"
-                    if geometry is False
-                    else "画面几何拒绝：" + "|".join(geometry.rejection_reasons)
-                )
-                self._status("箱庭5号传送阵技能", reason)
-                return False
-            _skill_matches, _skill_hits, skill_group = self._sandbox_skill_group_evidence(
-                frame,
-                geometry,
-            )
-            if skill_group != 1:
-                current = ActionIconDetection(
-                    ActionIconState.ABSENT,
-                    MatchResult(-1.0, (0, 0), (0, 0)),
-                    reason=(
-                        "错误技能组：" + str(skill_group)
-                        if skill_group is not None
-                        else "技能组无法唯一确认"
-                    ),
-                    semantic_state="wrong_group",
-                )
-            else:
-                current = detector.detect(
-                    frame,
-                    SANDBOX_TELEPORT_ICON,
-                    geometry=geometry,
-                )
-            last = current
-            if current.clickable and (
-                previous is not None
-                and self._sandbox_same_action_identity(previous, current)
-            ):
-                stable_hits += 1
-            elif current.clickable:
-                stable_hits = 1
-            else:
-                stable_hits = 0
-            self._status(
-                "箱庭5号传送阵技能",
-                (
-                    f"{current.state.value}/{current.semantic_state or '-'}; "
-                    f"center={current.match.center}; "
-                    f"m={current.match.score:.3f},p={current.match.pixel_score:.3f},"
-                    f"z={current.match.zncc_score:.3f},"
-                    f"g={current.match.gradient_zncc_score:.3f},"
-                    f"e={current.match.edge_score:.3f}; "
-                    f"scale={current.match.scale:.3f}; "
-                    f"margin={current.candidate_margin:.3f}; "
-                    f"stable={stable_hits}/2; reason={current.reason or '-'}"
-                ),
-            )
-            if current.clickable and stable_hits >= 2:
-                self.vision.click_client(
-                    current.match.center,
-                    frame.shape,
-                    after_sleep=SANDBOX_MAP_SETTLE_SECONDS,
-                )
-                return True
-            previous = current if current.clickable else None
-            self.task.sleep(SANDBOX_TELEPORT_SKILL_POLL_INTERVAL)
-        self._status(
-            "箱庭5号传送阵技能",
-            (
-                "局部多证据/稳定确认超时；"
-                f"last={last.state.value}/{last.semantic_state or '-'}; "
-                f"m={last.match.score:.3f},p={last.match.pixel_score:.3f},"
-                f"z={last.match.zncc_score:.3f},"
-                f"g={last.match.gradient_zncc_score:.3f},"
-                f"e={last.match.edge_score:.3f}; reason={last.reason or '-'}"
-            ),
-        )
-        return False
-
-    def _click_sandbox_teleport_skill(
-        self,
-        timeout: float = SANDBOX_TELEPORT_SKILL_TIMEOUT,
-    ) -> bool:
-        if self._sandbox_has_evidence_matcher():
-            return self._click_sandbox_teleport_skill_with_evidence(timeout)
-        return self._click_sandbox_teleport_skill_legacy(timeout)
-
-    def _click_sandbox_teleport_skill_legacy(
-        self,
-        timeout: float = SANDBOX_TELEPORT_SKILL_TIMEOUT,
-    ) -> bool:
-        """Click the sandbox's fifth teleport skill from a strict match center."""
-
-        end_at = monotonic() + max(0.0, timeout)
-        last = MatchResult(-1.0, (0, 0), (0, 0))
-        while monotonic() <= end_at:
-            frame = self.vision.capture()
-            last = self.vision.match(frame, SANDBOX_TELEPORT_SKILL_TEMPLATE)
-            passed = self.vision.passes(last, SANDBOX_TELEPORT_SKILL_TEMPLATE)
-            self._status(
-                "箱庭5号传送阵技能",
-                (
-                    f"{'pass' if passed else 'miss'}; center={last.center}, "
-                    f"match={last.score:.3f}, pixel={last.pixel_score:.3f}, "
-                    f"zncc={last.zncc_score:.3f}"
-                ),
-            )
-            if passed:
-                self.vision.click_client(
-                    last.center,
-                    frame.shape,
-                    after_sleep=SANDBOX_MAP_SETTLE_SECONDS,
-                )
-                return True
-            self.task.sleep(SANDBOX_TELEPORT_SKILL_POLL_INTERVAL)
-        self._status(
-            "箱庭5号传送阵技能",
-            (
-                "超时未通过严格识别；"
-                f"last_match={last.score:.3f}, pixel={last.pixel_score:.3f}, "
-                f"zncc={last.zncc_score:.3f}"
-            ),
-        )
-        # A timeout is an explicit recognition failure.  Never turn the
-        # calibrated slot center into a blind action click; the caller will
-        # continue with the existing safe interaction/navigation fallback.
-        return False
-
     def open_teleport_map_from_sandbox(self) -> NavigationResult:
-        """Open the teleport map through interaction first, then skill fallback."""
+        """Open the teleport map through the circle's 交互 button."""
 
         self._status("导航状态", "优先识别箱庭传送阵交互按钮")
         if self._click_sandbox_teleport_interaction():
@@ -1707,37 +1541,13 @@ class SandboxNavigationMixin:
                 map_page_mode=opened.map_page_mode,
             )
 
-        self._status("导航状态", "未识别交互按钮，回退识别箱庭5号传送阵技能")
-        if not self._click_sandbox_teleport_skill():
-            return NavigationResult(
-                False,
-                ScreenState.SANDBOX,
-                "未可靠识别箱庭5号传送阵技能，已停止打开传送阵地图",
-            )
-
-        opened = self._wait_for_sandbox_map_open(
-            "箱庭5号传送阵技能",
-            expected_mode=MapPageMode.GENERATE_TELEPORT,
-            detect_skill_failure=True,
-        )
-        if opened.success:
-            return opened
-        if not self._sandbox_teleport_skill_failure_matches(opened.message):
-            return opened
-
-        fallback = self._walk_to_sandbox_teleport_interaction()
-        if fallback.success:
-            return NavigationResult(
-                True,
-                fallback.state,
-                f"{opened.message}；{fallback.message}",
-                map_page_mode=fallback.map_page_mode,
-            )
+        # The portal skill is never pressed (Leo 2026-10-10: 「我是說技能 不要
+        # 傳送陣」): only the 交互 button opens the map here; callers walk to
+        # a circle on the area map or go through the ≡ menu.
         return NavigationResult(
             False,
-            fallback.state,
-            f"{opened.message}；导航/徒步回退失败：{fallback.message}",
-            map_page_mode=fallback.map_page_mode,
+            ScreenState.SANDBOX,
+            "不在传送阵旁（没有交互按钮），不用传送阵技能",
         )
 
     def _teleport_generation_boxes(
@@ -2374,11 +2184,12 @@ class SandboxNavigationMixin:
         self._status("区域地图", f"当前位置 {header} -> {keys[0] if len(keys) == 1 else '-'}")
         return keys[0] if len(keys) == 1 else None
 
-    def _open_teleport_map_anywhere(self) -> NavigationResult:
+    def _open_teleport_map_anywhere(self, card: CardSpec | None = None) -> NavigationResult:
         """The teleport map, going to the hunting ground's circle if needed.
 
         The user's way when not standing on a teleport circle (2026-09-28):
-        the minimap's ≡ menu -> 狩猎场 -> 立即前往, then its circle.
+        the minimap's ≡ menu -> 狩猎场 -> 立即前往, then its circle.  An area
+        without a circle (CIRCLE_EXIT_WALKS) is left through its exit first.
         """
         opened = self.open_teleport_map_from_sandbox()
         if opened.success:
@@ -2389,6 +2200,9 @@ class SandboxNavigationMixin:
         walked = self._walk_to_sandbox_teleport_interaction()
         if walked.success:
             return walked
+        neighbour = self._walk_to_circle_neighbour(card)
+        if neighbour is not None:
+            return neighbour
         self._status("导航状态", "地图传送门不可用，前往狩猎场的传送阵")
         entry = self._travel_to_hunting_ground()
         if entry is None:
@@ -2402,6 +2216,33 @@ class SandboxNavigationMixin:
                 expected_mode=MapPageMode.DIRECT_TELEPORT,
                 detect_skill_failure=False,
             )
+        walked = self._walk_to_sandbox_teleport_interaction()
+        if walked.success:
+            return walked
+        return self._walk_to_circle_neighbour(card) or walked
+
+    def _walk_to_circle_neighbour(self, card: CardSpec | None) -> NavigationResult | None:
+        """From an area without a teleport circle, walk out through its exit
+        to the neighbour that has one and open the teleport map there.
+        None when ``card`` has no such area or the character is elsewhere."""
+
+        walk = CIRCLE_EXIT_WALKS.get(card.card_id) if card is not None else None
+        if walk is None:
+            return None
+        here_title, there_title = walk
+        there = next(
+            (target for target in card.targets if target.title == there_title),
+            CollectionMapTarget(CollectionMapRole.BATTLE_AREA_1, there_title),
+        )
+        here = CollectionMapTarget(CollectionMapRole.MAIN_AREA, here_title)
+        self._status("导航状态", f"{here_title}没有传送阵，走出口到{there_title}再找传送阵")
+        moved = self._walk_to_collection_map(card, here, there)
+        if not moved.success:
+            self._status("导航状态", f"没能从{here_title}走到{there_title}：{moved.message}")
+            return None if "区域地图不是" in moved.message else moved
+        opened = self.open_teleport_map_from_sandbox()
+        if opened.success:
+            return opened
         return self._walk_to_sandbox_teleport_interaction()
 
     def _travel_to_hunting_ground(self) -> str | None:
@@ -2835,13 +2676,13 @@ class SandboxNavigationMixin:
                     return NavigationResult(
                         True, ScreenState.SANDBOX, f"经{entry}到达{card.targets[0].title}"
                     )
-                opened = self._open_teleport_map_anywhere()
+                opened = self._open_teleport_map_anywhere(card)
             else:
                 # Neither in the ≡ menu (ch13 had no 狩猎场, live
                 # 2026-09-29): walk to this map's own teleport circle.
-                opened = self._open_teleport_map_anywhere()
+                opened = self._open_teleport_map_anywhere(card)
         else:
-            opened = self._open_teleport_map_anywhere()
+            opened = self._open_teleport_map_anywhere(card)
         if not opened.success:
             return opened
         context = self._wait_for_collection_teleport_map(card)
@@ -2913,7 +2754,7 @@ class SandboxNavigationMixin:
                     True, ScreenState.SANDBOX, f"经{town_npc}到达{next_target.title}"
                 )
             self._status("导航状态", f"经{town_npc}未到{next_target.title}，改用传送阵地图")
-        opened = self._open_teleport_map_anywhere()
+        opened = self._open_teleport_map_anywhere(card)
         if not opened.success:
             return NavigationResult(
                 False,

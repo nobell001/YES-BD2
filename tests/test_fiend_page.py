@@ -191,6 +191,28 @@ class FiendPageTest(unittest.TestCase):
         page.refresh()
         self.assertEqual("停止录制", page.record_button.text())
 
+    def test_stop_recording_shows_at_once_and_a_second_press_does_nothing(self):
+        # Leo 2026-10-10: a press shows at once, or the player keeps pressing.
+        (self.root / "10月").mkdir()
+        self.record.enabled = True
+        self.record.disable = lambda: setattr(self.record, "enabled", False)
+        self.record.unpause = lambda: None
+        with (
+            mock.patch.object(data, "current_task", lambda: self.record),
+            mock.patch.object(data, "onetime_tasks", lambda: []),
+            mock.patch("src.ui.shell.clone_flow.drop_waiting_job", lambda: False),
+            mock.patch("src.ui.shell.actions.start") as start,
+        ):
+            page = fiend_page.FiendPage()
+            page.refresh()
+            page.record_or_stop()
+            self.assertEqual("正在停止…", page.record_button.text())
+            self.assertFalse(page.record_button.isEnabled())
+            page.record_or_stop()  # the recording is still ending its step
+            start.assert_not_called()
+        page.refresh()  # it ended
+        self.assertEqual("开始录制", page.record_button.text())
+
 
 class PageSpeedTest(unittest.TestCase):
     """Leo 2026-10-06 (效能、防卡死): the page reads no more than it must."""

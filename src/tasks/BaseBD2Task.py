@@ -15,7 +15,7 @@ from PIL import Image
 
 from src.scene.BD2Scene import BD2Scene
 from src.scene.ScreenPosition import ScreenPosition
-from src.tasks import problem_report
+from src.tasks import failure_reason, problem_report
 from src.tasks.task_notifications import log_task_completion
 from src.utils import game_language, game_size, keep_awake
 from src.utils.game_day import DAILY_REFRESH_HOUR
@@ -190,6 +190,12 @@ class BaseBD2Task(BaseTask):
             # A failure after the home checks read 繁中 text says to switch the
             # game to 简体中文 (Leo 2026-10-09: warn now, support 繁中 later).
             started = monotonic()
+            # Where this run's log lines begin and its 状态 before it, for the
+            # reason a failure is given (failure_reason).
+            begun = time.time()
+            status_before = task_info_snapshot(self).get("状态") if keep else None
+            if keep:
+                self._why = ""
             # The run the executor started (not a child of 一键日常): ok-script's
             # display request is given back however it ends (a Stop left it on).
             top = keep and getattr(getattr(self, "executor", None), "current_task", None) is self
@@ -237,6 +243,8 @@ class BaseBD2Task(BaseTask):
                             pass
                     raise
                 if result is False:
+                    if keep and not getattr(self, "child_tasks", None):
+                        failure_reason.ensure(self, begun, status_before)
                     hint = game_language.warn_after_failure(self, started) if keep else ""
                     problem_report.note_problem(self, "fail", hint)
                     if wanted and constructed:

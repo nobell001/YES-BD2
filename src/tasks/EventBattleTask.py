@@ -31,6 +31,7 @@ from src.tasks.task_vision_mixin import REFERENCE_HEIGHT, REFERENCE_WIDTH
 from src.utils.colour_rules import switch_yellow_ratio
 from src.utils.free_switch import ensure_free_switch_on
 from src.utils.ocr_utils import keyword_match_count, normalize_ocr_text
+from src.utils.press_confirm import wait_for
 
 # 1920x1080 reference coordinates / ROIs.
 HOME_BANNER_ROI = (1400, 480, 520, 420)
@@ -78,6 +79,15 @@ START_CONFIRM_SECONDS = 15.0
 RESULT_BACK_ATTEMPTS = 3
 RESULT_BUTTONS_ROI = (1300, 960, 620, 100)
 PROGRESS_ROI = (0, 880, 760, 190)
+# The stage list on the left: its numbers (Leo's 普通战斗10/11 frames,
+# 2026-10-10, numbers at x 250-310, rows about 99 apart).
+STAGE_LIST_ROI = (220, 120, 140, 960)
+# Read numbers off the line through the others by more than this: a misread.
+STAGE_LIST_ROW_TOLERANCE = 24
+# The page can draw its title and stage before the top bar's AP (a player's
+# 1080p run, 2026-10-10): the AP is read for up to this long.
+AP_READ_SECONDS = 5.0
+STATE_KEYS = ("stage", "free_ap", "auto", "quick")
 
 NORMAL_MODE = "普通战斗"
 CHALLENGE_MODE = "挑战战斗"
@@ -100,8 +110,9 @@ LAST_STAGE = 15
 # The pool may sit right after the event currency ("8,500 0/5"); refuse a
 # match that starts inside another number so "8,5000/5" is not read as 5000.
 # OCR often glues the two (live 2026-10-09: "5,9005/5" for 5,900 and 5/5), so
-# the currency's three digits after its comma are split off first.
-CURRENCY_GLUED_PATTERN = re.compile(r"(?<![\d,.])(\d{1,3}(?:,\d{3})+)(?=\d)")
+# the currency's three digits after its comma are split off first.  The comma
+# can read as a dot (a player's 1080p frame, 2026-10-10: "5.650").
+CURRENCY_GLUED_PATTERN = re.compile(r"(?<![\d,.])(\d{1,3}(?:[,.]\d{3})+)(?=\d)")
 AP_PATTERN = re.compile(r"(?<![\d,.])(\d{1,2})\s*/\s*(\d{1,2})(?!\d)")
 BONUS_PATTERN = re.compile(r"\+\s*(\d+)")
 COST_PATTERN = re.compile(r"(\d+)\s*$")
@@ -115,6 +126,10 @@ def parse_ap(text: str) -> tuple[int | None, int]:
     free_match = AP_PATTERN.search(normalized)
     if free_match and int(free_match.group(2)) <= 0:
         free_match = None
+    # A pool above its top ("25/5": the AP icon read as a 2, Leo's frame at
+    # 1080p, 2026-10-10) stays as read: any AP above 0 opens the dialog, whose
+    # MAX with 仅使用免费活动AP on decides the count (Leo 08:58Z 「超過上限 一樣
+    # 點開來打 不要去前面字 大於0 就是點開來打就對了」).
     free = int(free_match.group(1)) if free_match else None
     tail = normalized[free_match.end():] if free_match else normalized
     bonus_match = BONUS_PATTERN.search(tail)
@@ -128,15 +143,6 @@ def parse_battle_cost(text: str) -> int | None:
         return None
     match = COST_PATTERN.search(cleaned.strip())
     return int(match.group(1)) if match else None
-
-
-def ap_spent(before: dict, after: dict) -> int:
-    """AP consumed between two stage-page reads (0 when either is unreadable)."""
-    if before["free_ap"] is None or after["free_ap"] is None:
-        return 0
-    total_before = before["free_ap"] + before["bonus_ap"]
-    total_after = after["free_ap"] + after["bonus_ap"]
-    return max(0, total_before - total_after)
 
 
 def parse_stage_number(text: str, mode: str) -> int | None:
@@ -190,7 +196,7 @@ class EventBattleTask(_ClaimTaskBase):
             if result == "failed":
                 return self._event_fail(mode)
             if result == "no_ap":
-                return self._finish("活动AP已用完")
+                return self._finish(self._no_ap_text())
             if result != "cleared":
                 return self._finish(f"{mode}已推进")
         if self._battle_budget() > 0 and bool(self.config.get("全部通关后快速战斗", True)):
@@ -207,8 +213,13 @@ class EventBattleTask(_ClaimTaskBase):
                 )
                 return self._finish("快速战斗未执行")
             if result == "no_ap":
-                return self._finish("活动AP已用完")
+                return self._finish(self._no_ap_text())
         return self._finish("完成")
+
+    def _no_ap_text(self) -> str:
+        if bool(self.config.get("仅使用免费活动AP", True)):
+            return "今天的免费活动AP已用完"
+        return "今天的活动AP已用完"
 
     def _no_event(self) -> bool:
         # Between events there is simply nothing to fight: not a failure.
@@ -234,13 +245,9 @@ class EventBattleTask(_ClaimTaskBase):
         self._save_flow_diagnostic(f"{self.claim_log_name}_{stage}_failed")
         self._settle_before_recovery()
         recover_to_home(self)
-        if not self._why:
-            return self._claim_fail(stage)
-        # A player's summary said only 「普通战斗失败」 (2026-10-10): say why.
-        self.info_set("当前阶段", f"{stage}失败：{self._why}")
-        self.info_set("状态", f"{self.name}：{stage}失败：{self._why}。")
-        self.log_warning(f"{self.name}：{stage}失败：{self._why}。")
-        return False
+        # A player's summary said only 「普通战斗失败」 (2026-10-10): _claim_fail
+        # writes the reason _failed kept.
+        return self._claim_fail(stage)
 
     def _settle_before_recovery(self) -> None:
         """Let a running chain end and leave its result screen first.
@@ -394,16 +401,100 @@ class EventBattleTask(_ClaimTaskBase):
     # -- stage page state ---------------------------------------------------
 
     def _stable_stage_state(self, mode: str) -> dict:
-        """Read the stage page until two consecutive frames agree (max 4)."""
-        previous = self._stage_state(mode)
-        for _ in range(3):
+        """Read the stage page until two reads agree and the page is drawn.
+
+        The page can show its title and stage before the top bar's AP: a
+        player's 1080p run (2026-10-10) read the AP empty twice right after
+        the loading screen and stopped with 「活动AP没读到」, while its frame a
+        moment later showed 5/5.  Drawn means the AP and 自动战斗 or 快速战斗
+        read (Leo 09:00Z: they are on the same page, one late means both
+        late).  Up to AP_READ_SECONDS; then the last read.
+        """
+        reads = [self._stage_state(mode)]
+
+        def agreed():
             self.sleep(0.8)
             current = self._stage_state(mode)
-            keys = ("stage", "free_ap", "auto", "quick")
-            if all(current[key] == previous[key] for key in keys):
-                return current
-            previous = current
-        return previous
+            previous = reads[-1]
+            reads.append(current)
+            same = all(current[key] == previous[key] for key in STATE_KEYS)
+            drawn = current["free_ap"] is not None and (current["auto"] or current["quick"])
+            return current if same and drawn else None
+
+        return wait_for(agreed, AP_READ_SECONDS, sleep=self.sleep, poll=0.0) or reads[-1]
+
+    def _panel_stage(self, mode: str) -> int | None:
+        panel = self._boxes_text(
+            self._roi_boxes(self.capture_frame(), PANEL_TITLE_ROI, f"{mode}关卡")
+        )
+        return parse_stage_number(panel, mode)
+
+    def _stage_list_point(self, target: int) -> tuple[int, int] | None:
+        """Where stage ``target`` sits in the left list (reference coordinates).
+
+        The numbers' art reads about half the time (Leo's frames: 5, 6, 8, 10
+        and 11 read, 2-4, 7 and 9 not), so a number not read is placed on the
+        line through the read ones; rows are evenly spaced.  None when fewer
+        than two read, or the read ones do not lie on one line (a misread).
+        """
+        boxes = self._reference_boxes(self.capture_frame(), STAGE_LIST_ROI, "关卡列表")
+        rows: dict[int, tuple[float, float]] = {}
+        for found in boxes:
+            match = re.match(r"\s*(\d{1,2})", normalize_ocr_text(getattr(found, "name", "")))
+            if match:
+                centre = (found.x + found.width / 2, found.y + found.height / 2)
+                rows.setdefault(int(match.group(1)), centre)
+        self.info_set("关卡列表", " ".join(str(number) for number in sorted(rows)) or "-")
+        if target in rows:
+            x, y = rows[target]
+            return round(x), round(y)
+        if len(rows) < 2:
+            return None
+        numbers = sorted(rows)
+        first, last = numbers[0], numbers[-1]
+        pitch = (rows[last][1] - rows[first][1]) / (last - first)
+        if pitch <= 0:
+            return None
+        for number in numbers:
+            expected = rows[first][1] + (number - first) * pitch
+            if abs(rows[number][1] - expected) > STAGE_LIST_ROW_TOLERANCE:
+                return None
+        y = rows[last][1] + (target - last) * pitch
+        top, height = STAGE_LIST_ROI[1], STAGE_LIST_ROI[3]
+        if not top <= y <= top + height:
+            return None
+        x = sum(rows[number][0] for number in numbers) / len(numbers)
+        return round(x), round(y)
+
+    def _select_unfinished_stage(self, mode: str, state: dict) -> dict:
+        """With a cleared stage selected, select the next one until 自动战斗 shows.
+
+        A cleared stage shows 快速战斗 and 战斗 but no 自动战斗 (Leo's frames
+        of 普通战斗10 and 11, 2026-10-10), which used to read as "all
+        cleared".  Up to stage 15; a next stage not found or not selected (a
+        locked one) leaves it as before.
+        """
+        while state["stage"] is not None and state["stage"] < LAST_STAGE and not state["auto"]:
+            current, target = state["stage"], state["stage"] + 1
+            point = self._stage_list_point(target)
+            if point is None:
+                self.log_info(
+                    f"活动每日战斗：{mode}选在已通关的第{current}关，左边列表里没认出第{target}关。"
+                )
+                return state
+            self.info_set("当前阶段", f"{mode}：第{current}关已通关，选第{target}关")
+            self._sleep_after_recognition()
+            outcome = self.press_and_confirm(
+                f"{mode}选第{target}关",
+                lambda: self._click_reference(*point, after_sleep=0.8),
+                lambda: self._panel_stage(mode) == target,
+                still_before=lambda: self._panel_stage(mode) == current,
+            )
+            if not outcome:
+                self.log_info(f"活动每日战斗：{mode}点了第{target}关，右边没换成第{target}关。")
+                return state
+            state = self._stable_stage_state(mode)
+        return state
 
     def _stage_state(self, mode: str) -> dict:
         frame = self.capture_frame()
@@ -437,12 +528,26 @@ class EventBattleTask(_ClaimTaskBase):
             return opened
         for _round in range(3):
             state = self._stable_stage_state(mode)
-            if state["free_ap"] is None:
-                return self._failed("关卡页上方的活动AP没读到")
+            if not state["auto"] and not state["quick"]:
+                # Cleared shows 快速战斗; neither is not a page to judge from.
+                return self._failed(
+                    f"{mode}关卡页右下 {AP_READ_SECONDS:g} 秒都没看到「自动战斗」或「快速战斗」"
+                )
+            if not state["auto"]:
+                state = self._select_unfinished_stage(mode, state)
             if not state["auto"]:
                 self.log_info(f"活动每日战斗：{mode}已全部通关。")
                 return "cleared"
-            wanted = min(self._usable_ap(state), self._battle_budget())
+            if state["free_ap"] is None:
+                # Double check (Leo 2026-10-10 「應該雙重保險 還是可以點開自動戰鬥看看的」):
+                # the dialog's 仅使用免费活动AP switch and its MAX count decide.
+                self.log_info(
+                    f"活动每日战斗：{mode}关卡页上方的活动AP {AP_READ_SECONDS:g} 秒都没读到，"
+                    "改看自动战斗窗口的场数。"
+                )
+                wanted = self._battle_budget()
+            else:
+                wanted = min(self._usable_ap(state), self._battle_budget())
             if wanted <= 0:
                 return "no_ap"
             fought = self._auto_battle(mode, wanted, state)
@@ -454,7 +559,10 @@ class EventBattleTask(_ClaimTaskBase):
                 self._battles_done += fought
                 return self._failed(f"打完后没回到{mode}的关卡页")
             after = self._stable_stage_state(mode)
-            self._battles_done += max(fought, ap_spent(state, after))
+            # Counted from the dialog (fought >= its 战斗 N), never from the top
+            # bar: Windows read Leo's 5/5 as "8,400 25/5" (the AP icon as a 2,
+            # 4K PC 2026-10-10), and 25 - 0 counted 25 battles.
+            self._battles_done += fought
             if self._battle_budget() <= 0:
                 return "progressed"
             if after["auto"] and after["stage"] == state["stage"]:
@@ -489,6 +597,15 @@ class EventBattleTask(_ClaimTaskBase):
         if cost is None:
             self._click_reference(*DIALOG_CANCEL_POINT, after_sleep=1.0)
             return None
+        if cost == 0:
+            self.log_info(
+                f"活动每日战斗：{mode}自动战斗窗口按 MAX 后是 0 场，"
+                f"{self._no_ap_text()}，关掉窗口。"
+            )
+            self._click_reference(
+                *DIALOG_CANCEL_POINT, after_sleep=1.0  # 不用确认：回主页会再确认
+            )
+            return 0
         self.info_set("当前阶段", f"{mode}：自动战斗 {cost} 场")
         self.log_info(f"活动每日战斗：{mode}第{state['stage']}关起自动战斗 {cost} 场。")
         started = self._start_auto_battle()
@@ -574,14 +691,20 @@ class EventBattleTask(_ClaimTaskBase):
             self.sleep(0.35)
 
     def _set_dialog_count(self, wanted: int, state: dict) -> int | None:
-        """Select ``wanted`` battles and prove the cost respects the AP policy."""
+        """Select ``wanted`` battles and prove the cost respects the AP policy.
+
+        With the top bar's AP not read, the switch read on and MAX within
+        ``wanted`` are the checks left (the game caps MAX at the free AP).
+        0: MAX stayed 0, nothing left to fight today.
+        """
         free_only = bool(self.config.get("仅使用免费活动AP", True))
-        free = state["free_ap"] or 0
+        free = state["free_ap"]
         if free_only and not self._ensure_free_ap_switch_on():
             self._failed("没能确认「仅使用免费活动AP」开着，所以没开打")
             return None
-        self._click_reference(*DIALOG_MAX_POINT, after_sleep=0.8)
-        cost = self._settled_cost(self._dialog_cost)
+        cost = self._max_count(DIALOG_MAX_POINT, self._dialog_cost)
+        if cost == 0:
+            return 0
         if cost is not None and cost > wanted:
             self._click_reference(*DIALOG_MIN_POINT, after_sleep=0.6)
             for _ in range(wanted - 1):
@@ -589,10 +712,29 @@ class EventBattleTask(_ClaimTaskBase):
             cost = self._settled_cost(self._dialog_cost)
         # Second guard independent of the switch colour: never exceed the free
         # AP read from the top bar when only free AP may be used.
-        if cost is None or cost <= 0 or cost > wanted or (free_only and cost > free):
-            self.log_info(f"活动每日战斗：场数校验失败（{cost}/{wanted}，免费AP {free}）。")
-            self._failed(f"场数对不上（读到 {cost}，要打 {wanted}，免费AP {free}），所以没开打")
+        over_free = free_only and free is not None and cost is not None and cost > free
+        if cost is None or cost <= 0 or cost > wanted or over_free:
+            shown = free if free is not None else "没读到"
+            self.log_info(f"活动每日战斗：场数校验失败（{cost}/{wanted}，免费AP {shown}）。")
+            self._failed(f"场数对不上（读到 {cost}，要打 {wanted}，免费AP {shown}），所以没开打")
             return None
+        if free is None:
+            self.log_info(f"活动每日战斗：免费AP开关开着，窗口场数 {cost}，按这个打。")
+        return cost
+
+    def _max_count(self, max_point, read) -> int | None:
+        """Press MAX and read the count; a 0 gets one more look.
+
+        MAX 0 means no free AP left today (Windows can read the top bar's 0/5
+        as 20/5, so the dialog opens anyway).  A slow window may not have
+        counted yet, so 0 is only believed on the second look.
+        """
+        self._click_reference(*max_point, after_sleep=0.8)
+        cost = self._settled_cost(read)
+        if cost == 0:
+            self.sleep(1.0)
+            self._click_reference(*max_point, after_sleep=0.8)  # 不用确认：下一行读场数
+            cost = self._settled_cost(read)
         return cost
 
     def _free_ap_switch_ratio(self, roi=FREE_AP_SWITCH_ROI) -> float:
@@ -723,6 +865,8 @@ class EventBattleTask(_ClaimTaskBase):
         state = self._stable_stage_state(CHALLENGE_MODE)
         if state["auto"] or not state["quick"]:
             return self._failed("挑战战斗的关卡页没看到「快速战斗」")
+        if state["free_ap"] is None:
+            return self._failed("挑战战斗关卡页上方的活动AP没读到")
         wanted = min(self._usable_ap(state), self._battle_budget())
         if wanted <= 0:
             return "no_ap"
@@ -735,6 +879,14 @@ class EventBattleTask(_ClaimTaskBase):
         if cost is None:
             self._click_reference(*QUICK_DIALOG_CANCEL_POINT, after_sleep=1.0)
             return "failed"
+        if cost == 0:
+            self.log_info(
+                f"活动每日战斗：快速战斗窗口按 MAX 后是 0 场，{self._no_ap_text()}，关掉窗口。"
+            )
+            self._click_reference(
+                *QUICK_DIALOG_CANCEL_POINT, after_sleep=1.0  # 不用确认：回主页会再确认
+            )
+            return "no_ap"
         self.info_set("当前阶段", f"挑战战斗15：快速战斗 {cost} 场")
         self.log_info(f"活动每日战斗：挑战战斗第15关快速战斗 {cost} 场。")
         boxes = self._roi_boxes(self.capture_frame(), QUICK_DIALOG_START_ROI, "快速战斗开始")
@@ -787,8 +939,9 @@ class EventBattleTask(_ClaimTaskBase):
         ):
             self._failed("没能确认「仅使用免费活动AP」开着，所以没开打")
             return None
-        self._click_reference(*QUICK_DIALOG_MAX_POINT, after_sleep=0.8)
-        cost = self._settled_cost(self._quick_cost)
+        cost = self._max_count(QUICK_DIALOG_MAX_POINT, self._quick_cost)
+        if cost == 0:
+            return 0
         if cost is not None and cost > wanted:
             self._click_reference(*QUICK_DIALOG_MIN_POINT, after_sleep=0.6)
             for _ in range(wanted - 1):

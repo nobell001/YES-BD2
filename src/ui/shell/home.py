@@ -479,6 +479,11 @@ class GameSizeCard(Card):
                 self.combo.blockSignals(False)
 
 
+# 停止 with nothing to see here (桌面分身, login wait): how long the
+# 「正在停止…」 button stays grey before it can be pressed again.
+STOP_GRACE_SECONDS = 20
+
+
 class HomePage(Page):
     interval = 1000
 
@@ -499,6 +504,8 @@ class HomePage(Page):
             Button("暂停", "secondary", "pause", on_click=self._pause)
         )
         self.stop_button = self.add_action(Button("停止", "danger", "square", on_click=self._stop))
+        # Leo 2026-10-10: a press shows at once, or the player keeps pressing.
+        self._stop_pressed_at: float | None = None
         self.logs_button = self.add_action(
             Button("看日志", "secondary", "scroll-text", on_click=actions.open_logs)
         )
@@ -948,11 +955,19 @@ class HomePage(Page):
             # Stage and log lines come from the tool in the clone.
             runner = child_task = task
         paused = bool(getattr(runner, "paused", False))
-        self.set_title(
-            tf("已暂停：{name}" if paused else "正在跑：{name}", name=name) if name else "正在准备"
-        )
-        # Leo 2026-10-09: say the keys, and that 设置 changes them.
-        self.set_sub(hotkeys.hint())
+        stopping = self.stopping()
+        self._show_stopping(stopping)
+        if stopping:
+            self.set_title(tf("正在停止：{name}", name=name) if name else "正在停止…")
+            self.set_sub("正在收尾，请稍等")
+        else:
+            self.set_title(
+                tf("已暂停：{name}" if paused else "正在跑：{name}", name=name)
+                if name
+                else "正在准备"
+            )
+            # Leo 2026-10-09: say the keys, and that 设置 changes them.
+            self.set_sub(hotkeys.hint())
         self.pause_button.set_label("继续" if paused else "暂停")
         self.pause_button.set_icon_name("play" if paused else "pause")
         self.now_icon.set_icon(icon, kind)
@@ -1019,11 +1034,42 @@ class HomePage(Page):
         self.refresh()
 
     def _stop(self) -> None:
+        """The 停止 button and the hotkey.  The button turns into a greyed
+        「正在停止…」 before the stop is sent; more presses do nothing until
+        the run has ended (or the press got nowhere, see ``stopping``)."""
+        if self.stopping():
+            return
+        if self._mode == "run":
+            self._stop_pressed_at = time.monotonic()
+            self._show_stopping(True)
+            self.stop_button.repaint()  # before the stop, which may take a moment
         if not data.busy() and clone_flow.remote_task() is not None:
             clone_flow.remote_control("stop")
         else:
             actions.stop(data.current_task())
         self.refresh()
+
+    def stopping(self) -> bool:
+        """停止 was pressed and the run has not ended yet.
+
+        A task here that is still running but no longer enabled is finishing
+        its step.  A press with nothing to see (a run in the 桌面分身, or
+        waiting for the login) counts for STOP_GRACE_SECONDS: if the run still
+        goes on after that, the button can be pressed again."""
+        if self._mode != "run":
+            return False
+        task = data.current_task()
+        if task is not None and not getattr(task, "remote", False):
+            if not getattr(task, "enabled", True):
+                return True
+        pressed = self._stop_pressed_at
+        return pressed is not None and time.monotonic() - pressed < STOP_GRACE_SECONDS
+
+    def _show_stopping(self, on: bool) -> None:
+        self.stop_button.set_label("正在停止…" if on else "停止")
+        self.stop_button.set_icon_name("loader-circle" if on else "square")
+        self.stop_button.setEnabled(not on)
+        self.pause_button.setEnabled(not on)
 
     # ================================================================ summary
 
@@ -1236,6 +1282,7 @@ class HomePage(Page):
             mode = "idle"
         if mode != self._mode:
             self._mode = mode
+            self._stop_pressed_at = None
             self.idle.setVisible(mode == "idle")
             self.running.setVisible(mode == "run")
             self.summary.setVisible(mode == "summary")

@@ -922,7 +922,6 @@ class ShopAndCatalogTest(unittest.TestCase):
         ids = {card.card_id for card in STORY_COLLECTABLE_CARDS}
 
         # Chapter 6 is collected since 2026-09-28 (walk route to 第5层).
-        # Chapter 18 since 2026-09-30: 战斗Ⅰ and 战斗Ⅲ only (Leo).
         self.assertEqual(19, len(ids))
         # Character cards 1, 2, 4-7 since 2026-09-30, card 3 since 2026-10-03.
         self.assertEqual(
@@ -939,15 +938,12 @@ class ShopAndCatalogTest(unittest.TestCase):
         )
         for card in STORY_COLLECTABLE_CARDS:
             with self.subTest(card=card.card_id):
-                expected_roles = (
-                    [CollectionMapRole.BATTLE_AREA_1, CollectionMapRole.BATTLE_AREA_2]
-                    if card.number == 18
-                    else [
-                        CollectionMapRole.MAIN_AREA,
-                        CollectionMapRole.BATTLE_AREA_1,
-                        CollectionMapRole.BATTLE_AREA_2,
-                    ]
-                )
+                # Chapter 18 has its safe area again since Leo 2026-10-10.
+                expected_roles = [
+                    CollectionMapRole.MAIN_AREA,
+                    CollectionMapRole.BATTLE_AREA_1,
+                    CollectionMapRole.BATTLE_AREA_2,
+                ]
                 self.assertEqual(expected_roles, [target.role for target in card.targets])
                 self.assertEqual(
                     STORY_COLLECTION_MAPS[card.number],

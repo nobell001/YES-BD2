@@ -78,6 +78,11 @@ class Shell(QObject):
             )
 
         self.cover = PageCover(stack)
+        from src.ui.shell.nav_history import BackForward, History
+
+        # 上一页 / 下一页 like a browser (Leo 2026-10-10).
+        self.history = History()
+        self.back_forward = BackForward(window, self.go_back, self.go_forward)
         _drop_old_touch_guards(window)
         stack.currentChanged.connect(self._on_page_changed)
         self._take_over_start_switch()
@@ -145,6 +150,18 @@ class Shell(QObject):
         if page is not None:
             self.window.switchTo(page)
 
+    def go_back(self) -> None:
+        self._go(self.history.go_back())
+
+    def go_forward(self) -> None:
+        self._go(self.history.go_forward())
+
+    def _go(self, key: str | None) -> None:
+        # The page change this causes (now or when the switch animation
+        # ends) is not a new step: History expects it.
+        if key is not None:
+            self.navigate(key)
+
     def _sidebar_clicked(self, key: str) -> None:
         if key == "home":
             # Leo 2026-10-09: 首页 in the sidebar leaves a finished run's 结算.
@@ -171,6 +188,7 @@ class Shell(QObject):
         current = self.window.stackedWidget.currentWidget()
         for key, page in self.pages.items():
             if page is current:
+                self.history.arrived(key)
                 self.sidebar.select(key)
                 self.cover.play(page)
                 return
@@ -178,9 +196,14 @@ class Shell(QObject):
             # ok opens its old About page after an update or a copyright
             # notice; the new one has its update controls and notes.
             QTimer.singleShot(0, lambda: self.window.switchTo(self.pages["about"]))
-        else:
-            # An old page ok itself switched to.
-            self.sidebar.select("settings")
+        elif current is not None:
+            # An old page ok itself switched to: its start page (window,
+            # capture and interaction lists, developer tools) when the game
+            # window was minimized or the game did not start.  Leo 2026-10-10
+            # saw it pop up: 「這畫面應該要移除掉」.  Its message still shows
+            # as a bar over the window; the page goes to 首页.
+            logger.info(f"ok opened an old page ({type(current).__name__}), back to 首页")
+            QTimer.singleShot(0, lambda: self.navigate("home"))
 
     # ------------------------------------------------------------ start / pause
 

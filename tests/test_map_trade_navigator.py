@@ -29,7 +29,6 @@ from src.tasks.map_trade.navigator_constants import (
     SANDBOX_LARGE_MAP_RETURN_RELATIVE_POINT,
     SANDBOX_MAP_SETTLE_SECONDS,
     SANDBOX_MAP_TELEPORT_TEMPLATE,
-    SANDBOX_TELEPORT_SKILL_POLL_INTERVAL,
     SANDBOX_TELEPORT_SKILL_TEMPLATE,
     STORY_CATEGORY_POINT,
     TELEPORT_GENERATION_OCR_TIMEOUT,
@@ -533,7 +532,7 @@ class NavigatorTest(unittest.TestCase):
         navigator = Navigator(SimpleNamespace(), SimpleNamespace())
         navigator._travel_via_nav_menu = lambda *entries: trips.extend(entries) or entries[0]
         navigator.current_collection_target = lambda _card: main.key
-        navigator._open_teleport_map_anywhere = lambda: self.fail("teleport map opened")
+        navigator._open_teleport_map_anywhere = lambda *_args: self.fail("teleport map opened")
 
         result = navigator.advance_collection_map(card.card_id, left_corridor, main)
 
@@ -547,7 +546,7 @@ class NavigatorTest(unittest.TestCase):
         navigator = Navigator(SimpleNamespace(), SimpleNamespace())
         navigator._status = lambda *_args: None
         navigator._travel_via_nav_menu = lambda *_entries: None
-        navigator._open_teleport_map_anywhere = lambda: (
+        navigator._open_teleport_map_anywhere = lambda *_args: (
             opened.append(True) or NavigationResult(False, ScreenState.SANDBOX, "无传送阵")
         )
 
@@ -616,7 +615,7 @@ class NavigatorTest(unittest.TestCase):
         navigator._click_sandbox_teleport_interaction = lambda *a, **k: False
         navigator._travel_to_hunting_ground = lambda: "艾琳"
         navigator.current_collection_target = lambda _card: card.targets[0].key
-        navigator._open_teleport_map_anywhere = lambda: self.fail("teleport map opened")
+        navigator._open_teleport_map_anywhere = lambda *_args: self.fail("teleport map opened")
 
         result = navigator.prepare_collection_main_area(card.card_id, via_hunting_ground=True)
 
@@ -731,96 +730,38 @@ class NavigatorTest(unittest.TestCase):
             clicks,
         )
 
-    def test_teleport_map_route_uses_skill_center_when_interaction_is_missing(self):
+    def test_teleport_map_route_never_presses_the_portal_skill(self):
+        # Leo 2026-10-10: 「我是說技能 不要傳送陣」.  Even a perfect portal skill
+        # on the bar is not pressed; without the 交互 button the call fails so
+        # the caller walks to a circle or uses the ≡ menu.
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-        skill = MatchResult(
-            0.968,
-            (1760, 790),
-            (44, 43),
-            pixel_score=0.873,
-            zncc_score=0.900,
-        )
+        skill = MatchResult(0.99, (1760, 790), (44, 43), pixel_score=0.95, zncc_score=0.95)
         clicks = []
         task = SimpleNamespace(
-            capture_frame=lambda: frame,
             info_set=lambda *_args: None,
-            sleep=lambda *_args: self.fail("a passing skill must click immediately"),
-        )
-
-        def match(received, spec):
-            self.assertIs(received, frame)
-            if spec is HAND_TEMPLATE:
-                return MatchResult(-1.0, (0, 0), (0, 0))
-            self.assertIs(spec, SANDBOX_TELEPORT_SKILL_TEMPLATE)
-            return skill
-
-        vision = SimpleNamespace(
-            capture=lambda: frame,
-            match=match,
-            passes=lambda result, spec: result is skill and spec is SANDBOX_TELEPORT_SKILL_TEMPLATE,
-            click_client=lambda point, shape, after_sleep=0: clicks.append(
-                (point, shape, after_sleep)
-            ),
-        )
-        navigator = Navigator(task, vision)
-        navigator.ensure_small_minimap = lambda: True
-        navigator._click_sandbox_teleport_interaction = lambda: False
-        navigator._wait_for_sandbox_map_open = lambda *_args, **_kwargs: NavigationResult(
-            True,
-            ScreenState.AREA_MAP,
-            "技能已确认传送阵地图",
-            map_page_mode=MapPageMode.GENERATE_TELEPORT,
-        )
-
-        result = navigator.open_teleport_map_from_sandbox()
-
-        self.assertTrue(result.success)
-        self.assertEqual(ScreenState.AREA_MAP, result.state)
-        self.assertEqual(MapPageMode.GENERATE_TELEPORT, result.map_page_mode)
-        self.assertEqual(
-            [(skill.center, frame.shape, SANDBOX_MAP_SETTLE_SECONDS)],
-            clicks,
-        )
-
-    def test_teleport_map_route_fails_without_blind_click_when_skill_is_missing(self):
-        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-        missing = MatchResult(-1.0, (0, 0), (0, 0))
-        clicks = []
-        fixed_clicks = []
-        sleeps = []
-        task = SimpleNamespace(
-            info_set=lambda *_args: None,
-            sleep=sleeps.append,
-            operate_click=lambda *args, **kwargs: fixed_clicks.append((args, kwargs)),
+            sleep=lambda *_args: None,
+            operate_click=lambda *args, **kwargs: clicks.append((args, kwargs)),
         )
         vision = SimpleNamespace(
             capture=lambda: frame,
-            match=lambda _frame, spec: (
-                self.assertIn(spec, (HAND_TEMPLATE, SANDBOX_TELEPORT_SKILL_TEMPLATE)) or missing
-            ),
-            passes=lambda *_args: False,
+            match=lambda _frame, _spec: skill,
+            passes=lambda *_args: True,
             click_client=lambda *args, **kwargs: clicks.append((args, kwargs)),
         )
         navigator = Navigator(task, vision)
         navigator.ensure_small_minimap = lambda: True
         navigator._click_sandbox_teleport_interaction = lambda: False
-        navigator._wait_for_sandbox_map_open = lambda *_args, **_kwargs: NavigationResult(
-            False,
-            ScreenState.SANDBOX,
-            "未确认传送阵地图",
+        navigator._wait_for_sandbox_map_open = lambda *_args, **_kwargs: self.fail(
+            "no portal map may open without the 交互 button"
         )
 
-        with patch(
-            "src.tasks.map_trade.navigator_sandbox.monotonic",
-            side_effect=(100.0, 100.0, 106.0),
-        ):
-            result = navigator.open_teleport_map_from_sandbox()
+        result = navigator.open_teleport_map_from_sandbox()
 
         self.assertFalse(result.success)
-        self.assertEqual("未可靠识别箱庭5号传送阵技能，已停止打开传送阵地图", result.message)
+        self.assertEqual(ScreenState.SANDBOX, result.state)
+        self.assertIn("不用传送阵技能", result.message)
         self.assertEqual([], clicks)
-        self.assertEqual([], fixed_clicks)
-        self.assertEqual([SANDBOX_TELEPORT_SKILL_POLL_INTERVAL], sleeps)
+        self.assertFalse(hasattr(navigator, "_click_sandbox_teleport_skill"))
 
     def test_teleport_skill_failure_ocr_is_explicit_and_enters_walk_fallback(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
@@ -848,38 +789,6 @@ class NavigatorTest(unittest.TestCase):
         self.assertEqual(ScreenState.SANDBOX, result.state)
         self.assertIn("魔法阵附近", result.message)
         self.assertTrue(navigator._sandbox_teleport_skill_failure_matches(result.message))
-
-    def test_teleport_skill_failure_routes_to_walk_fallback_result(self):
-        task = SimpleNamespace(info_set=lambda *_args: None)
-        navigator = Navigator(task, SimpleNamespace())
-        navigator.ensure_small_minimap = lambda: True
-        navigator._click_sandbox_teleport_interaction = lambda: False
-        navigator._click_sandbox_teleport_skill = lambda: True
-        navigator._wait_for_sandbox_map_open = lambda *_args, **_kwargs: NavigationResult(
-            False,
-            ScreenState.SANDBOX,
-            "箱庭5号传送阵技能失败 OCR命中：无法在魔法阵附近使用天赋技能",
-        )
-        fallback_calls = []
-
-        def walk_fallback():
-            fallback_calls.append(True)
-            return NavigationResult(
-                True,
-                ScreenState.AREA_MAP,
-                "已通过徒步回退",
-                map_page_mode=MapPageMode.DIRECT_TELEPORT,
-            )
-
-        navigator._walk_to_sandbox_teleport_interaction = walk_fallback
-
-        result = navigator.open_teleport_map_from_sandbox()
-
-        self.assertTrue(result.success)
-        self.assertEqual(ScreenState.AREA_MAP, result.state)
-        self.assertEqual([True], fallback_calls)
-        self.assertEqual(MapPageMode.DIRECT_TELEPORT, result.map_page_mode)
-        self.assertIn("徒步回退", result.message)
 
     def test_walk_fallback_selects_unique_navigation_teleport_then_interacts(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
@@ -1442,7 +1351,7 @@ class NavigatorTest(unittest.TestCase):
         self.assertEqual(0.85, HAND_TEMPLATE.min_zncc_score)
         self.assertEqual(0.95, HAND_TEMPLATE.minimum_safe_threshold)
 
-    def test_area_map_entry_uses_skill_center_and_no_fixed_point(self):
+    def test_area_map_entry_never_presses_the_portal_skill(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         skill = MatchResult(0.97, (1760, 790), (44, 43), 0.88, 0.90)
         clicks = []
@@ -1455,9 +1364,7 @@ class NavigatorTest(unittest.TestCase):
         )
         navigator.vision = SimpleNamespace(
             capture=lambda: frame,
-            match=lambda _frame, spec: (
-                self.assertIn(spec, (HAND_TEMPLATE, SANDBOX_TELEPORT_SKILL_TEMPLATE)) or skill
-            ),
+            match=lambda _frame, _spec: skill,
             passes=lambda result, spec: result is skill and spec is SANDBOX_TELEPORT_SKILL_TEMPLATE,
             click_client=lambda point, shape, after_sleep=0: clicks.append(
                 (point, shape, after_sleep)
@@ -1468,21 +1375,11 @@ class NavigatorTest(unittest.TestCase):
         )
         navigator.classify = lambda _frame=None: ScreenState.SANDBOX
         navigator._click_sandbox_teleport_interaction = lambda: False
-        navigator._wait_for_sandbox_map_open = lambda *_args, **_kwargs: NavigationResult(
-            True,
-            ScreenState.AREA_MAP,
-            "技能已确认传送阵地图",
-            map_page_mode=MapPageMode.GENERATE_TELEPORT,
-        )
 
         result = navigator.ensure_area_map()
 
-        self.assertTrue(result.success)
-        self.assertEqual(ScreenState.AREA_MAP, result.state)
-        self.assertEqual(
-            [(skill.center, frame.shape, SANDBOX_MAP_SETTLE_SECONDS)],
-            clicks,
-        )
+        self.assertFalse(result.success)
+        self.assertEqual([], clicks)
 
     def test_area_map_context_reads_title_roi_and_confirmation_from_same_frame(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)

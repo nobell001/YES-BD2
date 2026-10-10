@@ -107,8 +107,15 @@ def screen_parts(env: dict) -> list[str]:
 
 
 def last_line(record: dict) -> str:
-    """The last warning or error (else the last line), with how often it came."""
+    """The last warning or error (else the last line), with how often it came.
+
+    A line that only repeats where the run stopped (the 停在 line, which now
+    carries the reason) is passed over, so 「最后」 adds something.
+    """
     logs = problem_report.logs_of(record)
+    stage = str((record.get("problem") or {}).get("stage") or "").strip().rstrip("。.")
+    if stage:
+        logs = [entry for entry in logs if stage not in str(entry.get("text") or "")]
     if not logs:
         return ""
     worst = [entry for entry in logs if entry.get("level", 0) >= 30]

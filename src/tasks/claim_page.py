@@ -28,6 +28,7 @@ from src.tasks.task_vision_mixin import (
     TaskVisionMixin,
 )
 from src.utils.ocr_utils import keyword_match_count, normalize_ocr_text
+from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS
 
 # 1920x1080 reference coordinates, calibrated on the 简体 client 2026-09-25.
 BACK_BUTTON_POINT = (150, 50)
@@ -103,7 +104,10 @@ def claim_button_dimmed(frame, box) -> bool:
 
 
 # Seconds a claim button is looked for before 「跳过」.
-CLAIM_BUTTON_WAIT = 3.0
+CLAIM_BUTTON_WAIT = 3.0 + SLOW_PC_GRACE_SECONDS
+# A button still fading in reads grey: grey counts once it stayed grey over
+# this many looks, 0.6 s apart (Leo 2026-10-10, slow PCs).
+GREY_LOOKS = 3
 
 
 @dataclass(frozen=True)
@@ -347,6 +351,7 @@ class ClaimPageMixin(TaskVisionMixin):
                 f"{label}入口前主页确认", timeout=3.0
             ):
                 self.log_info(f"{label}：未确认主页，不点击入口。")
+                self._note_why(f"不在主页，也没能回到主页，所以没点「{label}」入口")
                 return False
         self._sleep_after_recognition()
         for attempt in range(1, ENTRY_CLICK_ATTEMPTS + 1):
@@ -410,6 +415,10 @@ class ClaimPageMixin(TaskVisionMixin):
             self.sleep(0.5)
         if not quiet:
             self.log_info(f"{label}：等待页面标题 {'/'.join(title_keywords)} 超时。")
+            self._note_why(
+                f"没进到「{label}」页面（{monotonic() - started:.0f}秒内左上角标题读到"
+                f"「{last_text or '没读到字'}」）"
+            )
             self._save_flow_diagnostic(f"{self.claim_log_name}_{label}_title_failed")
         return False
 
@@ -423,7 +432,7 @@ class ClaimPageMixin(TaskVisionMixin):
 
         The button may draw (or fade in) a moment after the page or tab
         changed: a missing button is looked for up to ``CLAIM_BUTTON_WAIT``
-        seconds, a grey one is looked at once more before it counts as grey.
+        seconds, a grey one counts as grey after ``GREY_LOOKS`` grey looks.
         """
         end_at = monotonic() + CLAIM_BUTTON_WAIT
         grey_looks = 0
@@ -433,7 +442,7 @@ class ClaimPageMixin(TaskVisionMixin):
             target = self._box_with(boxes, button.keywords)
             if target is not None and claim_button_dimmed(frame, target):
                 grey_looks += 1
-                if grey_looks >= 2:
+                if grey_looks >= GREY_LOOKS:
                     break
             elif target is not None or monotonic() >= end_at:
                 break
@@ -469,6 +478,7 @@ class ClaimPageMixin(TaskVisionMixin):
         if not outcome:
             self.info_set(f"{label}结果", "按钮一直亮着，未领到")
             self.log_info(f"{label}：按了领取，按钮一直亮着，没有领到。")
+            self._note_why(f"按了「{'/'.join(button.keywords)}」，按钮一直亮着，没领到")
             self._save_flow_diagnostic(f"{self.claim_log_name}_{label}_claim_unconfirmed")
             return False
         return self._settle_after_claim(label, title_keywords, baseline)
@@ -562,6 +572,7 @@ class ClaimPageMixin(TaskVisionMixin):
             self.sleep(0.5)
 
         self.log_info(f"{label}：领取后未能回到页面。")
+        self._note_why(f"领取后弹窗没关掉，没回到「{label}」页面")
         self._save_flow_diagnostic(f"{self.claim_log_name}_{label}_settle_failed")
         return False
 
@@ -579,10 +590,29 @@ class ClaimPageMixin(TaskVisionMixin):
                 break
             self.log_info(f"{label}：第{attempt}次返回未生效，重试。")
         self.log_info(f"{label}：未能确认返回主页。")
+        self._note_why(f"从「{label}」按了返回，没认出主页")
         self._save_flow_diagnostic(f"{self.claim_log_name}_{label}_home_failed")
         return False
 
+    def _note_why(self, why: str) -> None:
+        """Keep why a step gave up, for _claim_fail; the first reason of a run stays.
+
+        A later step (going home after it) failing too is not why the run failed.
+        """
+        if not str(getattr(self, "_why", "") or ""):
+            self._why = why
+
     def _claim_fail(self, stage: str) -> bool:
-        # 失败必须写进状态，否则 run_history 会把本次运行记成成功。
-        self.info_set("状态", f"{self.name}：{stage}失败。")
+        """Write the failure with its reason, when a step noted one (``_why``).
+
+        失败必须写进状态，否则 run_history 会把本次运行记成成功。  The reason
+        goes to 当前阶段 too, which the 问题摘要 shows as 「停在」 (a player's
+        summary said only 「普通战斗失败」, Leo 2026-10-10 「你應該確保你的log是有用的了吧」).
+        """
+        why = str(getattr(self, "_why", "") or "").strip().rstrip("。.")
+        text = f"{stage}失败：{why}" if why else f"{stage}失败"
+        self.info_set("当前阶段", text)
+        self.info_set("状态", f"{self.name}：{text}。")
+        if why:
+            self.log_warning(f"{self.name}：{text}。")
         return False

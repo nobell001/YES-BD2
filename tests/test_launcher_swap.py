@@ -45,7 +45,7 @@ class LauncherVersionTest(unittest.TestCase):
         # Never "latest": the update repository is filled before a release's
         # assets go up.  Never the upstream zip (points installs at ok-bd2).
         self.assertEqual(
-            "https://github.com/nobell001/YES-BD2/releases/download/v0.1.13/yes-bd2-win32.zip",
+            "https://github.com/nobell001/YES-BD2/releases/download/v0.1.18/yes-bd2-win32.zip",
             launcher_zip_url(),
         )
         self.assertRegex(LAUNCHER_SHA256, r"^[0-9a-f]{64}$")

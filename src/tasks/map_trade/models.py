@@ -217,18 +217,19 @@ STORY_COLLECTION_MAPS = {
     15: ("科库托斯研究设施", "血刻印量产设施", "重要保管区域"),
     16: ("迪尔索特港口城市", "迪尔索特黑市", "黑市深处"),
     17: ("古代遗迹前哨基地", "试炼之路", "封印祭坛"),
-    # Leo 2026-09-30: only 战斗Ⅰ and 战斗Ⅲ, no safe area (roles below).  The
-    # teleport map has 10 pages (live 2K): 安全 科库托斯暗黑神殿, 安全 记忆岔路口,
-    # 战斗Ⅰ 科库托斯圣域, 安全 儿童房, 战斗Ⅱ 阿札尔之屋, then 战斗Ⅲ-Ⅶ
-    # 第一/第四/第五/第二/第三记忆空间.
-    18: ("科库托斯圣域", "第一记忆空间"),
+    # Leo 2026-10-10: the safe area too, from 艾琳 ("艾琳到安全區 走到戰鬥一
+    # 傳送到戰鬥二"), with the two battle maps that hold resources (09-30:
+    # 战斗Ⅰ and 战斗Ⅲ).  暗黑神殿 has no teleport circle: its 圣域 exit is
+    # walked (WALK_LABEL_EDGES); back from 圣域 by 艾琳 (TOWN_NAV_ENTRIES).
+    # The teleport map has 10 pages (live 2K): 安全 科库托斯暗黑神殿, 安全
+    # 记忆岔路口, 战斗Ⅰ 科库托斯圣域, 安全 儿童房, 战斗Ⅱ 阿札尔之屋, then
+    # 战斗Ⅲ-Ⅶ 第一/第四/第五/第二/第三记忆空间.
+    18: ("科库托斯暗黑神殿", "科库托斯圣域", "第一记忆空间"),
     19: ("亡者安息处", "亡灵游地", "通往神殿之路"),
 }
 # Chapters whose collection maps are not town + battle I + battle II; the
 # first target is where a route restarts.
-STORY_COLLECTION_ROLES = {
-    18: (CollectionMapRole.BATTLE_AREA_1, CollectionMapRole.BATTLE_AREA_2),
-}
+STORY_COLLECTION_ROLES: dict[int, tuple[CollectionMapRole, ...]] = {}
 # Cards counted done once their 压制 badge completes.  Chapter 18 after 战斗Ⅰ
 # and 战斗Ⅲ (live 2026-09-30): 压制 complete, 吸取 29 -> 7 left on maps Leo
 # does not collect.  Chapter 6 (Leo 2026-10-05): 吸取 keeps 2 after all three
@@ -262,6 +263,19 @@ WALK_LABEL_EDGES = {
     # from the front -> expelled, the walk then goes on by itself).
     ("Q_cp3", "battle_area_1", "battle_area_2"): (631, 333),
     ("Q_cp3", "battle_area_2", "battle_area_1"): (739, 563),
+    # Chapter 18 (live 4K 2026-10-10, 1080p): 暗黑神殿 has no circle; the
+    # 科库托斯圣域 label's exit took 4.6 s, no patrol.  Clicked at (525, 296),
+    # the label centre + 18 px.
+    ("Q_sp18", "main_area", "battle_area_1"): (525, 278),
+}
+# Areas without a teleport circle, left through an area-map exit for a
+# neighbour that has one: card -> (that area, the neighbour).  Chapter 18
+# (live 4K 2026-10-10): the quick switch and 艾琳 both put the character in
+# 安全 科库托斯暗黑神殿, which has no circle and no 狩猎场 in its ≡ menu; its
+# 科库托斯圣域 exit is a free 4.6 s walk, and 圣域's circle is found (0.949).
+# Without a portal skill on the bar this is the only way out.
+CIRCLE_EXIT_WALKS = {
+    "Q_sp18": ("科库托斯暗黑神殿", "科库托斯圣域"),
 }
 # ≡-menu entry for the reverse route's last step into the town (restarts use
 # 狩猎场, else 艾琳, for every card: navigator_constants).  Chapter 14 (11 s):
@@ -273,6 +287,9 @@ WALK_LABEL_EDGES = {
 TOWN_NAV_ENTRIES = {
     "Q_sp14": "艾琳",
     "Q_cp3": "艾琳",
+    # Chapter 18: 圣域 -> 艾琳 in 暗黑神殿 (free, live 4K 2026-10-10; Leo:
+    # "戰鬥二開始就 傳送到戰鬥一 然後 傳回艾琳").
+    "Q_sp18": "艾琳",
     # Event cards without a teleport circle (Leo 2026-10-09).
     **{card_id: "艾琳" for card_id in ("Q_ep1", "Q_ep3", "Q_ep5", "Q_ep7")},
 }
@@ -282,6 +299,8 @@ TOWN_NAV_ENTRIES = {
 # 然後再走去魔法陣繼續").
 RESTART_NAV_ENTRIES = {
     "Q_cp3": "艾琳",
+    # Chapter 18 (Leo 2026-10-10: "在其他地方就 先傳回艾琳").
+    "Q_sp18": "艾琳",
     # Event cards: too close to an exit to click it -> 艾琳, then the exit
     # (Leo 2026-10-09: "人物和傳送點貼太近有時候不好點 那就直接傳送回艾琳").
     **{card_id: "艾琳" for card_id in ("Q_ep1", "Q_ep3", "Q_ep5", "Q_ep7")},

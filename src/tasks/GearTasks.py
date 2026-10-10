@@ -21,6 +21,7 @@ from src.tasks.enhance_dialog import crop_reference, yellow_ratio
 from src.tasks.RewardClaimTasks import _ClaimTaskBase
 from src.tasks.task_vision_mixin import REFERENCE_HEIGHT, REFERENCE_WIDTH
 from src.utils.ocr_utils import keyword_match_count, normalize_ocr_text
+from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS
 
 BAG_ENTRY_POINT = (369, 985)
 # The equipment page's 查看详情 switch: live 4K off 0.00, on 0.41 yellow.
@@ -210,20 +211,14 @@ class DailyRefineTask(_ClaimTaskBase):
         where it stopped, though the bag had been left fine (a player's
         summary, 2026-10-10).
         """
-        self._claim_fail(stage)
-        why = getattr(self, "_why", "")
-        text = f"{stage}失败：{why}" if why else f"{stage}失败"
-        self.info_set("当前阶段", text)
-        if why:
-            self.info_set("状态", f"{self.name}：{text}。")
-            self.log_warning(f"{self.name}：{text}。")
-        return False
+        return self._claim_fail(stage)
 
-    def _wait_for_grid_cells(self, timeout: float = 3.0) -> list:
+    def _wait_for_grid_cells(self, timeout: float = 3.0 + SLOW_PC_GRACE_SECONDS) -> list:
         """Refine badges of the first screen; empty only after ``timeout``.
 
         A single read right after the bag opened could come before the
-        badges drew and silently skipped the daily refine.
+        badges drew and silently skipped the daily refine.  Badges that are
+        read end the wait at once.
         """
         end_at = monotonic() + timeout
         while True:

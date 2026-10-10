@@ -9,7 +9,6 @@ from src.tasks.EventBattleTask import (
     PROGRESS_ROI,
     RESULT_BUTTONS_ROI,
     EventBattleTask,
-    ap_spent,
     parse_ap,
 )
 
@@ -94,12 +93,6 @@ class ApReadingTest(unittest.TestCase):
         self.assertEqual((5, 0), parse_ap("5,9005/5"))
         self.assertEqual((3, 2), parse_ap("12,3453/5 +2"))
         self.assertEqual((5, 0), parse_ap("21:59 10,000 5/5"))
-
-    def test_ap_spent_counts_free_and_bonus(self):
-        before = {"free_ap": 5, "bonus_ap": 3}
-        self.assertEqual(4, ap_spent(before, {"free_ap": 1, "bonus_ap": 3}))
-        self.assertEqual(6, ap_spent(before, {"free_ap": 0, "bonus_ap": 2}))
-        self.assertEqual(0, ap_spent(before, {"free_ap": None, "bonus_ap": 0}))
 
 
 class EventEntryTest(unittest.TestCase):
@@ -298,19 +291,23 @@ class FailReasonTest(unittest.TestCase):
         return problem_report._stage(task)
 
     def test_unread_ap_is_named(self):
+        # An unread AP with 自动战斗 shown now opens the dialog (Leo 2026-10-10,
+        # tests/test_event_battle_ap.py); 快速战斗 still needs the AP read.
         task = self._task()
         task._open_mode = lambda mode: "ok"
         task._stable_stage_state = lambda mode: {
-            "stage": 3,
+            "stage": 15,
             "free_ap": None,
             "bonus_ap": 0,
-            "auto": True,
-            "quick": False,
+            "auto": False,
+            "quick": True,
         }
         self.assertFalse(task.run_claim())
-        line = "活动每日战斗：普通战斗失败：关卡页上方的活动AP没读到。"
+        line = "活动每日战斗：快速战斗失败：挑战战斗关卡页上方的活动AP没读到。"
         self.assertEqual(line, task.info["状态"])
-        self.assertEqual("普通战斗失败：关卡页上方的活动AP没读到", self._summary_stage(task))
+        self.assertEqual(
+            "快速战斗失败：挑战战斗关卡页上方的活动AP没读到", self._summary_stage(task)
+        )
         task.log_warning.assert_called_once_with(line)
 
     def test_event_page_that_never_opens_is_named(self):

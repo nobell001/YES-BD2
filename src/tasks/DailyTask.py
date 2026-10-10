@@ -120,10 +120,11 @@ BUSINESS_CLAIM_CONFIRM_SECONDS = 4.0
 BUSINESS_CLAIM_GREY_VALUE = (50.0, 175.0)
 BUSINESS_CLAIM_GREY_MAX_SATURATION = 45.0
 # A popup still fading in is dim too, so grey counts only when a second frame
-# this much later still shows it grey.
-BUSINESS_CLAIM_GREY_RECHECK_SECONDS = 0.6
-# The guild entry is looked for on a few frames before it counts as absent.
-GUILD_ENTRY_LOOKS = 3
+# this much later still shows it grey (1.5 s for slow PCs, Leo 2026-10-10).
+BUSINESS_CLAIM_GREY_RECHECK_SECONDS = 1.5
+# The guild entry is looked for on a few frames (about 2 s, slow PCs) before
+# it counts as absent; a match ends the looks at once.
+GUILD_ENTRY_LOOKS = 5
 GUILD_ENTRY_LOOK_SECONDS = 0.5
 # A swallowed entry click leaves home up: only then is it pressed again.
 GUILD_ENTRY_RETRY_SECONDS = 4.0

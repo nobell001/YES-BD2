@@ -16,7 +16,9 @@ from ok import Logger
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QGridLayout, QWidget
+from qfluentwidgets import ScrollArea
 
+from src.ui.shell import update_notes
 from src.ui.shell.page import Page, pill, set_pill
 from src.ui.shell.widgets import (
     Card,
@@ -25,6 +27,7 @@ from src.ui.shell.widgets import (
     Picture,
     Separator,
     Text,
+    clear_layout,
     hbox,
     t,
     tf,
@@ -150,6 +153,60 @@ class LinkRow(QWidget):
         super().mouseReleaseEvent(event)
 
 
+class NotesBox(Card):
+    """A version title over note lines that scroll inside a fixed height."""
+
+    MAX_LIST_HEIGHT = 260
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        column = vbox(self, (16, 12, 8, 12), 8)
+        self.title = Text("", "h3")
+        column.addWidget(self.title)
+        self.scroll = ScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(ScrollArea.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.scroll.viewport().setStyleSheet("background: transparent;")
+        self.holder = QWidget()
+        self.holder.setStyleSheet("background: transparent;")
+        self.lines = vbox(self.holder, (0, 0, 8, 0), 4)
+        self.scroll.setWidget(self.holder)
+        column.addWidget(self.scroll)
+        self.rows: list[Text] = []
+
+    def set_notes(self, title: str, lines: list[str]) -> None:
+        self.title.set_text(title)
+        clear_layout(self.lines)
+        self.rows = []
+        for line in lines:
+            row = hbox(None, (0, 0, 0, 0), 8)
+            dot = Text("•")
+            dot.setAlignment(Qt.AlignTop)
+            row.addWidget(dot, 0, Qt.AlignTop)
+            text = Text(line, wrap=True)
+            row.addWidget(text, 1)
+            self.lines.addLayout(row)
+            self.rows.append(text)
+        self._fit()
+
+    def _fit(self) -> None:
+        """As tall as the lines, up to MAX_LIST_HEIGHT; past that it scrolls."""
+        width = self.scroll.viewport().width() or self.width()
+        layout = self.lines
+        wanted = (
+            layout.heightForWidth(width) if layout.hasHeightForWidth() else -1
+        )
+        if wanted < 0:
+            wanted = layout.sizeHint().height()
+        self.scroll.setFixedHeight(max(1, min(wanted, self.MAX_LIST_HEIGHT)))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit()
+
+
 class AboutPage(Page):
     interval = 5000
 
@@ -222,26 +279,75 @@ class AboutPage(Page):
             self.update_card.check_for_updates()
 
     def _build_version_change(self) -> None:
-        """After an update the launcher reopens the tool here with the notes."""
+        """更新内容: one scrolling list with a dot on every line (Leo 10-10).
+
+        It shows what the last update brought (the launcher reopens the
+        tool here after one), else what this version brought, and follows
+        the version picked in the update controls.  The controls' own notes
+        stay hidden so the list is never shown twice.
+        """
+        self._notes = update_notes.load()
+        self._startup = None
         try:
-            from ok.ui.qt.about.UpdateCard import ChangeLogView
             from ok.ui.qt.util.pyappify_startup import get_startup_version_change
 
-            change = get_startup_version_change()
+            self._startup = get_startup_version_change()
         except Exception:
+            self._startup = None
+        self.notes_label = Text("更新内容", "eyebrow")
+        self.body.addWidget(self.notes_label)
+        self.notes_box = NotesBox()
+        self.body.addWidget(self.notes_box)
+        card = self.update_card
+        if card is not None and hasattr(card, "_set_notes"):
+            notes_edit = getattr(card, "notes_edit", None)
+            if notes_edit is not None:
+                notes_edit.hide()
+                notes_edit.setMaximumHeight(0)
+            card._set_notes = self._picked_version_notes
+        self._show_default_notes()
+
+    def _current_version(self) -> str:
+        from ok import og
+
+        config = getattr(og, "config", None) or {}
+        card_version = getattr(self.update_card, "current_version", "") if self.update_card else ""
+        return str(card_version or config.get("version") or "")
+
+    def _show_notes(self, title: str, lines: list[str]) -> None:
+        self.notes_box.set_notes(title, lines)
+        self.notes_label.setVisible(bool(lines))
+        self.notes_box.setVisible(bool(lines))
+
+    def _show_default_notes(self) -> None:
+        change = self._startup
+        if change and getattr(change, "from_version", None):
+            old, new = change.from_version, change.to_version
+            lines = update_notes.notes_between(self._notes, old, new)
+            if lines is None:
+                lines = update_notes.split_lines(getattr(change, "content", "") or "")
+            self._show_notes(f"{old} → {new}", lines)
             return
-        if not change:
+        current = self._current_version()
+        lines = update_notes.notes_between(self._notes, None, current) or []
+        if not lines and change:
+            lines = update_notes.split_lines(getattr(change, "content", "") or "")
+        self._show_notes(current, lines)
+
+    def _picked_version_notes(self, text: str) -> None:
+        """Stands in for the update controls' notes: they land in 更新内容."""
+        card = self.update_card
+        combo = getattr(card, "version_combo", None)
+        target = combo.currentText() if combo is not None else ""
+        current = self._current_version()
+        same = update_notes.version_key(target) == update_notes.version_key(current)
+        if not text or not target or same:
+            self._show_default_notes()
             return
-        column = self._section("更新内容")
-        title = Text(
-            f"{change.from_version} → {change.to_version}"
-            if getattr(change, "from_version", None)
-            else str(getattr(change, "title", "")),
-            "h3",
-        )
-        column.addWidget(title)
-        notes = ChangeLogView(getattr(change, "content", "") or "")
-        column.addWidget(notes)
+        lines = update_notes.notes_between(self._notes, current, target)
+        if lines is None:
+            lines = update_notes.split_lines(text)
+        self._show_notes(f"{current} → {target}", lines)
 
     # ---------------------------------------------------------- 使用须知 / 致谢
 

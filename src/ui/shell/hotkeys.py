@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -142,9 +143,51 @@ def turn_off_ok_hotkey() -> None:
 
 
 WM_HOTKEY = 0x0312
+WM_TIMER = 0x0113
 WM_APP_REBIND = 0x8000 + 1
 MOD_NOREPEAT = 0x4000
 _IDS = {PAUSE: 0xB201, STOP: 0xB202}
+# A key another program already registered (often a second copy of the tool)
+# is read straight from the keyboard instead, and registering is tried again
+# now and then (Leo 2026-10-10: F9/F10 did nothing mid-run after the log said
+# 「taken by another program」).
+POLL_MS = 100
+RETRY_MS = 5000
+
+
+class KeyWatch:
+    """Presses of keys the tool could not register, read by polling.
+
+    ``tick(is_down, now_ms)`` gets the actions whose key went down since the
+    last tick (one per press, holding the key does not repeat) and whether it
+    is time to try registering them again.
+    """
+
+    def __init__(self):
+        self.keys: dict[str, int] = {}
+        self._down: dict[str, bool] = {}
+        self._last_retry = 0.0
+
+    def watch(self, action: str, code: int, is_down: bool = False) -> None:
+        self.keys[action] = code
+        # a key already held while the watch starts is not a press
+        self._down[action] = is_down
+
+    def drop(self, action: str) -> None:
+        self.keys.pop(action, None)
+        self._down.pop(action, None)
+
+    def tick(self, is_down: Callable[[int], bool], now_ms: float) -> tuple[list[str], bool]:
+        pressed = []
+        for action, code in self.keys.items():
+            down = bool(is_down(code))
+            if down and not self._down.get(action):
+                pressed.append(action)
+            self._down[action] = down
+        retry = bool(self.keys) and now_ms - self._last_retry >= RETRY_MS
+        if retry:
+            self._last_retry = now_ms
+        return pressed, retry
 
 
 class HotkeyListener:
@@ -152,6 +195,8 @@ class HotkeyListener:
 
     def __init__(self, on_press: Callable[[str], None]):
         self._on_press = on_press
+        self.watch = KeyWatch()
+        self._timer = 0
         self._thread_id = 0
         self._ready = threading.Event()
         self._thread = threading.Thread(target=self._run, name="Hotkeys", daemon=True)
@@ -176,12 +221,52 @@ class HotkeyListener:
         current = keys()
         for action, hotkey_id in _IDS.items():
             user32.UnregisterHotKey(None, hotkey_id)
-            if not user32.RegisterHotKey(None, hotkey_id, MOD_NOREPEAT, key_code(current[action])):
-                # Another program already holds the key: the button still works.
+            code = key_code(current[action])
+            if user32.RegisterHotKey(None, hotkey_id, MOD_NOREPEAT, code):
+                self.watch.drop(action)
+            else:
+                # Another program already holds the key: read it directly.
                 logger.warning(
-                    f"hotkeys: {current[action]} for {action} is taken by another program"
+                    f"hotkeys: {current[action]} for {action} is taken by another program;"
+                    " reading the key directly"
                 )
+                self.watch.watch(action, code, self._is_down(user32, code))
+        self._set_timer(user32)
         logger.info(f"hotkeys: {LABELS[PAUSE]} {current[PAUSE]}, {LABELS[STOP]} {current[STOP]}")
+
+    @staticmethod
+    def _is_down(user32, code: int) -> bool:
+        return bool(user32.GetAsyncKeyState(code) & 0x8000)
+
+    def _set_timer(self, user32) -> None:
+        if self.watch.keys and not self._timer:
+            self._timer = user32.SetTimer(None, 0, POLL_MS, None)
+        elif not self.watch.keys and self._timer:
+            user32.KillTimer(None, self._timer)
+            self._timer = 0
+
+    def _poll(self, user32) -> None:
+        pressed, retry = self.watch.tick(
+            lambda code: self._is_down(user32, code), time.monotonic() * 1000
+        )
+        for action in pressed:
+            self._press(action)
+        if retry:
+            self._retry(user32)
+
+    def _retry(self, user32) -> None:
+        """Register a watched key again once the other program let go of it."""
+        for action, code in list(self.watch.keys.items()):
+            if user32.RegisterHotKey(None, _IDS[action], MOD_NOREPEAT, code):
+                logger.info(f"hotkeys: {action} key registered after all")
+                self.watch.drop(action)
+        self._set_timer(user32)
+
+    def _press(self, action: str) -> None:
+        try:
+            self._on_press(action)
+        except Exception as exc:
+            logger.warning(f"hotkeys: {action} failed ({exc})")
 
     def _run(self) -> None:
         import ctypes
@@ -202,13 +287,14 @@ class HotkeyListener:
                 if msg.message == WM_HOTKEY:
                     action = next((a for a, i in _IDS.items() if i == msg.wParam), None)
                     if action is not None:
-                        try:
-                            self._on_press(action)
-                        except Exception as exc:
-                            logger.warning(f"hotkeys: {action} failed ({exc})")
+                        self._press(action)
+                elif msg.message == WM_TIMER:
+                    self._poll(user32)
                 elif msg.message == WM_APP_REBIND:
                     self._bind(user32)
         finally:
+            if self._timer:
+                user32.KillTimer(None, self._timer)
             for hotkey_id in _IDS.values():
                 user32.UnregisterHotKey(None, hotkey_id)
 

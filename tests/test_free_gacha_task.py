@@ -705,6 +705,7 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
         task = object.__new__(FreeGachaTask)
         task.config = {}
         task.info_set = lambda *_args, **_kwargs: None
+        task.sleep = lambda *_args, **_kwargs: None
         task.capture_frame = lambda: np.zeros((10, 10, 3), dtype=np.uint8)
         ocr_calls = []
 

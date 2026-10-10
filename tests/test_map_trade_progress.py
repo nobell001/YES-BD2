@@ -311,10 +311,10 @@ class ProgressTest(unittest.TestCase):
                     _seed_action_records(store, card.card_id, target.key)
                     store.mark_target(card.card_id, target.key)
 
-            # 18 cards x 3 + chapter 18's two battle maps, then character
-            # cards 1-7 (2 + 3 + 3 + 3 + 2 + 3 + 2), then event cards
-            # 1/2/3/5/7 (2 + 3 + 2 + 2 + 2).
-            self.assertEqual(85, store.state.weekly_submap_count)
+            # 19 story cards x 3 (chapter 18 with its safe area since Leo
+            # 2026-10-10), then character cards 1-7 (2 + 3 + 3 + 3 + 2 + 3 +
+            # 2), then event cards 1/2/3/5/7 (2 + 3 + 2 + 2 + 2).
+            self.assertEqual(86, store.state.weekly_submap_count)
 
     def test_schema_one_collection_progress_resets_without_losing_other_progress(self):
         with tempfile.TemporaryDirectory() as temp_dir:

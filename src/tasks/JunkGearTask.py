@@ -67,6 +67,7 @@ from src.utils.junk_gear import (
     ocr_rarity,
 )
 from src.utils.ocr_utils import normalize_ocr_text
+from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS, wait_for
 
 # 1920x1080 reference coordinates / ROIs.
 SORT_BUTTON_POINT = (1777, 100)
@@ -91,6 +92,9 @@ SELECTION_CONFIRM_POINT = (1777, 1005)
 # Character art on the left: closes the result overlay without hitting a cell.
 NEUTRAL_TAP_POINT = (560, 140)
 DETAIL_READ_RETRIES = 3
+# A junk verdict is read twice this far apart: a 穿戴中 tag or lock drawn late
+# on a slow PC would otherwise send the item to auto-dismantle.
+DETAIL_CONFIRM_SECONDS = 1.0
 LABEL = "爛装强化分解"
 # Every item detail popup shows this line; the plain bag grid never does.
 DETAIL_OPEN_KEYWORD = "自定义标记"
@@ -309,10 +313,15 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
             cells = leading_new_cells(frame, GRID_COLUMNS, GRID_ROWS, cap)
             if not cells:
                 # Opening the bag clears the "!" badges, so a read before
-                # they drew would lose those items for good: look once more.
-                self.sleep(0.8)
-                frame = self._still_grid_frame()
-                cells = leading_new_cells(frame, GRID_COLUMNS, GRID_ROWS, cap)
+                # they drew would lose those items for good: keep looking.
+                looked = {"frame": frame}
+
+                def badges():
+                    looked["frame"] = self._still_grid_frame()
+                    return leading_new_cells(looked["frame"], GRID_COLUMNS, GRID_ROWS, cap)
+
+                cells = wait_for(badges, SLOW_PC_GRACE_SECONDS, sleep=self.sleep, poll=0.8) or []
+                frame = looked["frame"]
             self.info_set("新装备", len(cells))
             # Junk a failed run already judged: opening the bag cleared their
             # "!" badges, so without this they were never handled (live 2K
@@ -718,6 +727,14 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
         )
         return item, whole
 
+    def _classify_detail(self, item: GearItem, stars: dict[str, int]) -> tuple[bool, str]:
+        return classify(
+            item,
+            stars,
+            dismantle_r_sr=bool(self.config.get("分解R和SR", True)),
+            dismantle_low_star_ur=bool(self.config.get("分解3星4星角色的UR专用", True)),
+        )
+
     def _detail_open(self) -> bool:
         boxes = self._reference_boxes(self.capture_frame(), DETAIL_ROI, "详情是否打开")
         return DETAIL_OPEN_KEYWORD in normalize_ocr_text(self._boxes_text(boxes))
@@ -875,13 +892,17 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
             if item is None:
                 verdict, reason, label = False, "详情读取失败", (text[:30] or "-")
             else:
-                verdict, reason = classify(
-                    item,
-                    stars,
-                    dismantle_r_sr=bool(self.config.get("分解R和SR", True)),
-                    dismantle_low_star_ur=bool(self.config.get("分解3星4星角色的UR专用", True)),
-                )
+                verdict, reason = self._classify_detail(item, stars)
                 label = f"{item.name}({item.rarity or '?'})"
+                if verdict:
+                    # Dismantling cannot be undone: a second read must agree.
+                    self.sleep(DETAIL_CONFIRM_SECONDS)
+                    again, _text = self._read_detail()
+                    verdict, reason = (
+                        self._classify_detail(again, stars)
+                        if again is not None
+                        else (False, "第二次没读到详情")
+                    )
             report.append(f"{label}:{'爛装' if verdict else '保留'}[{reason}]")
             if verdict:
                 junk.append((row, column))

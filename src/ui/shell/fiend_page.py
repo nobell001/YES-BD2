@@ -427,6 +427,8 @@ class FiendPage(Page):
             actions.stop(task)
             self.refresh()
             return
+        if task is data.current_task():
+            return  # still stopping: 「正在停止…」
         if self._folder is None:
             self.new_save()
             if self._folder is None:
@@ -886,10 +888,16 @@ class FiendPage(Page):
         replay, record = self.replay_task(), self.record_task()
         recording = bool(getattr(record, "enabled", False))
         replaying = bool(getattr(replay, "enabled", False))
-        self.record_button.set_label("停止录制" if recording else "开始录制")
-        self.record_button.set_icon_name("square" if recording else "circle-dot")
-        self.record_button.set_kind("danger" if recording else "secondary")
-        self.record_button.setEnabled(recording or actions.can_start())
+        # Leo 2026-10-10: 停止录制 shows at once; the recording ends its step.
+        stopping = record is not None and not recording and record is data.current_task()
+        if stopping:
+            self.record_button.set_label("正在停止…")
+            self.record_button.set_icon_name("loader-circle")
+        else:
+            self.record_button.set_label("停止录制" if recording else "开始录制")
+            self.record_button.set_icon_name("square" if recording else "circle-dot")
+        self.record_button.set_kind("danger" if recording or stopping else "secondary")
+        self.record_button.setEnabled(not stopping and (recording or actions.can_start()))
         self.start_button.setEnabled(
             save is not None and save.kind != "empty" and actions.can_start()
         )

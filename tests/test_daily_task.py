@@ -414,11 +414,12 @@ class DailyTaskHelperTest(unittest.TestCase):
 
     def test_guild_sign_in_does_not_click_without_guild_trigger(self):
         # No entry on a confirmed home (no guild, or a changed icon): a skip
-        # that lets 小屋签到 and 一键收菜 go on, read over 3 frames first.
+        # that lets 小屋签到 and 一键收菜 go on, read over 5 frames (about 2 s,
+        # slow PCs) first.
         task, frames = self._no_guild_entry_task(on_home=True)
 
         self.assertEqual(STEP_SKIPPED, DailyTask.run_guild_sign_in(task))
-        self.assertEqual(3, len(frames))
+        self.assertEqual(5, len(frames))
 
     def test_guild_entry_missing_off_home_is_a_failure(self):
         task, _frames = self._no_guild_entry_task(on_home=False)
