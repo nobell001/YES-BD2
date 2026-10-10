@@ -58,7 +58,6 @@ REFINE_TOAST_KEYWORDS = ("精炼成功", "完成")
 TOP_COUNT_PATTERN = re.compile(r"(?<![\d,，.\-－−])\d[\d,，.]*")
 # A refine is confirmed within this long, or the page counts as unchanged.
 REFINE_RESULT_SECONDS = 5.0
-REFINE_CLICK_ATTEMPTS = 2
 # The whole page, for "nothing happened" (frame diff only, no OCR).
 REFINE_PAGE_ROI = (0, 110, 1920, 970)
 
@@ -163,6 +162,7 @@ class DailyRefineTask(_ClaimTaskBase):
         self.icon = FluentIcon.SYNC
 
     def run_claim(self) -> bool:
+        self._why = ""
         if not self._open_equipment_bag():
             return self._claim_fail("打开背包装备页")
         cells = self._wait_for_grid_cells()
@@ -177,6 +177,11 @@ class DailyRefineTask(_ClaimTaskBase):
             tried.add((row, column))
             self.info_set("精炼目标", f"第{row + 1}行第{column + 1}列，精炼值 {value}")
             outcome = self._refine_cell(row, column)
+            if outcome == "no_button":
+                # This item has no 精炼 (a player's 2560×1440 run, 2026-10-10,
+                # stopped on the first one): its popup is closed, try the next.
+                self.log_info(f"每日精炼：第{row + 1}行第{column + 1}列不能精炼，换下一件。")
+                continue
             if outcome != "maxed":
                 break
             # OCR can drop a digit ("24" read as "4", live 2026-09-27): the
@@ -184,13 +189,35 @@ class DailyRefineTask(_ClaimTaskBase):
             self.log_info(f"每日精炼：第{row + 1}行第{column + 1}列已达最大精炼，换下一件。")
         if outcome == "none":
             self.log_info("每日精炼：首屏没有可精炼的装备，跳过。")
+        if outcome == "no_button":
+            outcome = "failed"
+        if outcome == "maxed" and not self._why:
+            self._why = "试了几件都已达最大精炼"
         self._restore_bag_detail_view()
         home = self._leave_to_home("背包", EQUIPMENT_TITLE_KEYWORDS)
         if outcome in ("maxed", "failed"):
-            return self._claim_fail("精炼")
+            return self._refine_fail("精炼")
+        if outcome == "unconfirmed":
+            return self._refine_fail("确认精炼结果")
         if not home:
             return self._claim_fail("背包返回主页")
         return True
+
+    def _refine_fail(self, stage: str) -> bool:
+        """The failure with its reason, written after the bag was left.
+
+        Leaving set 当前阶段 to 「背包：返回主页」, which the 问题摘要 showed as
+        where it stopped, though the bag had been left fine (a player's
+        summary, 2026-10-10).
+        """
+        self._claim_fail(stage)
+        why = getattr(self, "_why", "")
+        text = f"{stage}失败：{why}" if why else f"{stage}失败"
+        self.info_set("当前阶段", text)
+        if why:
+            self.info_set("状态", f"{self.name}：{text}。")
+            self.log_warning(f"{self.name}：{text}。")
+        return False
 
     def _wait_for_grid_cells(self, timeout: float = 3.0) -> list:
         """Refine badges of the first screen; empty only after ``timeout``.
@@ -293,11 +320,26 @@ class DailyRefineTask(_ClaimTaskBase):
                 break
             self.log_info(f"每日精炼：第{attempt}次返回背包未生效，重试。")
         if not self._wait_for_title("装备", EQUIPMENT_TITLE_KEYWORDS):
+            # What went wrong on the page first, if anything, is the cause.
+            self._why = getattr(self, "_why", "") or "从精炼页回不到背包"
             return "failed"
         return outcome
 
+    def _close_item_popup(self, detail: list) -> bool:
+        """One back press closes the item popup and stays in the bag (the
+        player's log: after it, the bag still showed and a second press went
+        home).  True only when the bag shows and the popup's buttons are gone."""
+        self._click_reference(*BACK_BUTTON_POINT, after_sleep=1.0)  # 不用确认：下面读回背包
+        if not self._wait_for_title("装备", EQUIPMENT_TITLE_KEYWORDS, timeout=3.0, quiet=True):
+            return False
+        before = self._boxes_text(detail)
+        frame = self.capture_frame()
+        after = self._boxes_text(self._roi_boxes(frame, DETAIL_BUTTONS_ROI, "装备详情按钮"))
+        return not before or after != before
+
     def _refine_cell(self, row: int, column: int) -> str:
-        """refined / maxed (already at the cap, back in the bag) / failed."""
+        """refined / maxed (already at the cap, back in the bag) / no_button
+        (its popup closed, still in the bag) / unconfirmed / failed."""
         self._sleep_after_recognition()
         self._click_reference(GRID_COLUMNS[column], GRID_ROWS[row], after_sleep=1.0)
         detail = self._wait_boxes(
@@ -305,10 +347,21 @@ class DailyRefineTask(_ClaimTaskBase):
         )
         button = plain_refine_box(detail)
         if button is None:
-            self.log_info("每日精炼：装备详情里没有精炼按钮。")
-            return "failed"
+            # A player's summary (2026-10-10) had only this line and the bag it
+            # went back to: what the popup showed is kept for the 问题摘要.
+            seen = self._boxes_text(detail) or "没读到字"
+            self.log_info(
+                f"每日精炼：第{row + 1}行第{column + 1}列的装备详情里没有精炼按钮，"
+                f"按钮处读到「{seen}」。"
+            )
+            self._why = (
+                f"第{row + 1}行第{column + 1}列的装备详情里没有精炼按钮（按钮处读到「{seen}」）"
+            )
+            self._save_flow_diagnostic("daily_refine_no_refine_button")
+            return "no_button" if self._close_item_popup(detail) else "failed"
         self._click_box(button, after_sleep=1.5)
         if not self._wait_for_title("精炼", REFINE_PAGE_TITLE):
+            self._why = "点了精炼后，精炼页没出来"
             return "failed"
         buttons = self._wait_boxes(
             REFINE_BUTTONS_ROI,
@@ -323,6 +376,7 @@ class DailyRefineTask(_ClaimTaskBase):
             if MAXED_TEXT in normalize_ocr_text(button_text):
                 return self._back_to_bag("maxed")
             self.log_info("每日精炼：精炼页找不到单次精炼按钮。")
+            self._why = f"精炼页找不到单次精炼按钮（读到「{button_text or '没读到字'}」）"
             return self._back_to_bag("failed")
         return self._back_to_bag(self._press_refine_once(refine))
 
@@ -360,55 +414,88 @@ class DailyRefineTask(_ClaimTaskBase):
         return toast_seen, self._top_counts(toast)
 
     def _press_refine_once(self, refine) -> str:
-        """Always "refined"; pressed again only while the page is unchanged.
+        """"refined" once the refine shows on screen, else "unconfirmed".
 
-        The press was logged as done without looking (2026-10-05): a lost
-        press left the daily mission undone, and a blind second press could
-        refine twice.  An unconfirmed result is a warning, not a failure.
+        Proof is the 精炼成功 toast or a lower material count (two agreeing
+        reads).  精炼 spends materials and gold, so the second press is made
+        only while nothing at all changed: the page, the counts and the
+        button are as before the press.  A page that never changed is a
+        failure, never "done" (a lost press left the daily mission undone);
+        one that changed without proof stays "refined" with a warning, since
+        a retry of a refine that did land would refine twice.
         """
-        for attempt in range(1, REFINE_CLICK_ATTEMPTS + 1):
+        frame = self.capture_frame()
+        trace_before = self._refine_trace(frame)
+        if trace_before is None:
+            # The counter may draw a moment after the buttons.
+            self.sleep(0.5)
             frame = self.capture_frame()
             trace_before = self._refine_trace(frame)
-            if trace_before is None:
-                # The counter may draw a moment after the buttons.
-                self.sleep(0.5)
-                frame = self.capture_frame()
-                trace_before = self._refine_trace(frame)
-            toast_before = self._boxes_text(
-                self._roi_boxes(frame, MISSION_TOAST_ROI, "精炼提示")
+        toast_before = self._boxes_text(self._roi_boxes(frame, MISSION_TOAST_ROI, "精炼提示"))
+        counts_before = self._top_counts(toast_before)
+        page_before = self._region_thumbs(frame, (REFINE_PAGE_ROI,))
+        seen = {"spent": None, "changed": False}
+
+        def refined() -> bool:
+            frame = self.capture_frame()
+            toast_seen, counts = self._refine_signals(frame, trace_before, toast_before)
+            spent = counts if self._counts_spent(counts_before, counts) else None
+            # Lower material/gold counts count once two reads agree.
+            agreed = spent is not None and spent == seen["spent"]
+            seen["spent"] = spent
+            seen["changed"] = seen["changed"] or self._thumbs_changed(
+                page_before, self._region_thumbs(frame, (REFINE_PAGE_ROI,))
             )
-            counts_before = self._top_counts(toast_before)
-            page_before = self._region_thumbs(frame, (REFINE_PAGE_ROI,))
-            self.info_set("当前阶段", "精炼一次")
-            self._click_box(refine, after_sleep=1.0)
-            changed = False
-            last_spent = None
-            end_at = monotonic() + REFINE_RESULT_SECONDS
-            while True:
-                frame = self.capture_frame()
-                toast_seen, counts = self._refine_signals(frame, trace_before, toast_before)
-                spent = counts if self._counts_spent(counts_before, counts) else None
-                # Lower material/gold counts count once two reads agree.
-                if toast_seen or (spent is not None and spent == last_spent):
-                    self.info_set("精炼结果", "已精炼")
-                    self.log_info(
-                        "每日精炼：已精炼一次"
-                        + (f"（材料 {counts_before} -> {spent}）。" if spent else "。")
-                    )
-                    return "refined"
-                last_spent = spent
-                changed = changed or self._thumbs_changed(
+            if toast_seen or agreed:
+                self.log_info(
+                    "每日精炼：已精炼一次"
+                    + (f"（材料 {counts_before} -> {spent}）。" if spent else "。")
+                )
+            return toast_seen or agreed
+
+        def untouched() -> bool:
+            # Any change while waiting (animation, counts) may be the refine.
+            if seen["changed"]:
+                return False
+            frame = self.capture_frame()
+            counts = self._top_counts(
+                self._boxes_text(self._roi_boxes(frame, MISSION_TOAST_ROI, "精炼提示"))
+            )
+            return (
+                bool(counts_before)
+                and counts == counts_before
+                and not self._thumbs_changed(
                     page_before, self._region_thumbs(frame, (REFINE_PAGE_ROI,))
                 )
-                if monotonic() >= end_at:
-                    break
-                self.sleep(0.5)
-            buttons = self._roi_boxes(self.capture_frame(), REFINE_BUTTONS_ROI, "精炼按钮")
-            refine = plain_refine_box(buttons)
-            if changed or refine is None or attempt >= REFINE_CLICK_ATTEMPTS:
-                break
-            self.log_info("每日精炼：点击精炼后画面没有变化，再点一次。")
+                and plain_refine_box(self._roi_boxes(frame, REFINE_BUTTONS_ROI, "精炼按钮"))
+                is not None
+            )
+
+        self.info_set("当前阶段", "精炼一次")
+        outcome = self.press_and_confirm(
+            "每日精炼",
+            lambda: self._click_box(refine, after_sleep=1.0),
+            refined,
+            still_before=untouched,
+            timeout=REFINE_RESULT_SECONDS,
+            poll=0.5,
+        )
+        if outcome:
+            self.info_set("精炼结果", "已精炼")
+            return "refined"
+        if seen["changed"]:
+            self.info_set("精炼结果", "已精炼（未确认）")
+            self.log_warning(
+                "每日精炼：点了精炼后画面有变化，但没看到精炼成功或材料减少，"
+                "按已精炼处理，不再补按（以免精炼两次）。"
+            )
+            self._save_flow_diagnostic("refine_unconfirmed")
+            return "refined"
         self.info_set("精炼结果", "未确认")
-        self.log_warning("每日精炼：点击精炼后未确认精炼成功（材料数未减少、无提示），未确认。")
+        self.log_warning(
+            "每日精炼：点了精炼但没看到精炼成功（材料数没减少、没有提示），"
+            "这次记为未完成，下次再做。"
+        )
+        self._why = "点了精炼但没看到精炼成功（材料数没减少、没有提示）"
         self._save_flow_diagnostic("refine_unconfirmed")
-        return "refined"
+        return "unconfirmed"

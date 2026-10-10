@@ -9,6 +9,9 @@ then the tool stops at every start with no window until the file is deleted.
 Here a file is written next to the old one and swapped in at once, and an
 unreadable file is kept as ``<name>.corrupt`` and read as missing, so the
 tool starts with default settings rather than not at all.
+
+The tool's own record files (跑图进度, 账号清单, 周常的勾) use
+``write_text_atomic`` and ``read_text_retrying`` the same way.
 """
 
 from __future__ import annotations
@@ -37,29 +40,58 @@ def read_json_file(file_path):
         return None
 
 
-def write_json_file(file_path, data):
-    folder = os.path.dirname(file_path)
-    if folder:
-        os.makedirs(folder, exist_ok=True)
+def read_text_retrying(file_path) -> str:
+    """The file's text.  A file held open elsewhere (an antivirus scan, the
+    other tool swapping it in) is tried again a few times, then the OSError
+    is raised; a missing file raises ``FileNotFoundError`` at once."""
+    for attempt in range(REPLACE_TRIES):
+        try:
+            with open(file_path, "r", encoding="utf-8") as file:
+                return file.read()
+        except FileNotFoundError:
+            raise
+        except OSError:
+            if attempt + 1 == REPLACE_TRIES:
+                raise
+            time.sleep(REPLACE_WAIT_SECONDS)
+
+
+def write_text_atomic(file_path, text: str) -> None:
+    """Write ``text`` next to the file and swap it in at once.  A file held
+    open elsewhere is tried again a few times, then the PermissionError is
+    raised and the old file is left as it was."""
     temp = f"{file_path}.tmp"
     with open(temp, "w", encoding="utf-8") as file:
-        json.dump(data, file, indent=4, ensure_ascii=False)
+        file.write(text)
         file.flush()
         os.fsync(file.fileno())
     for attempt in range(REPLACE_TRIES):
         try:
             os.replace(temp, file_path)
-            return True
+            return
         except PermissionError:
-            if attempt + 1 < REPLACE_TRIES:
-                time.sleep(REPLACE_WAIT_SECONDS)
-    # Still held open elsewhere: write in place as ok-script always did.
+            if attempt + 1 == REPLACE_TRIES:
+                try:
+                    os.remove(temp)
+                except OSError:
+                    pass
+                raise
+            time.sleep(REPLACE_WAIT_SECONDS)
+
+
+def write_json_file(file_path, data):
+    folder = os.path.dirname(file_path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    text = json.dumps(data, indent=4, ensure_ascii=False)
     try:
-        os.remove(temp)
-    except OSError:
+        write_text_atomic(file_path, text)
+        return True
+    except PermissionError:
         pass
+    # Still held open elsewhere: write in place as ok-script always did.
     with open(file_path, "w", encoding="utf-8") as file:
-        json.dump(data, file, indent=4, ensure_ascii=False)
+        file.write(text)
     return True
 
 

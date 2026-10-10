@@ -50,9 +50,9 @@ class PhaseLedger:
     def done(self, phase: str) -> bool:
         return self._read().get(phase) == period_key(phase, self.now_provider())
 
-    def mark_done(self, phase: str) -> None:
+    def mark_done(self, phase: str, key: str) -> None:
         records = self._read()
-        records[phase] = period_key(phase, self.now_provider())
+        records[phase] = key
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.path.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
@@ -67,9 +67,13 @@ class PhaseLedger:
         def run():
             if skip_done and self.done(phase):
                 return PhaseSkipped(f"本期已完成{phase}，跳过（避免重复消耗）。")
+            # The period the work started in: a sell from 22:55 that ends at
+            # 23:05 must not mark the next day's sale as done (nor a buy
+            # across 08:00 the next day's stock).
+            key = period_key(phase, self.now_provider())
             result = action()
             if bool(getattr(result, "success", result)) and getattr(result, "record", True):
-                self.mark_done(phase)
+                self.mark_done(phase, key)
             return result
 
         return run

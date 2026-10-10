@@ -7,8 +7,14 @@ from unittest import mock
 
 import numpy as np
 
-from src.tasks import recovery, run_report
-from src.tasks.DailyBatchTask import RUN_MODE_INCOMPLETE, DailyBatchChild, DailyBatchTask
+from src.tasks import recovery, run_report, scheduler
+from src.tasks.DailyBatchTask import (
+    RUN_MODE_ALL,
+    RUN_MODE_INCOMPLETE,
+    DailyBatchChild,
+    DailyBatchTask,
+)
+from src.tasks.run_history import RunHistoryStore, set_default_store
 
 _report_dir = None
 
@@ -68,26 +74,48 @@ class HandleDialogTest(unittest.TestCase):
 
 
 class TitleScreenBatchTest(unittest.TestCase):
-    def test_batch_waits_for_login_and_keeps_later_children_due(self):
+    def _batch(self, calls):
+        """第一项 done, then 失败项 lands on the title screen once, then 后续项."""
+
+        class First:
+            pass
+
         class Failed:
             pass
 
         class Later:
             pass
 
-        failed = SimpleNamespace(
-            name="failed", config={}, info_clear=lambda: None, run=lambda: False
-        )
-        later = mock.Mock()
-        later.name = "later"
+        def child(name, result=lambda: True):
+            def run():
+                calls.append(name)
+                return result()
+
+            return SimpleNamespace(name=name, config={}, info_clear=lambda: None, run=run)
+
+        title = {"left": 1}
+
+        def on_title():
+            title["left"] -= 1
+            return title["left"] < 0
+
+        children = {
+            First: child("公会、小屋、酒馆"),
+            Failed: child("快速狩猎", on_title),
+            Later: child("广场女神像"),
+        }
         task = object.__new__(DailyBatchTask)
-        task.child_tasks = (DailyBatchChild("失败项", Failed), DailyBatchChild("后续项", Later))
-        task.config = {"启用": True, "失败项": True, "后续项": True}
+        task.child_tasks = (
+            DailyBatchChild("第一项", First),
+            DailyBatchChild("失败项", Failed),
+            DailyBatchChild("后续项", Later),
+        )
+        task.config = {"启用": True, "第一项": True, "失败项": True, "后续项": True}
         task.info = {}
         task.info_set = lambda key, value: task.info.__setitem__(key, value)
         task.log_info = task.log_warning = task.log_error = lambda *a, **k: None
         task._executor = SimpleNamespace(
-            get_task_by_class=lambda cls: {Failed: failed, Later: later}.get(cls),
+            get_task_by_class=lambda cls: children.get(cls),
             reset_scene=lambda **k: None,
         )
         task._auto_login_pending = lambda: False
@@ -97,17 +125,60 @@ class TitleScreenBatchTest(unittest.TestCase):
             task._auto_login_pending = lambda: True  # recovery re-armed login
             return False
 
+        patcher = mock.patch.object(DailyBatchTask, "_recover_home", staticmethod(recover))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return task
+
+    def _logged_in(self, task, calls):
+        task._auto_login_pending = lambda: False
+        calls.clear()
+
+    def test_batch_waits_for_login_and_keeps_later_children_due(self):
+        calls = []
+        task = self._batch(calls)
         schedule = mock.Mock()
-        with (
-            mock.patch.object(DailyBatchTask, "_recover_home", staticmethod(recover)),
-            mock.patch("src.tasks.scheduler.default_store", return_value=schedule),
-        ):
-            self.assertFalse(DailyBatchTask.run(task))
-        later.run.assert_not_called()
+        with mock.patch("src.tasks.scheduler.default_store", return_value=schedule):
+            self.assertFalse(DailyBatchTask.run(task, RUN_MODE_ALL))
+        self.assertEqual(["公会、小屋、酒馆", "快速狩猎"], calls)
         self.assertTrue(task._start_after_login)
-        self.assertEqual(RUN_MODE_INCOMPLETE, task._requested_run_mode)
-        # Later children stay due for the run after login.
-        self.assertNotIn(mock.call("later", ok=False), schedule.delay_after_run.call_args_list)
+        # The mode the player picked (here 跑勾选的), not 跑没跑完的.
+        self.assertEqual(RUN_MODE_ALL, task._take_run_mode(None))
+        # Not their fault: neither the interrupted child nor the later ones
+        # wait out a failure backoff in the run after login.
+        waits = schedule.delay_after_run.call_args_list
+        self.assertNotIn(mock.call("快速狩猎", ok=False), waits)
+        self.assertNotIn(mock.call("广场女神像", ok=False), waits)
+
+    def test_the_run_after_the_login_goes_on_from_where_it_was(self):
+        # 跑勾选的: what this run did is not done again, the interrupted one is.
+        calls = []
+        task = self._batch(calls)
+        with mock.patch("src.tasks.scheduler.default_store", return_value=mock.Mock()):
+            DailyBatchTask.run(task, RUN_MODE_ALL)
+            self._logged_in(task, calls)
+            self.assertTrue(DailyBatchTask.run(task))
+        self.assertEqual(["快速狩猎", "广场女神像"], calls)
+        self.assertEqual(run_report.ENDED_DONE, task._report_ended)
+
+    def test_a_left_items_run_does_the_interrupted_child_after_the_login(self):
+        # It used to wait out a 5-minute failure backoff, so the run after
+        # the login skipped it and still ended 完成.
+        calls = []
+        task = self._batch(calls)
+        with tempfile.TemporaryDirectory() as folder:
+            schedule = scheduler.TaskScheduleStore(f"{folder}/schedule.json")
+            scheduler.set_default_store(schedule)
+            set_default_store(RunHistoryStore(f"{folder}/history.json"))
+            try:
+                DailyBatchTask.run(task, RUN_MODE_INCOMPLETE)
+                self.assertEqual(RUN_MODE_INCOMPLETE, task._requested_run_mode)
+                self._logged_in(task, calls)
+                self.assertTrue(DailyBatchTask.run(task))
+            finally:
+                scheduler.set_default_store(None)
+                set_default_store(None)
+        self.assertEqual(["快速狩猎", "广场女神像"], calls)
 
 
 if __name__ == "__main__":

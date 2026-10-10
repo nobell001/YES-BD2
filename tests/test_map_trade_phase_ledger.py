@@ -54,6 +54,32 @@ class PhaseLedgerTest(unittest.TestCase):
         self._phase("买")()  # still the same 08:00 day: skipped
         self.assertEqual(["卖"], self.calls)
 
+    def _phase_ending_at(self, name, end):
+        def action():
+            self.calls.append(name)
+            self.now[0] = end  # the clock moves on while the phase runs
+            return True
+
+        return self.ledger.once(name, action)
+
+    def test_a_sell_that_crosses_23_00_leaves_the_next_days_sale_to_do(self):
+        self.now[0] = datetime(2026, 10, 8, 22, 55, tzinfo=UTC_PLUS_8)
+        self._phase_ending_at("卖", datetime(2026, 10, 8, 23, 5, tzinfo=UTC_PLUS_8))()
+        self.now[0] = datetime(2026, 10, 9, 9, 0, tzinfo=UTC_PLUS_8)  # next morning's run
+        self.calls.clear()
+        self._phase("卖")()
+        self.assertEqual(["卖"], self.calls)
+
+    def test_a_buy_that_crosses_08_00_leaves_the_new_stock_to_buy(self):
+        self.now[0] = datetime(2026, 10, 9, 7, 58, tzinfo=UTC_PLUS_8)
+        self._phase_ending_at("买", datetime(2026, 10, 9, 8, 1, tzinfo=UTC_PLUS_8))()
+        self.calls.clear()
+        self._phase("买")()
+        self.assertEqual(["买"], self.calls)
+        self.calls.clear()
+        self._phase("买")()  # now done for the 08:00 day
+        self.assertEqual([], self.calls)
+
 
 if __name__ == "__main__":
     unittest.main()

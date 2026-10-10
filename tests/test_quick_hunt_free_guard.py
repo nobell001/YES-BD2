@@ -16,7 +16,10 @@ class ParseTest(unittest.TestCase):
 
 
 class GuardTest(unittest.TestCase):
-    def _task(self, cost_text, pool_text, label="仅使用免费米饭", switch=(True,)):
+    def _task(self, cost_text, pool_text, label="仅使用免费米饭", switch=0.37, after_click=None):
+        """``switch`` is the yellow share; each click applies ``after_click``."""
+        from unittest import mock
+
         from src.tasks.QuickHuntTask import QuickHuntTask
 
         task = object.__new__(QuickHuntTask)
@@ -31,9 +34,18 @@ class GuardTest(unittest.TestCase):
         task._quick_hunt_ocr_text = lambda frame, roi, name, small_text=False: next(
             value for key, value in reads.items() if name.endswith(key)
         )
-        states = iter(switch)
-        task._quick_hunt_free_switch_on = lambda: next(states, switch[-1])
-        task._click_reference = lambda x, y, after_sleep=0: task.clicks.append((x, y))
+        task.switch = switch
+
+        def click(x, y, after_sleep=0):
+            task.clicks.append((x, y))
+            if after_click is not None:
+                task.switch = after_click(task.switch)
+
+        task._quick_hunt_free_switch_ratio = lambda: task.switch
+        task._click_reference = click
+        settle = mock.patch("src.tasks.quick_hunt.QUICK_HUNT_FREE_SWITCH_SETTLE_SECONDS", 0.0)
+        settle.start()
+        self.addCleanup(settle.stop)
         return task
 
     def test_cost_above_the_free_pool_is_refused(self):
@@ -47,7 +59,7 @@ class GuardTest(unittest.TestCase):
         self.assertFalse(self._task("", "84/90")._quick_hunt_cost_within_free("x"))
 
     def test_switch_off_is_turned_on(self):
-        task = self._task("", "", switch=(False, True))
+        task = self._task("", "", switch=0.0, after_click=lambda _ratio: 0.37)
         self.assertTrue(task._quick_hunt_ensure_free_only("冒险航线"))
         self.assertEqual(1, len(task.clicks))
 
@@ -56,9 +68,26 @@ class GuardTest(unittest.TestCase):
         self.assertFalse(task._quick_hunt_ensure_free_only("冒险航线"))
         self.assertEqual([], task.clicks)
 
-    def test_switch_that_never_turns_on_refuses(self):
-        task = self._task("", "", switch=(False,))
+    def test_switch_that_never_turns_on_refuses_after_two_clicks(self):
+        # Review #28: a second click only when the first changed nothing (an
+        # invisible toggle is then back where it started); never a third.
+        task = self._task("", "", switch=0.0, after_click=lambda ratio: ratio)
         self.assertFalse(task._quick_hunt_ensure_free_only("冒险航线"))
+        self.assertEqual(2, len(task.clicks))
+
+    def test_a_swallowed_click_is_pressed_once_more(self):
+        # BUG-20260906-01: the first click did nothing, the second turns it on.
+        results = iter((0.0, 0.37))
+        task = self._task("", "", switch=0.0, after_click=lambda _ratio: next(results))
+        self.assertTrue(task._quick_hunt_ensure_free_only("冒险航线"))
+        self.assertEqual(2, len(task.clicks))
+
+    def test_a_click_that_dims_the_switch_is_pressed_back(self):
+        # On but too faint to count (0.03): the click turned it off.
+        task = self._task("", "", switch=0.03, after_click=lambda r: 0.0 if r else 0.03)
+        self.assertFalse(task._quick_hunt_ensure_free_only("冒险航线"))
+        self.assertEqual(2, len(task.clicks))
+        self.assertEqual(0.03, task.switch)
 
 
 if __name__ == "__main__":

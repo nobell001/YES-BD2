@@ -30,8 +30,11 @@ def can_start() -> bool:
     return not data.busy() and data.executor() is not None
 
 
-def start(task, window=None, run_mode: str | None = None) -> bool:
-    """Start ``task``; a batch can be asked to run only what is left."""
+def start(task, window=None, run_mode: str | None = None, by_player: bool | None = None) -> bool:
+    """Start ``task``; a batch can be asked to run only what is left.
+
+    ``by_player``: pressed by the player (default: a window was given).
+    """
     if task is None:
         logger.info("start pressed but the task was not found")
         _warn(window, "找不到这个任务，请重开工具再试")
@@ -78,8 +81,14 @@ def start(task, window=None, run_mode: str | None = None) -> bool:
     if window is not None and task.name in (data.DAILY_BATCH, data.WEEKLY_BATCH):
         if not game_running() and not _ask_to_open_game(window):
             return False
+    if hasattr(task, "cancel_resume"):
+        # A start by the player, never the run after 闪退 or the title screen.
+        task.cancel_resume()
+    rearm_login_for_closed_game()
     if run_mode is not None and hasattr(task, "request_run_mode"):
-        task.request_run_mode(run_mode)
+        task.request_run_mode(
+            run_mode, by_player=window is not None if by_player is None else by_player
+        )
     try:
         data.og().app.start_controller.start(task)
     except Exception as exc:
@@ -142,6 +151,21 @@ def game_running() -> bool:
     return True if found is None else found  # cannot tell: start as before
 
 
+def rearm_login_for_closed_game() -> None:
+    """The game is closed, so the start that opens it must log in again.
+
+    The auto-login stays finished after its first login in a tool session;
+    with the game closed later, the next start counted it as logged in and
+    ran on the title screen (live 4K clone 2026-10-10 14:36, step 57).
+    """
+    if game_running():
+        return
+    login = _login_task()
+    if login is not None and getattr(login, "_finished", False):
+        login._reset_login_state("游戏关着，打开后重新自动登录。")
+        logger.info("game closed: auto-login armed again for the next opening")
+
+
 def _ask_to_open_game(window) -> bool:
     """Leo (2026-10-03 14:37): the game is not open, offer to open it and run.
 
@@ -187,13 +211,16 @@ def _cancel_login_wait(task) -> bool:
     Live 2026-10-10: the press stopped 自动登录 instead, whose disable() saves
     the setting off and lets the waiting batch go, so it started on the title
     screen.  Between login checks nothing runs at all and the press did nothing.
+    A single task handed to the 桌面分身 waits there instead (finding 43).
     """
+    from src.ui.shell import clone_flow
+
     waiting = [each for each in data.onetime_tasks() if getattr(each, "_start_after_login", False)]
-    if not waiting:
+    if not clone_flow.drop_waiting_job() and not waiting:
         return False
     for batch in waiting:
-        batch._start_after_login = False
-        batch._requested_run_mode_deadline = 0.0
+        # The 闪退 resume too, or the next start skips what it had done.
+        batch.cancel_resume()
         batch.disable()
     login = _login_task()
     if login is not None and not bool(login.config.get("_enabled", False)):

@@ -16,6 +16,7 @@ from src.compat.launcher_swap import (
     launcher_zip_url,
     needs_swap,
     swap,
+    version_parts,
 )
 
 NEW_EXE = b"new launcher"
@@ -49,14 +50,17 @@ class LauncherVersionTest(unittest.TestCase):
         )
         self.assertRegex(LAUNCHER_SHA256, r"^[0-9a-f]{64}$")
 
-    def test_version_matches_the_built_launcher(self):
+    def test_swap_target_is_never_ahead_of_the_built_launcher(self):
+        # A new launcher ships in one release first; the swap points at it
+        # only in a later one, once that release's zip and sha256 exist. So
+        # the built launcher may be newer than the swap target, never older.
         import re
 
         script = Path(__file__).resolve().parents[1] / "scripts" / "prepare_pyappify_launcher.ps1"
         built = re.search(
             r'\$LauncherVersion = "([0-9.]+)"', script.read_text(encoding="utf-8-sig")
         ).group(1)
-        self.assertEqual(built, LAUNCHER_VERSION)
+        self.assertGreaterEqual(version_parts(built), version_parts(LAUNCHER_VERSION))
 
 
 class SwapTest(unittest.TestCase):

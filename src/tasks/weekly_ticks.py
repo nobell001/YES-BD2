@@ -7,15 +7,18 @@
 
 记录放在 configs/weekly_ticks.json：每一项「哪一次完成被处理过、在哪一周」，
 桌面上的工具和桌面分身里的工具共用，每次都重新读，不留在内存里。
+记录坏了就分不出哪些勾是工具取消的，下周把没有记录的勾都勾回来（宁可多跑）。
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
+from src.compat.safe_json import read_text_retrying, write_text_atomic
 from src.tasks.run_history import week_start_ts
 from src.utils import accounts
 
@@ -24,22 +27,38 @@ STATE_FILE = ROOT / "configs" / "weekly_ticks.json"
 # The batch's own finish stamp and the one run_history writes can differ a
 # little; a completion this close to the handled one is the same completion.
 SAME_RUN_SECONDS = 5.0
+# The week the records were found broken.
+LOST_KEY = "_lost"
 
 
-def _read(path: Path) -> dict:
+def _read(path: Path, week: float) -> dict | None:
+    """The records; None while the file is held open elsewhere."""
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        value = json.loads(read_text_retrying(path))
+    except FileNotFoundError:
         return {}
-    return value if isinstance(value, dict) else {}
+    except OSError:
+        return None
+    except ValueError:
+        value = None
+    if isinstance(value, dict):
+        return value
+    try:
+        shutil.copy2(path, f"{path}.corrupt")
+    except OSError:
+        pass
+    state = {LOST_KEY: week}
+    _write(path, state)
+    return state
 
 
-def _write(path: Path, state: dict) -> None:
+def _write(path: Path, state: dict) -> bool:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        write_text_atomic(path, json.dumps(state, ensure_ascii=False))
+        return True
     except OSError:
-        pass  # never let the ticks stop a run; the next sync tries again
+        return False  # never let the ticks stop a run; the next sync tries again
 
 
 def _entry(state: dict, key: str) -> dict | None:
@@ -62,9 +81,14 @@ def sync(
     run_history's lookup by task name.
     """
     path = accounts.scoped(STATE_FILE) if path is None else path
-    state = _read(path)
     week = week_start_ts(now)
+    state = _read(path, week)
+    if state is None:
+        return []
+    lost = state.get(LOST_KEY)
+    lost = isinstance(lost, (int, float)) and lost < week
     changed: list[str] = []
+    untick: list[str] = []
     dirty = False
     for key, name in children:
         entry = _entry(state, key)
@@ -79,28 +103,48 @@ def sync(
             state[key] = {"done": finished, "week": week}
             dirty = True
             if bool(config.get(key, True)):
-                config[key] = False
-                changed.append(key)
-        elif entry is not None and entry.get("week", 0) < week:
-            # A new week: give back the tick the tool took away.
+                untick.append(key)
+        elif (entry is not None and entry.get("week", 0) < week) or (entry is None and lost):
+            # A new week: give back the tick the tool took away.  With the
+            # records lost, every untick comes back (the safe side).
             state.pop(key, None)
             dirty = True
             if not bool(config.get(key, True)):
                 config[key] = True
                 changed.append(key)
-    if dirty:
-        _write(path, state)
+    if lost:
+        state.pop(LOST_KEY)
+        dirty = True
+    if dirty and not _write(path, state):
+        # A tick is taken only with its record kept, or next week could
+        # not give it back.
+        untick = []
+    for key in untick:
+        config[key] = False
+        changed.append(key)
     return changed
 
 
 def mark_done(
-    config, key: str, finished: float | None = None, now: float | None = None, path=None
+    config,
+    key: str,
+    finished: float | None = None,
+    now: float | None = None,
+    path=None,
+    started: float | None = None,
 ) -> None:
-    """A 周常 just finished in a run: take its tick away for this week."""
+    """A 周常 just finished in a run: take its tick away for this week.
+
+    One started before Monday 08:00 is last week's: the new week keeps its tick.
+    """
     path = accounts.scoped(STATE_FILE) if path is None else path
     finished = time.time() if finished is None else finished
-    state = _read(path)
-    state[key] = {"done": finished, "week": week_start_ts(now)}
-    _write(path, state)
-    if bool(config.get(key, True)):
+    week = week_start_ts(now)
+    if started is not None and week_start_ts(started) < week:
+        return
+    state = _read(path, week)
+    if state is None:
+        return  # kept ticked; the next sync takes it away with its record
+    state[key] = {"done": finished, "week": week}
+    if _write(path, state) and bool(config.get(key, True)):
         config[key] = False

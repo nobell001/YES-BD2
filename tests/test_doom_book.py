@@ -237,16 +237,20 @@ class GoBattleTimingTest(unittest.TestCase):
         from src.tasks import DoomBookTask as module
 
         task = self._task()
+        task.capture_frame = lambda: np.zeros((108, 192, 3), np.uint8)
         clicks = []
         task._click_reference_box = lambda box, after_sleep=0: clicks.append(box)
-        waits = []
+        # The page and its button are gone after the click: the battle is loading.
+        task._doom_page_visible = lambda _frame: not clicks
+        task._reference_boxes = lambda *a: [] if clicks else ["button"]
+        options = {}
+        press_and_confirm = task.press_and_confirm
 
-        def wait_for(check, timeout, interval=0.6):
-            waits.append(timeout)
-            return True  # the page left: the battle is loading
+        def spy(label, press, confirmed, **kwargs):
+            options.update(kwargs)
+            return press_and_confirm(label, press, confirmed, **kwargs)
 
-        task._wait_for = wait_for
-        task._doom_page_visible = lambda _frame: True
+        task.press_and_confirm = spy
         # Stop right after the go-battle step.
         module_end = module.BATTLE_TIMEOUT_SECONDS
         try:
@@ -255,7 +259,7 @@ class GoBattleTimingTest(unittest.TestCase):
         finally:
             module.BATTLE_TIMEOUT_SECONDS = module_end
         self.assertEqual(["button"], clicks)
-        self.assertEqual([module.GO_BATTLE_LEAVE_SECONDS], waits)
+        self.assertEqual(module.GO_BATTLE_LEAVE_SECONDS, options["timeout"])
         self.assertGreaterEqual(module.GO_BATTLE_LEAVE_SECONDS, 8.0)
 
     def test_cleanup_waits_a_full_battle_but_not_on_the_doom_page(self):

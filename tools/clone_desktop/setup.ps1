@@ -227,7 +227,7 @@ function Install {
 
     $passwordless = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device' -ErrorAction SilentlyContinue).DevicePasswordLessBuildVersion
     if ($passwordless -eq 2) {
-        Say '注意：這台電腦設成 Microsoft 帳戶只能用 Windows Hello 登入。要先到「設定 > 帳戶 > 登入選項」關掉，分身才能用密碼登入。'
+        Say '注意：這台電腦設成 Microsoft 帳戶只能用 Windows Hello 登入。要先到「設定 > 帳戶 > 登入選項」最下面的「其他設定」，關掉「僅允許此裝置上的 Microsoft 帳戶使用 Windows Hello 登入」，分身才能用密碼登入（人臉和 PIN 不用關）。'
     }
     Say "完成。打開桌面分身：$exe"
     Say "全部還原：powershell -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Undo"

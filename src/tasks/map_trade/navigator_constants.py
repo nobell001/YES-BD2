@@ -1029,3 +1029,9 @@ FIRST_CARD_SKIP_TEMPLATE = TemplateSpec(
     roi=(915, 9, 265, 68),
 )
 FIRST_CARD_CONFIRM_REGION = (626, 368, 186, 293)
+# A 确认 seen while waiting to enter a card is pressed only when the button
+# reads exactly 确认 and the dialog around it names nothing that buys or uses
+# something up; such a dialog stops the step instead (review #11).
+FIRST_CARD_DIALOG_REGION = (240, 120, 800, 541)
+FIRST_CARD_PAID_WORDS = ("购买", "钻石", "鸡尾酒", "消耗", "使用", "付费")
+FIRST_CARD_PAID_DIALOG_MESSAGE = "进入卡带时出现可能花费资源的确认框，没有按确认"

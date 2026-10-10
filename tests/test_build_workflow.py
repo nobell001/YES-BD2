@@ -125,6 +125,22 @@ class BuildWorkflowTest(unittest.TestCase):
         self.assertIn("'{appVersion && null}'", script)
         self.assertNotIn('<Link href=', script.split("$footerLink,", 1)[1])
 
+    def test_launcher_start_waits_for_the_update_check(self):
+        # Player report 10-10: 「启动应用」 pressed while the launcher was still
+        # fetching started v0.1.11 and skipped the update to v0.1.17.
+        script = (ROOT / "scripts" / "prepare_pyappify_launcher.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("let _startup_check = STARTUP_CHECK.lock().await;", script)
+        self.assertIn("drop(STARTUP_CHECK.lock().await);", script)
+
+    def test_launcher_log_ends_in_txt(self):
+        # GitHub refused the extensionless app.2026-10-10 as an attachment.
+        script = (ROOT / "scripts" / "prepare_pyappify_launcher.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('.filename_suffix(`"txt`")', script)
+
     def test_workflows_validate_uv_lock_and_exports(self):
         action = "astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b"
         for workflow in (self.workflow, self.test_workflow):

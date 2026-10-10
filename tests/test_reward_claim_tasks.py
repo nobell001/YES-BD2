@@ -161,6 +161,46 @@ class PassListTest(unittest.TestCase):
 
         self.assertIsNone(PassRewardTask._claim_one_pass(task, 1, "基础通行证"))
 
+    def _card_task(self, changed):
+        task = object.__new__(PassRewardTask)
+        task.claim_log_name = "pass"
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_info = lambda *_args, **_kwargs: None
+        task._save_flow_diagnostic = lambda *_args: None
+        task.capture_frame = lambda: np.zeros((1080, 1920, 3), dtype=np.uint8)
+        task._roi_boxes = lambda *_args: [box("基础通行证", 300), box("角色通行证", 410)]
+        task._click_box = lambda *_args, **_kwargs: None
+        task._click_reference = lambda *_args, **_kwargs: None
+        # The card click reports ``changed``; the tab clicks always change.
+        task._click_until_changed = lambda label, click, _rois, **_kwargs: (
+            click() or (changed if label.startswith("通行证") else True)
+        )
+        claimed = []
+        task._claim_all = lambda label, *_args: claimed.append(label) or True
+        return task, claimed
+
+    def test_card_that_never_opens_is_not_claimed(self):
+        # Both presses on the second card were lost: claiming now would claim
+        # the first pass again and mark this one handled.
+        task, claimed = self._card_task(changed=False)
+        self.assertIsNone(
+            PassRewardTask._claim_one_pass(task, 2, "角色通行证", position=1)
+        )
+        self.assertEqual([], claimed)
+
+    def test_preselected_first_card_unchanged_is_still_claimed(self):
+        task, claimed = self._card_task(changed=False)
+        self.assertEqual(
+            "基础通行证", PassRewardTask._claim_one_pass(task, 1, "基础通行证", position=0)
+        )
+        self.assertEqual(["基础通行证任务", "基础通行证奖励"], claimed)
+
+    def test_first_pass_on_another_card_must_open(self):
+        # Only the top card is selected on entry.
+        task, claimed = self._card_task(changed=False)
+        self.assertIsNone(PassRewardTask._claim_one_pass(task, 1, "角色通行证", position=1))
+        self.assertEqual([], claimed)
+
     def test_misread_caption_opened_by_position_is_not_marked_handled(self):
         task, _claimed, _scrolls, _left = self._task(lambda _roi, _n: [])
         opened = {"活动通行证X": "角色通行证"}
@@ -202,6 +242,20 @@ class ClickUntilChangedTest(unittest.TestCase):
             changed = PassRewardTask._click_until_changed(
                 task, "商品邮箱", lambda: clicks.append(1), ((155, 186, 260, 70),), attempts=3
             )
+        self.assertTrue(changed)
+        self.assertEqual(2, len(clicks))
+
+    def test_click_that_lands_late_still_counts(self):
+        # Click 1 shows its effect only after its wait; click 2 hits the card
+        # that is already selected and changes nothing more.
+        old = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        new = old.copy()
+        new[186:256, 155:415] = 200
+        task = self._task([old, old, new])
+        clicks = []
+        changed = PassRewardTask._click_until_changed(
+            task, "通行证", lambda: clicks.append(1), ((155, 186, 260, 70),), attempts=2, wait=0
+        )
         self.assertTrue(changed)
         self.assertEqual(2, len(clicks))
 

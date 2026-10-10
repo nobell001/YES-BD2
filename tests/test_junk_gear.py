@@ -190,12 +190,13 @@ class JunkSafetyTest(unittest.TestCase):
         self.assertFalse(task._wait_detail(False, timeout=0))
 
     def test_a_stale_popup_keeps_every_item(self):
-        # The detail popup never closes: nothing is classified as junk.
+        # The detail popup never closes: nothing is judged, and the run is a
+        # failure (None), not "no junk".
         task = self._task()
         clicks = []
         task._click_reference = lambda x, y, after_sleep=0: clicks.append((x, y))
         task._wait_detail = lambda open_, timeout=0: open_
-        self.assertEqual([], task._classify_cells([(0, 0), (0, 1)], {}))
+        self.assertIsNone(task._classify_cells([(0, 0), (0, 1)], {}))
         self.assertEqual([], clicks)
 
     def test_selection_is_cancelled_when_cells_moved(self):
@@ -231,6 +232,9 @@ class JunkSafetyTest(unittest.TestCase):
                 self.assertIsNone(module.JunkGearTask._saved_sort())
 
     def test_unrestorable_saved_sort_stops_before_switching(self):
+        import json
+        import tempfile
+        import time
         from unittest import mock
 
         task = self._task()
@@ -238,8 +242,18 @@ class JunkSafetyTest(unittest.TestCase):
         task._saved_sort = lambda: "按星级从高到低排序"
         task._restore_sort = lambda original: False
         task._switch_to_newest_first = mock.Mock()
-        with mock.patch("src.tasks.JunkGearTask.load_exclusive_stars", return_value={}):
-            self.assertFalse(task.run_claim())
+        with tempfile.TemporaryDirectory() as folder:
+            # The first failure of a fresh save (review #22: later ones drop it).
+            path = Path(folder) / "junk_gear_sort.json"
+            path.write_text(
+                json.dumps({"original": "按星级从高到低排序", "saved": time.time()}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch("src.tasks.JunkGearTask.load_exclusive_stars", return_value={}),
+                mock.patch("src.tasks.JunkGearTask._sort_state_file", return_value=path),
+            ):
+                self.assertFalse(task.run_claim())
         task._switch_to_newest_first.assert_not_called()
 
     def test_stop_mid_run_clicks_nothing_more(self):
@@ -504,3 +518,316 @@ class LoneDigitsTest(unittest.TestCase):
         self.assertEqual("7", lone_digits("7"))
         self.assertEqual("强化", lone_digits("强化"))
         self.assertEqual("abcd", lone_digits("abcd"))
+
+
+class PendingDateTest(unittest.TestCase):
+    """Review #26: re-saving the same leftover junk keeps its first date."""
+
+    def setUp(self):
+        import tempfile
+        from unittest import mock
+
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.path = Path(folder.name) / "junk_gear_pending.json"
+        patcher = mock.patch("src.tasks.JunkGearTask._pending_file", return_value=self.path)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _task(self):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from src.tasks.JunkGearTask import JunkGearTask
+
+        task = object.__new__(JunkGearTask)
+        task.config = {}
+        task.info_set = lambda *a: None
+        task.log_info = lambda *a, **k: None
+        task.log_warning = lambda *a, **k: None
+        task.sleep = lambda *a: None
+        frame = np.zeros((1080, 1920, 3), np.uint8)
+        task._colours_distorted = lambda: False
+        task._open_equipment_bag = lambda: True
+        task._saved_sort = lambda: None
+        task._clear_saved_sort = lambda: None
+        task._switch_to_newest_first = lambda: "按获得时间从晚到早排序"
+        task._restore_sort = lambda _sort: True
+        task._restore_bag_detail_view = lambda: None
+        task._still_grid_frame = lambda: frame
+        task._claim_fail = lambda _stage: False
+        task._enhance_and_dismantle = lambda cells, _frame: False
+        task.load = mock.patch("src.tasks.JunkGearTask.load_exclusive_stars", return_value={})
+        task.new = mock.patch("src.tasks.JunkGearTask.leading_new_cells", return_value=[(0, 0)])
+        task.load.start()
+        task.new.start()
+        self.addCleanup(task.load.stop)
+        self.addCleanup(task.new.stop)
+        task.carried = SimpleNamespace(cells=[])
+        task._pending_cells = lambda _frame: task.carried.cells
+        return task
+
+    def _saved(self):
+        import json
+
+        return json.loads(self.path.read_text(encoding="utf-8"))["saved"]
+
+    def test_a_failure_that_repeats_keeps_the_first_date(self):
+        import json
+        import time
+
+        first = time.time() - 2 * 24 * 3600
+        self.path.write_text(json.dumps({"saved": first, "icons": []}), encoding="utf-8")
+        task = self._task()
+        task.carried.cells = [(0, 1)]
+        task._classify_cells = lambda cells, _stars, _frame: [(0, 1)]
+
+        self.assertFalse(task.run_claim())
+        self.assertEqual(first, self._saved())
+
+    def test_new_junk_alone_gets_a_new_date(self):
+        import json
+        import time
+
+        old = time.time() - 2 * 24 * 3600
+        self.path.write_text(json.dumps({"saved": old, "icons": []}), encoding="utf-8")
+        task = self._task()
+        task._classify_cells = lambda cells, _stars, _frame: [(0, 0)]
+
+        self.assertFalse(task.run_claim())
+        self.assertGreater(self._saved(), time.time() - 60)
+
+    def test_a_failed_look_keeps_the_items_for_the_next_run(self):
+        # The detail check did not finish: a failure, and the new and the
+        # carried items stay listed (with the first date) for the next run.
+        import json
+        import time
+
+        first = time.time() - 24 * 3600
+        self.path.write_text(json.dumps({"saved": first, "icons": []}), encoding="utf-8")
+        task = self._task()
+        task.carried.cells = [(0, 1)]
+        task._classify_cells = lambda cells, _stars, _frame: None
+        task._leave_to_home = lambda *a: True
+        self.assertFalse(task.run_claim())
+        saved = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(first, saved["saved"])
+        self.assertEqual(2, len(saved["icons"]))
+
+
+def _fake_press_clock(test):
+    """press_and_confirm on a clock that ``task.sleep`` moves (no real waits)."""
+    from functools import partial
+    from unittest import mock
+
+    from src.utils.press_confirm import press_and_confirm
+
+    clock = [0.0]
+    patcher = mock.patch(
+        "src.tasks.BaseBD2Task._press_and_confirm",
+        partial(press_and_confirm, clock=lambda: clock[0]),
+    )
+    patcher.start()
+    test.addCleanup(patcher.stop)
+    return lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+
+
+class DetailPressTest(unittest.TestCase):
+    """A lost click on a new item or on the detail ✕ ended as "no junk": the
+    run counted as done and those items lost their "!" for good."""
+
+    def _task(self, opens_on, closes_on):
+        """The popup opens on the ``opens_on``-th cell click and closes on the
+        ``closes_on``-th ✕ click (0: never)."""
+        from src.tasks.JunkGearTask import DETAIL_CLOSE_POINT, JunkGearTask
+
+        task = object.__new__(JunkGearTask)
+        task.config = {}
+        task.info_set = lambda *a: None
+        task.log_info = lambda *a, **k: None
+        task.warnings = []
+        task.log_warning = lambda message, **k: task.warnings.append(message)
+        task.sleep = _fake_press_clock(self)
+        task.cell_clicks, task.close_clicks = [], []
+        state = {"open": False}
+
+        def click(x, y, after_sleep=0):
+            if (x, y) == DETAIL_CLOSE_POINT:
+                task.close_clicks.append((x, y))
+                if len(task.close_clicks) == closes_on:
+                    state["open"] = False
+            else:
+                task.cell_clicks.append((x, y))
+                if len(task.cell_clicks) == opens_on:
+                    state["open"] = True
+
+        task._click_reference = click
+        task._wait_detail = lambda open_, timeout=0: state["open"] == open_
+        task._read_detail = lambda: (GearItem("戒指", "UR", False, False, False), "")
+        return task
+
+    def test_a_lost_cell_click_is_pressed_once_more_while_the_grid_shows(self):
+        task = self._task(opens_on=2, closes_on=1)
+        self.assertEqual([(0, 0)], task._classify_cells([(0, 0)], {"戒指": 4}))
+        self.assertEqual(2, len(task.cell_clicks))
+        self.assertEqual(1, len(task.close_clicks))
+
+    def test_a_cell_that_never_opens_is_a_failure(self):
+        task = self._task(opens_on=0, closes_on=1)
+        self.assertIsNone(task._classify_cells([(0, 0), (0, 1)], {"戒指": 4}))
+        self.assertEqual(2, len(task.cell_clicks))
+        self.assertEqual([], task.close_clicks)
+        self.assertEqual(1, len(task.warnings))
+
+    def test_a_lost_close_is_pressed_again_only_while_the_popup_shows(self):
+        task = self._task(opens_on=1, closes_on=2)
+        self.assertEqual([(0, 0)], task._classify_cells([(0, 0)], {"戒指": 4}))
+        self.assertEqual(2, len(task.close_clicks))
+
+    def test_a_popup_that_never_closes_is_a_failure(self):
+        task = self._task(opens_on=1, closes_on=0)
+        self.assertIsNone(task._classify_cells([(0, 0), (0, 1)], {"戒指": 4}))
+        # Two ✕ presses at most, and the next item is never clicked.
+        self.assertEqual(2, len(task.close_clicks))
+        self.assertEqual(1, len(task.cell_clicks))
+
+
+class SortLabelTest(unittest.TestCase):
+    """Review #22: one misread of the player's sort, saved, failed every
+    later run until the file was deleted by hand."""
+
+    def test_a_label_one_character_off_is_the_same_sort(self):
+        from src.tasks.JunkGearTask import same_sort
+
+        self.assertTrue(same_sort("按稀有从高到低排序", "按稀有度从高到低排序"))
+        self.assertTrue(same_sort("按强化从高到低排序", "按强化阶段从高到低排序"))
+        self.assertFalse(same_sort("按稀有度从低到高排序", "按稀有度从高到低排序"))
+        self.assertFalse(same_sort("按星级从高到低排序", "按级别从高到低排序"))
+        self.assertFalse(same_sort("按获得时间从早到晚排序", "按获得时间从晚到早排序"))
+
+    @staticmethod
+    def _menu(active, kinds=("获得时间", "稀有度", "星级"), reads=()):
+        """A sort menu showing ``active`` on top; ``reads`` are what the first
+        reads see instead (the menu fading in)."""
+        from types import SimpleNamespace as Box
+
+        from src.tasks.JunkGearTask import JunkGearTask, sort_category, sort_direction
+
+        task = object.__new__(JunkGearTask)
+        task.info_set = lambda *a: None
+        task.log_info = lambda *a, **k: None
+        task.log_warning = lambda *a, **k: None
+        task.sleep = lambda *a: None
+        task.scroll_client = lambda *a, **k: None
+        task._click_reference = lambda *a, **k: None
+        task.saved = []
+        task._save_sort = task.saved.append
+        task._clear_saved_sort = lambda: None
+        task.menu = {"active": active}
+        pending = list(reads)
+
+        def boxes():
+            label = pending.pop(0) if pending else task.menu["active"]
+            current = sort_category(task.menu["active"])
+            return [Box(name=label)] + [Box(name=f"按{k}排序") for k in kinds if k != current]
+
+        def pick(box, after_sleep=0):
+            first, second = ("晚到早", "早到晚") if "获得时间" in box.name else ("高到低", "低到高")
+            if sort_direction(box.name):  # the active option flips
+                kind = sort_category(task.menu["active"])
+                now = sort_direction(task.menu["active"])
+                direction = second if now == first else first
+            else:
+                kind, direction = sort_category(box.name), first
+            task.menu["active"] = f"按{kind}从{direction}排序"
+
+        task._sort_menu_boxes = boxes
+        task._open_sort_menu = boxes
+        task._click_reference_box = pick
+        return task
+
+    def test_the_sort_is_saved_once_two_reads_agree(self):
+        task = self._menu("按稀有度从高到低排序", reads=("按稀有从高到低排序",))
+        self.assertEqual("按稀有度从高到低排序", task._switch_to_newest_first())
+        self.assertEqual(["按稀有度从高到低排序"], task.saved)
+        self.assertEqual("按获得时间从晚到早排序", task.menu["active"])
+
+    def test_a_sort_that_never_reads_the_same_is_not_saved(self):
+        flicker = ("按稀有从高到低排序", "按稀从高到低排序") * 2
+        task = self._menu("按稀有度从高到低排序", reads=flicker)
+        self.assertIsNotNone(task._switch_to_newest_first())
+        self.assertEqual([], task.saved)
+
+    def test_an_unknown_sort_kind_is_not_saved(self):
+        task = self._menu("按某某从高到低排序", kinds=("获得时间", "某某"))
+        self.assertEqual("按某某从高到低排序", task._switch_to_newest_first())
+        self.assertEqual([], task.saved)
+
+    def test_a_saved_label_missing_a_character_is_restored(self):
+        task = self._menu("按获得时间从晚到早排序")
+        self.assertTrue(task._restore_sort("按稀有从高到低排序"))
+        self.assertEqual("按稀有度从高到低排序", task.menu["active"])
+
+
+class SavedSortRecoveryTest(unittest.TestCase):
+    """Review #22: a saved sort that cannot be restored no longer blocks
+    every run; after the second failure (or when old) it is dropped."""
+
+    def setUp(self):
+        import tempfile
+        from unittest import mock
+
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.path = Path(folder.name) / "junk_gear_sort.json"
+        patcher = mock.patch("src.tasks.JunkGearTask._sort_state_file", return_value=self.path)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        stars = mock.patch("src.tasks.JunkGearTask.load_exclusive_stars", return_value={})
+        stars.start()
+        self.addCleanup(stars.stop)
+
+    def _run(self):
+        from src.tasks.JunkGearTask import JunkGearTask
+
+        task = object.__new__(JunkGearTask)
+        task.info_set = lambda *a: None
+        task.log_info = lambda *a, **k: None
+        task.warnings = []
+        task.log_warning = lambda message, **k: task.warnings.append((message, k.get("notify")))
+        task._colours_distorted = lambda: False
+        task._open_equipment_bag = lambda: True
+        task._restore_sort = lambda _label: False
+        # Reaching the switch means the run went on; it stops there.
+        task._switch_to_newest_first = lambda: None
+        task.stages = []
+        task._claim_fail = lambda stage: task.stages.append(stage) or False
+        task.run_claim()
+        return task
+
+    def _write(self, state):
+        import json
+
+        self.path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+    def test_the_second_failed_restore_drops_it_and_goes_on(self):
+        import time
+
+        self._write({"original": "按稀有从高到低排序", "saved": time.time()})
+        self.assertEqual(["恢复上次的背包排序"], self._run().stages)
+        self.assertTrue(self.path.exists())
+        task = self._run()
+        self.assertEqual(["切换为按获得时间排序"], task.stages)
+        self.assertFalse(self.path.exists())
+        self.assertTrue(any(notify for _message, notify in task.warnings))
+
+    def test_an_old_save_is_dropped_at_its_first_failure(self):
+        import time
+
+        for state in (
+            {"original": "按稀有从高到低排序", "saved": time.time() - 3 * 24 * 3600},
+            {"original": "按稀有从高到低排序"},  # written before the date was kept
+        ):
+            self._write(state)
+            self.assertEqual(["切换为按获得时间排序"], self._run().stages)
+            self.assertFalse(self.path.exists())

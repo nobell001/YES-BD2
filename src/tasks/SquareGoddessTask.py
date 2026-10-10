@@ -485,9 +485,10 @@ class SquareGoddessTask(BaseBD2Task):
     WISH_RECORD_PATH = Path("configs") / "goddess_wish.json"
 
     def _wish_path(self) -> Path:
-        from src.utils import accounts
+        from src.utils import accounts, test_run
 
-        return Path(accounts.scoped(self.WISH_RECORD_PATH))
+        path = Path(accounts.scoped(self.WISH_RECORD_PATH))
+        return test_run.scratch() / path if test_run.active() else path
 
     @staticmethod
     def _game_day() -> str:

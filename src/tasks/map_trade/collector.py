@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from copy import deepcopy
+from dataclasses import replace
 
 from src.tasks.map_trade import account_check
 from src.tasks.map_trade.action_icons import ActionIconDetector
@@ -19,6 +20,7 @@ from src.tasks.map_trade.collector_skills import SkillExecutionMixin
 from src.tasks.map_trade.models import (
     COLLECTABLE_CARDS,
     LAST_MAP_THEN_TOWN_CARD_IDS,
+    CollectionActionState,
     CollectionMapRole,
     CollectionResult,
 )
@@ -82,8 +84,9 @@ class Collector(SkillExecutionMixin):
         # is bounded once per formal run, while direct helper calls retain the
         # latch until the next run invocation.
         self._group_one_recovery_attempted = False
+        self._skipped_cards: list = []
         try:
-            return self._run_collection()
+            return self._with_skipped_cards(self._run_collection())
         except RuntimeError as exc:
             self.task.log_error("地图采集流程异常", exc)
             return CollectionResult(
@@ -174,11 +177,15 @@ class Collector(SkillExecutionMixin):
                 if selected.success:
                     break
             if selected is None or not selected.success:
-                return CollectionResult(
-                    False,
-                    completed_submaps=completed_this_run,
-                    message=f"未能进入卡带 {card.card_id}",
+                stopped = self._skip_card(
+                    card,
+                    f"进不去（{selected.message if selected else '-'}），"
+                    "可能还没有这张卡带或章节还没开",
+                    completed_this_run,
                 )
+                if stopped is not None:
+                    return stopped
+                continue
             if selected.outcome == CollectionCardSelectionOutcome.VISUALLY_COMPLETE:
                 self._status(
                     "卡带完成度",
@@ -215,11 +222,12 @@ class Collector(SkillExecutionMixin):
                     card.card_id, via_hunting_ground=True
                 )
                 if not reset.success:
-                    return CollectionResult(
-                        False,
-                        completed_submaps=completed_this_run,
-                        message=f"{card.card_id}回主城失败：{reset.message}",
+                    stopped = self._skip_card(
+                        card, f"回主城失败（{reset.message}）", completed_this_run
                     )
+                    if stopped is not None:
+                        return stopped
+                    continue
                 current = card.targets[0]
             observed_depleted = False
             restarted = False
@@ -232,11 +240,14 @@ class Collector(SkillExecutionMixin):
                 arrived = self._go_to_collection_target(card, current, target)
                 if arrived is not None and not arrived.success:
                     if restarted:
-                        return CollectionResult(
-                            False,
-                            completed_submaps=completed_this_run,
-                            message=f"{card.card_id}前往{target.title}失败：{arrived.message}",
+                        stopped = self._skip_card(
+                            card,
+                            f"前往{target.title}失败（{arrived.message}）",
+                            completed_this_run,
                         )
+                        if stopped is not None:
+                            return stopped
+                        break
                     restarted = True
                     self._status(
                         "采集进度",
@@ -246,11 +257,12 @@ class Collector(SkillExecutionMixin):
                         card.card_id, via_hunting_ground=True
                     )
                     if not reset.success:
-                        return CollectionResult(
-                            False,
-                            completed_submaps=completed_this_run,
-                            message=f"{card.card_id}回主城失败：{reset.message}",
+                        stopped = self._skip_card(
+                            card, f"回主城失败（{reset.message}）", completed_this_run
                         )
+                        if stopped is not None:
+                            return stopped
+                        break
                     current = card.targets[0]
                     order = [item for item in card.targets if item.key not in completed]
                     index = 0
@@ -276,6 +288,18 @@ class Collector(SkillExecutionMixin):
                 )
                 result = self._use_actions(actions, card_id=card.card_id, map_role=role)
                 if not result.completed:
+                    if not result.depleted and self._map_blocked_today(card.card_id, role):
+                        # Audit #2: a press here that cannot be settled today
+                        # holds back only this card, not the rest of the run.
+                        self._record_skill_failure(card.card_id, role.label, result)
+                        stopped = self._skip_card(
+                            card,
+                            f"{target.title}上次按的技能今天确认不了，今天不再按这张图",
+                            completed_this_run,
+                        )
+                        if stopped is not None:
+                            return stopped
+                        break
                     return self._skill_failure(card.card_id, role.label, result, completed_this_run)
                 committed = self.progress.mark_target(card.card_id, target.key)
                 if not committed:
@@ -302,6 +326,8 @@ class Collector(SkillExecutionMixin):
                         ),
                     )
                 index += 1
+            if card in self._skipped_cards:
+                continue
 
             # Straight to the card's own tab (Leo 2026-10-01: character cards went to
             # the story tab first and back).
@@ -426,6 +452,48 @@ class Collector(SkillExecutionMixin):
     def _can_finish_card_today(self, card, completed: set[str]) -> bool:
         remaining = [target for target in card.targets if target.key not in completed]
         return self.progress.can_plan_collection(remaining)
+
+    def _skip_card(self, card, reason: str, completed_this_run: int) -> CollectionResult | None:
+        """Decision 6 of the 2026-10-10 plan (its default, not yet answered
+        by Leo): a card that cannot be entered or travelled no longer stops
+        every later card.  It is skipped from the home screen, nothing is
+        recorded for it and it stays in 跑图章节.
+        None = go on; a result = stop, home was not reached."""
+        self._skipped_cards.append(card)
+        self.task.log_warning(f"地图采集：{card.label}{reason}，先跳过，继续下一张。")
+        returned = self.navigator.return_home()
+        if returned.success:
+            return None
+        return CollectionResult(
+            False,
+            completed_submaps=completed_this_run,
+            message=f"{card.label}跳过后回不到主页（{returned.message}），停止跑图",
+        )
+
+    def _with_skipped_cards(self, result: CollectionResult) -> CollectionResult:
+        """A skipped card is not done, so the run is never reported as complete."""
+        if not self._skipped_cards:
+            return result
+        names = "、".join(dict.fromkeys(card.label for card in self._skipped_cards))
+        note = (
+            f"{names}这次跳过，没有完成；没有这张卡带或不想跑的话，"
+            "可在「跑图章节」取消勾选（跑图页点一下这张卡带）"
+        )
+        self.task.log_warning(f"地图采集：{note}。")
+        return replace(
+            result,
+            success=False,
+            message=f"{note}；{result.message}" if result.message else note,
+        )
+
+    def _map_blocked_today(self, card_id: str, role: CollectionMapRole) -> bool:
+        """A press on this map is left undecided for the day (audit #2): it
+        is never pressed again before 08:00."""
+        return any(
+            str((self.progress.get_action_record(card_id, role, action.name) or {}).get("state"))
+            == CollectionActionState.BLOCKED.value
+            for action in BATTLE_ACTIONS
+        )
 
     def _skill_failure(
         self,

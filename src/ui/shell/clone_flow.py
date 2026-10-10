@@ -119,10 +119,14 @@ def ask_and_start(window, task, run_mode: str | None = None) -> bool:
         ))
         yes = "第一次设定"
     elif hello:
+        # A player turned face recognition off and still got this (2026-10-09):
+        # name the real switch, which is not face or PIN.
         steps = t((
             "要先改一个登录设定：\n"
-            "• 分身要用密码登录，现在只允许 PIN／脸\n"
-            "• 在「登录选项」关掉「只允许 Windows Hello 登录」\n"
+            "• 分身要用帐户密码登录，现在只允许 Windows Hello\n"
+            "• 在「登录选项」最下面的「其他设置」，"
+            "关掉「仅允许对此设备上的 Microsoft 帐户使用 Windows Hello 登录」\n"
+            "• 人脸和 PIN 不用关\n"
             "• 改好后再按一次这个按钮"
         ))
         yes = "打开登录选项"
@@ -176,7 +180,7 @@ def hand_to_clone(window, task, run_mode: str | None = None) -> bool:
         return False
     if clone_outdated():
         return False
-    clone_desktop.request_job(str(task.name), run_mode)
+    _request_job(window, task, run_mode)
     logger.info(f"clone: handed {task.name} (mode {run_mode or '-'}) to the tool in the clone")
     if window is not None:
         message(window, "交给桌面分身里的工具跑，进度在这里看")
@@ -250,6 +254,15 @@ def clone_outdated() -> bool:
     return bool(mine) and theirs != mine
 
 
+def _request_job(window, task, run_mode: str | None) -> None:
+    """No window is 打开就自动跑 on the desktop: the clone must not take it
+    for a press, which skips the wait after a failure (#153)."""
+    if window is None:
+        clone_desktop.request_job(str(task.name), run_mode, by_player=False)
+    else:
+        clone_desktop.request_job(str(task.name), run_mode)
+
+
 def restart_outdated_clone(window, task, run_mode: str | None = None) -> bool:
     """Outside: an idle clone with an older tool is closed and opened again for ``task``."""
     if task is None or not clone_outdated() or busy_in_clone():
@@ -282,7 +295,7 @@ def open_clone(window, task=None, run_mode: str | None = None) -> bool:
         # showed 「桌面分身已經開著了」 (Leo 2026-10-07).
         return True
     if task is not None:
-        clone_desktop.request_job(str(task.name), run_mode)
+        _request_job(window, task, run_mode)
     else:
         clone_desktop.clear_job()
     if not clone_desktop.open_viewer():
@@ -363,6 +376,22 @@ START_CHECK_SECONDS = 150
 START_RETRIES = 2
 
 
+# 停止 while ok's start_controller is still opening the game for a started
+# job: it enables the task once the game is up, after the press (live 4K
+# 2026-10-10: stopped 13:43:18, 领取常客圣石 started 13:43:42).  That task is
+# stopped as soon as it shows up enabled, for as long as a start can take.
+_cancelled_start: dict = {}
+
+
+def drop_waiting_job() -> bool:
+    """停止: forget the task waiting here for the login, and the start that
+    would be tried again; True when a task was waiting."""
+    waited = bool(_waiting_job)
+    _waiting_job.clear()
+    _started_job.clear()
+    return waited
+
+
 def _login_pending() -> bool:
     try:
         from src.tasks.trigger.AutoLoginTask import AutoLoginTask
@@ -384,7 +413,9 @@ def _run_pending_job() -> None:
         return
     if _waiting_job:
         task, run_mode = _waiting_job["task"], _waiting_job["run_mode"]
-        if _login_pending() and time.time() < _waiting_job["until"]:
+        by_player = _waiting_job.get("by_player", True)
+        waiting = _login_pending() or not actions.game_running()
+        if waiting and time.time() < _waiting_job["until"]:
             return
         _waiting_job.clear()
     else:
@@ -398,29 +429,40 @@ def _run_pending_job() -> None:
             logger.warning(f"clone job: no task named {job.get('task')!r}")
             return
         run_mode = job.get("run_mode")
+        by_player = job.get("by_player", True) is not False
         _reload_settings()
         log_in_this_run()
+        actions.rearm_login_for_closed_game()
         # A batch waits for the login itself; a single task would start on the
         # title screen (live 2026-10-04: 跑图路线测试 failed 进入卡带失败).
         single = task.name not in (data.DAILY_BATCH, data.WEEKLY_BATCH)
-        if single and _login_pending() and not actions.game_running():
+        opening = single and not actions.game_running()
+        if opening:
             # Nothing opens the game before the task starts, so the login
             # waited its full ten minutes and the task then started on the
             # title screen (live 4K 2026-10-09).  Open the game now; the
-            # auto-login runs once it is up.
+            # auto-login runs once it is up.  The task waits here, not in
+            # ok's start, so 停止 meanwhile cancels it (finding 43).
             logger.info(f"clone job: opening the game before {task.name}")
             _open_game_only()
-        if single and _login_pending():
+        if single and (opening or _login_pending()):
             _waiting_job.update(
-                task=task, run_mode=run_mode, until=time.time() + LOGIN_WAIT_SECONDS
+                task=task,
+                run_mode=run_mode,
+                by_player=by_player,
+                until=time.time() + LOGIN_WAIT_SECONDS,
             )
-            logger.info(f"clone job: {task.name} waits for the auto-login")
+            logger.info(f"clone job: {task.name} waits for the game and the auto-login")
             return
     logger.info(f"clone job: starting {task.name}")
     _get_out_of_the_way()
+    _cancelled_start.clear()
     _started_job.clear()
-    _started_job.update(task=task, run_mode=run_mode, at=time.time(), tries=0, seen=False)
-    actions.start(task, None, run_mode)
+    _started_job.update(
+        task=task, run_mode=run_mode, by_player=by_player, at=time.time(), tries=0, seen=False
+    )
+    # A press on the desktop, unless 打开就自动跑 there handed it over.
+    actions.start(task, None, run_mode, by_player=by_player)
 
 
 def _check_started_job() -> bool:
@@ -448,7 +490,9 @@ def _check_started_job() -> bool:
         f"clone job: the game did not open, trying again ({_started_job['tries']}) {task.name}"
     )
     log_in_this_run()
-    actions.start(task, None, _started_job["run_mode"])
+    actions.start(
+        task, None, _started_job["run_mode"], by_player=_started_job.get("by_player", True)
+    )
     return True
 
 
@@ -768,14 +812,41 @@ def _write_live_picture() -> None:
         _last_live["frame"] = None
 
 
+def _stop_cancelled_start() -> None:
+    from src.ui.shell import actions
+
+    task = _cancelled_start.get("task")
+    if task is None:
+        return
+    if time.time() > _cancelled_start["until"]:
+        _cancelled_start.clear()
+    elif task.enabled:
+        logger.info(f"clone: {task.name} came up after 停止, stopped")
+        _cancelled_start.clear()
+        actions.stop(task)
+
+
 def _apply_control() -> None:
+    _stop_cancelled_start()
     command = clone_desktop.take_control()
-    current = data.current_task()
-    if command is None or current is None:
+    if command is None:
         return
     from src.ui.shell import actions
 
     logger.info(f"clone: {command} from the tool outside")
+    current = data.current_task()
+    if current not in data.onetime_tasks():
+        # Nothing runs yet (the login wait), or only the auto-login check:
+        # a stop cancels the waiting or queued run, never the saved 自动登录游戏,
+        # and a trigger's pause would pause the whole executor.
+        if command == "stop":
+            starting = _started_job.get("task")
+            actions.stop(next((task for task in data.onetime_tasks() if task.enabled), None))
+            if starting is not None and not starting.enabled:
+                _cancelled_start.update(task=starting, until=time.time() + START_CHECK_SECONDS)
+        else:
+            logger.info(f"clone: {command} ignored, nothing is running yet")
+        return
     if command == "stop":
         actions.stop(current)
     elif command == "pause" and not current.paused:

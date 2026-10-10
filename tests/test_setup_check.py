@@ -13,7 +13,7 @@ from src.tasks import problem_report, run_history, run_report, setup_check
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.DailyBatchTask import DailyBatchChild, DailyBatchTask
 from src.tasks.map_trade.vision import Vision
-from src.utils import colour_check
+from src.utils import accounts, colour_check
 
 TRADITIONAL_LEFT = "我的小屋 格魯TALK 街機遊戲"
 SIMPLIFIED_LEFT = "我的小屋 格鲁TALK 街机游戏"
@@ -202,6 +202,22 @@ class BatchTest(unittest.TestCase):
         # Never counted as a finished run (the run history's success rule).
         self.assertIn("中止", task.info["状态"])
 
+    def test_unreadable_account_list_ends_the_batch_before_its_first_item(self):
+        calls = []
+        task = self._batch(calls)
+        notice = setup_check.ACCOUNTS_TEXTS[accounts.BROKEN][1]
+        with (
+            mock.patch.object(accounts, "unreadable", return_value=accounts.BROKEN),
+            mock.patch.object(setup_check, "look", lambda _task: ""),
+        ):
+            self.assertFalse(DailyBatchTask.run(task))
+        self.assertEqual([], calls)
+        report = run_report.load(task.batch_label)
+        self.assertEqual(run_report.ENDED_SETUP, report["ended"])
+        self.assertEqual(notice, report["notice"])
+        self.assertEqual(notice, task.info[run_history.NOT_STARTED_KEY])
+        self.assertIn("账号清单", task.info["状态"])
+
     def test_a_clear_look_runs_the_items(self):
         calls = []
         task = self._batch(calls)
@@ -229,7 +245,15 @@ class SingleTaskTest(unittest.TestCase):
             def _go_home_before_run(self):
                 self.went_home += 1
 
-        return Task()
+            def info_set(self, key, value):
+                self.info[key] = value
+
+            def log_warning(self, message, notify=False):
+                pass
+
+        task = Task()
+        task.info = {}
+        return task
 
     def test_traditional_game_does_not_start_a_task_run_alone(self):
         task = self._task()
@@ -242,6 +266,15 @@ class SingleTaskTest(unittest.TestCase):
         with mock.patch.object(setup_check, "look", lambda _task: ""):
             self.assertTrue(task.run())
         self.assertEqual((1, 1), (task.ran, task.went_home))
+
+    def test_unreadable_account_list_starts_no_task_not_even_a_batch_item(self):
+        for alone in (True, False):
+            task = self._task(alone=alone)
+            with mock.patch.object(accounts, "unreadable", return_value=accounts.BUSY):
+                self.assertFalse(task.run())
+            self.assertEqual((0, 0), (task.ran, task.went_home))
+            notice = setup_check.ACCOUNTS_TEXTS[accounts.BUSY][1]
+            self.assertEqual(notice, task.info[run_history.NOT_STARTED_KEY])
 
     def test_an_item_of_the_batch_does_not_look_again(self):
         task = self._task(alone=False)

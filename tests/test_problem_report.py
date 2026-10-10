@@ -145,6 +145,8 @@ class RecordTest(unittest.TestCase):
             task_log_name = "跑图"
             diagnostic_prefix = "map_collection"
             _run_phases = MapAutomationTaskBase._run_phases
+            _return_home_after_phases = MapAutomationTaskBase._return_home_after_phases
+            phase_needs = MapAutomationTaskBase.phase_needs
             _note_phase_problem = MapAutomationTaskBase._note_phase_problem
 
             def __init__(self):

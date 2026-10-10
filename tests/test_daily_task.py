@@ -18,6 +18,7 @@ from src.tasks.DailyTask import (
     GUILD_TEMPLATE,
     MY_HOME_TEMPLATE,
     MY_HOME_TITLE_RELATIVE_ROI,
+    STEP_SKIPPED,
     DailyTask,
 )
 from src.tasks.map_trade.models import MatchResult
@@ -397,17 +398,109 @@ class DailyTaskHelperTest(unittest.TestCase):
 
         np.testing.assert_array_equal(crop, image[3:8, 2:6])
 
+    def _no_guild_entry_task(self, on_home):
+        task = object.__new__(DailyTask)
+        task.config = {"公会入口阈值": 0.78}
+        frames = []
+        task.capture_frame = lambda: frames.append(1) or np.zeros((10, 10, 3), dtype=np.uint8)
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_info = lambda *_args, **_kwargs: None
+        task.sleep = lambda *_args, **_kwargs: None
+        task._wait_for_home_confirmation = lambda *_args, **_kwargs: True
+        task._frame_confirms_home = lambda *_args, **_kwargs: on_home
+        task._match = lambda _frame, _spec: MatchResult(-1.0, (0, 0), (0, 0))
+        task._click_reference = lambda *_args, **_kwargs: self.fail("should not click")
+        return task, frames
+
     def test_guild_sign_in_does_not_click_without_guild_trigger(self):
+        # No entry on a confirmed home (no guild, or a changed icon): a skip
+        # that lets 小屋签到 and 一键收菜 go on, read over 3 frames first.
+        task, frames = self._no_guild_entry_task(on_home=True)
+
+        self.assertEqual(STEP_SKIPPED, DailyTask.run_guild_sign_in(task))
+        self.assertEqual(3, len(frames))
+
+    def test_guild_entry_missing_off_home_is_a_failure(self):
+        task, _frames = self._no_guild_entry_task(on_home=False)
+
+        self.assertFalse(DailyTask.run_guild_sign_in(task))
+
+    def test_guild_entry_missed_on_one_frame_is_found_on_the_next(self):
+        task = object.__new__(DailyTask)
+        task.config = {"公会入口阈值": 0.78}
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_info = lambda *_args, **_kwargs: None
+        task.sleep = lambda *_args, **_kwargs: None
+        frames = []
+        task.capture_frame = lambda: frames.append(1) or np.zeros((10, 10, 3), dtype=np.uint8)
+        # The entry scores below the threshold on the first frame only.
+        task._match = lambda _frame, spec: (
+            MatchResult(0.9, (0, 0), (1, 1), pixel_score=0.9)
+            if spec is GUILD_TEMPLATE and len(frames) >= 2
+            else MatchResult(-1.0, (0, 0), (0, 0))
+        )
+        clicks = []
+        task._click_reference = lambda x, y, **_kwargs: clicks.append((x, y))
+        task._wait_guild_page = lambda _timeout: ("page", "公告事项 进入公会联合战")
+        task._wait_for_home_confirmation = lambda *_args, **_kwargs: True
+
+        self.assertTrue(DailyTask.run_guild_sign_in(task))
+        self.assertEqual([(370, 155), (100, 50)], clicks)
+
+    def test_swallowed_guild_entry_click_is_pressed_again_while_home_shows(self):
         task = object.__new__(DailyTask)
         task.config = {"公会入口阈值": 0.78}
         task.capture_frame = lambda: np.zeros((10, 10, 3), dtype=np.uint8)
         task.info_set = lambda *_args, **_kwargs: None
         task.log_info = lambda *_args, **_kwargs: None
+        task.sleep = lambda *_args, **_kwargs: None
+        task._match = lambda _frame, spec: (
+            MatchResult(0.9, (0, 0), (1, 1), pixel_score=0.9)
+            if spec is GUILD_TEMPLATE
+            else MatchResult(-1.0, (0, 0), (0, 0))
+        )
+        clicks = []
+        task._click_reference = lambda x, y, **_kwargs: clicks.append((x, y))
+        # The first press is lost; the guild page shows after the second.
+        task._wait_guild_page = lambda _timeout: (
+            ("page", "公告事项 进入公会联合战")
+            if clicks.count((370, 155)) >= 2
+            else (None, "")
+        )
+        task._home_still_showing = lambda *_args: (370, 155) in clicks
         task._wait_for_home_confirmation = lambda *_args, **_kwargs: True
-        task._match = lambda _frame, _spec: MatchResult(-1.0, (0, 0), (0, 0))
-        task._click_reference = lambda *_args, **_kwargs: self.fail("should not click")
 
-        self.assertFalse(DailyTask.run_guild_sign_in(task))
+        with patch("src.tasks.DailyTask.GUILD_ENTRY_RETRY_SECONDS", 0.0):
+            self.assertTrue(DailyTask.run_guild_sign_in(task))
+        self.assertEqual([(370, 155), (370, 155), (100, 50)], clicks)
+
+    def test_guild_entry_is_not_pressed_again_once_home_is_gone(self):
+        # Loading (home gone, guild page not yet up): wait, never re-press.
+        task = object.__new__(DailyTask)
+        task.config = {"公会入口阈值": 0.78}
+        task.capture_frame = lambda: np.zeros((10, 10, 3), dtype=np.uint8)
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_info = lambda *_args, **_kwargs: None
+        task.sleep = lambda *_args, **_kwargs: None
+        task._match = lambda _frame, spec: (
+            MatchResult(0.9, (0, 0), (1, 1), pixel_score=0.9)
+            if spec is GUILD_TEMPLATE
+            else MatchResult(-1.0, (0, 0), (0, 0))
+        )
+        clicks = []
+        task._click_reference = lambda x, y, **_kwargs: clicks.append((x, y))
+        waits = []
+        # The guild page shows only after the long wait (a slow load).
+        task._wait_guild_page = lambda timeout: (
+            waits.append(timeout) or (("page", "公告事项 公会商店") if timeout else (None, ""))
+        )
+        task._home_still_showing = lambda *_args: False
+        task._wait_for_home_confirmation = lambda *_args, **_kwargs: True
+
+        with patch("src.tasks.DailyTask.GUILD_ENTRY_RETRY_SECONDS", 0.0):
+            self.assertTrue(DailyTask.run_guild_sign_in(task))
+        self.assertEqual([(370, 155), (100, 50)], clicks)
+        self.assertEqual(14.0, waits[-1])
 
     def _guard_task(self, config):
         task = object.__new__(DailyTask)
@@ -901,6 +994,9 @@ class DailyTaskHelperTest(unittest.TestCase):
         )
 
     def _business_task(self, ocr_frames, home_frames=None):
+        confirm_wait = patch("src.tasks.DailyTask.BUSINESS_CLAIM_CONFIRM_SECONDS", 0.0)
+        confirm_wait.start()
+        self.addCleanup(confirm_wait.stop)
         task = object.__new__(DailyTask)
         task.config = {"一键收菜菜单等待秒数": 8.0}
         task.info_set = lambda *_args, **_kwargs: None
@@ -934,13 +1030,11 @@ class DailyTaskHelperTest(unittest.TestCase):
     def test_business_collect_clicks_ocr_found_claim_button(self):
         # A taller popup moved the buttons from y=814 down to y=900.
         popup = self._popup(claim_y=900, cancel_y=900)
+        overlay = [self._business_box("点击画面即可返回", 960, 1000)]
         task, reference_clicks, clicks = self._business_task(
-            [
-                popup,
-                [self._business_box("点击画面即可返回", 960, 1000)],
-                self._popup(claim_y=900, cancel_y=900),
-                [],
-            ]
+            # The overlay stays until tapped: read once as the claim's
+            # proof, once more when it is closed.
+            [popup, overlay, overlay, self._popup(claim_y=900, cancel_y=900), []]
         )
 
         self.assertTrue(DailyTask.run_business_collect(task))
@@ -985,9 +1079,79 @@ class DailyTaskHelperTest(unittest.TestCase):
             [popup], home_frames=[False] * 20
         )
 
-        self.assertTrue(DailyTask.run_business_collect(task))
+        # No reward overlay was read, so the claim is not counted.
+        self.assertFalse(DailyTask.run_business_collect(task))
         self.assertEqual([(1090, 814)], clicks)
         self.assertEqual([(165, 260), (832, 814), (832, 814)], reference_clicks)
+
+    def test_business_collect_lost_claim_click_is_not_a_success(self):
+        # The popup stays as it was: 一键获得 is pressed once more, then the
+        # step reports not done instead of closing the popup as collected.
+        popup = self._popup(claim_y=814, cancel_y=814)
+        task, _reference_clicks, clicks = self._business_task([popup] * 6)
+        statuses = {}
+        task._status_set = statuses.__setitem__
+
+        self.assertFalse(DailyTask.run_business_collect(task))
+        self.assertEqual([(1090, 814), (1090, 814), (832, 814)], clicks)
+        self.assertEqual("未确认领取", statuses["一键收菜结果"])
+
+    def test_business_collect_claim_is_not_pressed_again_under_the_reward(self):
+        # Shown late: the overlay is there when the re-press would be due.
+        popup = self._popup(claim_y=814, cancel_y=814)
+        overlay = [self._business_box("点击画面即可返回", 960, 1000)]
+        task, _reference_clicks, clicks = self._business_task(
+            [popup, [], overlay, overlay, []]
+        )
+
+        self.assertTrue(DailyTask.run_business_collect(task))
+        self.assertEqual([(1090, 814), (960, 1000)], clicks)
+
+    def _paint_claim(self, task, bgr):
+        frame = np.zeros((2160, 3840, 3), dtype=np.uint8)
+        box = self._business_box("一键获得", 1090, 814)
+        frame[int(box.y) : int(box.y + box.height), int(box.x) : int(box.x + box.width)] = bgr
+        task.capture_frame = lambda: frame
+
+    def test_business_collect_grey_claim_button_is_not_pressed(self):
+        # Live 4K 2026-10-10: nothing to collect, 一键获得 greyed out but read
+        # by OCR; pressing it twice failed 公会小屋酒馆.
+        popup = self._popup(claim_y=814, cancel_y=814)
+        task, _reference_clicks, clicks = self._business_task([popup])
+        self._paint_claim(task, (128, 128, 128))
+        statuses = {}
+        task._status_set = statuses.__setitem__
+
+        self.assertTrue(DailyTask.run_business_collect(task))
+        self.assertEqual([(832, 814)], clicks)
+        self.assertEqual("按钮是灰的", statuses["一键收菜结果"])
+
+    def test_business_collect_claim_button_dim_while_fading_in_is_pressed(self):
+        popup = self._popup(claim_y=814, cancel_y=814)
+        overlay = [self._business_box("点击画面即可返回", 960, 1000)]
+        task, _reference_clicks, clicks = self._business_task([popup, popup, overlay, overlay, []])
+        self._paint_claim(task, (128, 128, 128))
+        dim = task.capture_frame()
+        self._paint_claim(task, (40, 190, 240))
+        lit = task.capture_frame()
+        frames = [dim, lit]
+        task.capture_frame = lambda: frames.pop(0) if len(frames) > 1 else frames[0]
+
+        self.assertTrue(DailyTask.run_business_collect(task))
+        self.assertEqual((1090, 814), clicks[0])
+
+    def test_business_collect_coloured_or_white_claim_button_is_pressed(self):
+        for bgr in ((40, 190, 240), (250, 250, 250)):
+            with self.subTest(bgr=bgr):
+                popup = self._popup(claim_y=814, cancel_y=814)
+                overlay = [self._business_box("点击画面即可返回", 960, 1000)]
+                task, _reference_clicks, clicks = self._business_task(
+                    [popup, overlay, overlay, []]
+                )
+                self._paint_claim(task, bgr)
+
+                self.assertTrue(DailyTask.run_business_collect(task))
+                self.assertEqual((1090, 814), clicks[0])
 
     def test_mf_reference_click_uses_1280_by_720_ratios(self):
         task = object.__new__(QuickHuntTask)
@@ -1662,6 +1826,8 @@ class DailyTaskHelperTest(unittest.TestCase):
             lambda pattern, name: map_calls.append((pattern, name))
             or ("matched", "哥布林遗迹极难", None)
         )
+        # Opening the dialog has its own tests.
+        task._quick_hunt_open_dialog = lambda _stage: True
         task._quick_hunt_wait_result = lambda _stage: "done"
         # The free-only switch and cost guard have their own tests.
         task._quick_hunt_ensure_free_only = lambda _stage: True
@@ -1679,8 +1845,8 @@ class DailyTaskHelperTest(unittest.TestCase):
             [(r"哥布林遗迹", "冒险航线-地图确认")],
             map_calls,
         )
-        self.assertEqual("冒险航线-MAX", click_calls[1][3])
-        self.assertEqual("冒险航线-开始狩猎", click_calls[2][3])
+        self.assertEqual("冒险航线-MAX", click_calls[0][3])
+        self.assertEqual("冒险航线-开始狩猎", click_calls[1][3])
 
     def test_quick_hunt_adventure_map_mismatch_cancels_before_consuming_rice(self):
         task = object.__new__(QuickHuntTask)
@@ -1701,6 +1867,7 @@ class DailyTaskHelperTest(unittest.TestCase):
                 "野猪洞穴",
             )
         )
+        task._quick_hunt_open_dialog = lambda _stage: True
         task._quick_hunt_wait_result = lambda _stage: self.fail(
             "错误地图不得开始狩猎"
         )
@@ -1713,8 +1880,8 @@ class DailyTaskHelperTest(unittest.TestCase):
                 expected_map_pattern=r"哥布林遗迹",
             ),
         )
-        self.assertEqual("冒险航线-取消错误地图", click_calls[1][3])
-        self.assertEqual([r"取消"], click_calls[1][0])
+        self.assertEqual("冒险航线-取消错误地图", click_calls[0][3])
+        self.assertEqual([r"取消"], click_calls[0][0])
 
     def test_quick_hunt_adventure_click_uses_requested_ocr_region_and_center(self):
         task = object.__new__(QuickHuntTask)
@@ -1878,7 +2045,7 @@ class DailyTaskHelperTest(unittest.TestCase):
         self.assertFalse(QuickHuntTask._quick_hunt_box_enabled(dark, box))
         self.assertTrue(QuickHuntTask._quick_hunt_box_enabled(light, box))
 
-    def test_daily_run_stops_after_failed_step(self):
+    def _run_task(self, guild_result, home_back):
         task = object.__new__(DailyTask)
         task.config = {
             "启用": True,
@@ -1886,17 +2053,58 @@ class DailyTaskHelperTest(unittest.TestCase):
             "执行小屋签到": True,
             "执行一键收菜": True,
         }
-        task.info_set = lambda *_args, **_kwargs: None
+        infos = {}
+        task.info_set = infos.__setitem__
         task.log_info = lambda *_args, **_kwargs: None
         task.log_error = lambda *_args, **_kwargs: None
+        task.log_completion = lambda *_args, **_kwargs: None
         calls = []
-        task.run_guild_sign_in = lambda: calls.append("guild") or False
+
+        def guild():
+            calls.append("guild")
+            if isinstance(guild_result, Exception):
+                raise guild_result
+            return guild_result
+
+        task.run_guild_sign_in = guild
         task.run_my_home_sign_in = lambda: calls.append("home") or True
         task.run_business_collect = lambda: calls.append("business") or True
-        task.run_quick_hunt = lambda: calls.append("hunt") or True
+        task._wait_for_home_confirmation = lambda name, **_kwargs: (
+            calls.append(name) or home_back
+        )
+        return task, calls, infos
+
+    def test_daily_run_goes_on_after_a_failed_step_back_on_home(self):
+        # Finding 24: a failed guild step no longer drops 小屋签到/一键收菜.
+        task, calls, infos = self._run_task(False, home_back=True)
 
         self.assertFalse(DailyTask.run(task))
-        self.assertEqual(["guild"], calls)
+        self.assertEqual(["guild", "公会签到失败后主页确认", "home", "business"], calls)
+        self.assertEqual("['公会签到']", infos["失败"])
+
+    def test_daily_run_goes_home_after_a_failed_step_left_elsewhere(self):
+        task, calls, _infos = self._run_task(RuntimeError("boom"), home_back=False)
+
+        with patch("src.tasks.DailyTask.recover_to_home", return_value=True) as recover:
+            self.assertFalse(DailyTask.run(task))
+        recover.assert_called_once_with(task)
+        self.assertEqual(["home", "business"], calls[-2:])
+
+    def test_daily_run_stops_when_home_cannot_be_confirmed_after_a_failure(self):
+        task, calls, infos = self._run_task(False, home_back=False)
+
+        with patch("src.tasks.DailyTask.recover_to_home", return_value=False):
+            self.assertFalse(DailyTask.run(task))
+        self.assertEqual(["guild", "公会签到失败后主页确认"], calls)
+        self.assertEqual("['小屋签到', '一键收菜']", infos["跳过"])
+
+    def test_daily_run_counts_no_guild_entry_as_skipped(self):
+        task, calls, infos = self._run_task(STEP_SKIPPED, home_back=True)
+
+        self.assertTrue(DailyTask.run(task))
+        self.assertEqual(["guild", "home", "business"], calls)
+        self.assertEqual("['公会签到']", infos["跳过"])
+        self.assertEqual("[]", infos["失败"])
 
 
 if __name__ == "__main__":

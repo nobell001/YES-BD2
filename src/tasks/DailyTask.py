@@ -1,5 +1,7 @@
 from time import monotonic
 
+import cv2
+import numpy as np
 from ok.task.exceptions import FinishedException, TaskDisabledException
 from qfluentwidgets import FluentIcon
 
@@ -7,6 +9,7 @@ from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.claim_page import CONFIRM_TEXT, OVERLAY_DISMISS_KEYWORDS, REWARD_DIALOG_TITLES
 from src.tasks.map_trade.models import TemplateSpec
 from src.tasks.quick_hunt import QuickHuntConfigMixin
+from src.tasks.recovery import recover_to_home
 from src.tasks.task_vision_mixin import REFERENCE_HEIGHT, REFERENCE_WIDTH, TaskVisionMixin
 from src.utils.home_confirmation import HOME_DIMMED_P95_THRESHOLD_DEFAULT
 from src.utils.ocr_utils import normalize_ocr_text
@@ -105,6 +108,28 @@ BUSINESS_COLLECT_CANCEL_TEXT = "取消"
 # Bounded rounds for closing the reward overlay and the popup after claiming.
 BUSINESS_COLLECT_SETTLE_ROUNDS = 8
 BUSINESS_COLLECT_BLIND_TAPS = 2
+# Only a reward overlay proves 一键获得 landed; looked for this long.
+BUSINESS_CLAIM_CONFIRM_SECONDS = 4.0
+# With nothing to collect the game still shows 一键获得, greyed out, and OCR
+# reads its text about half the time (live clone 1080p 2026-10-10): pressing
+# it gave no reward overlay and failed the step.  In that run's problem-summary
+# thumbnails the grey button read brightness 84 / saturation 6-12 and the lit
+# 取消 next to it 222 / 13.  A grey button is colourless and mid bright; a lit
+# one is coloured or near white, and a black frame (no capture) is neither, so
+# anything outside this band is pressed as before.
+BUSINESS_CLAIM_GREY_VALUE = (50.0, 175.0)
+BUSINESS_CLAIM_GREY_MAX_SATURATION = 45.0
+# A popup still fading in is dim too, so grey counts only when a second frame
+# this much later still shows it grey.
+BUSINESS_CLAIM_GREY_RECHECK_SECONDS = 0.6
+# The guild entry is looked for on a few frames before it counts as absent.
+GUILD_ENTRY_LOOKS = 3
+GUILD_ENTRY_LOOK_SECONDS = 0.5
+# A swallowed entry click leaves home up: only then is it pressed again.
+GUILD_ENTRY_RETRY_SECONDS = 4.0
+# A sub-step that clicked nothing on a confirmed home (no guild entry) is
+# skipped, not failed.
+STEP_SKIPPED = "skipped"
 
 
 class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
@@ -240,12 +265,13 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             ("一键收菜", "执行一键收菜", self.run_business_collect),
         ]
 
+        enabled = [name for name, key, _func in steps if bool(self.config.get(key, True))]
         success = []
         failed = []
         skipped = []
         stop_remaining = False
         for name, config_key, func in steps:
-            if not bool(self.config.get(config_key, True)):
+            if name not in enabled:
                 skipped.append(name)
                 continue
             if stop_remaining:
@@ -255,18 +281,23 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             self.info_set("当前任务", name)
             self.log_info(f"开始日常子任务：{name}")
             try:
-                if func():
-                    success.append(name)
-                else:
-                    failed.append(name)
-                    stop_remaining = True
-                    self.log_info(f"{name} 未满足后续触发条件，停止剩余子任务。")
+                result = func()
             except (TaskDisabledException, FinishedException):
                 raise
             except Exception as exc:
-                failed.append(name)
-                stop_remaining = True
+                result = False
                 self.log_error(f"日常子任务失败：{name}", exc)
+            if result == STEP_SKIPPED:
+                skipped.append(name)
+            elif result:
+                success.append(name)
+            else:
+                failed.append(name)
+                # The steps are independent: only a game that is not back
+                # on home stops the rest (finding 24).
+                if name != enabled[-1] and not self._home_after_failed_step(name):
+                    stop_remaining = True
+                    self.log_info(f"{name} 失败后未能确认回到主页，停止剩余子任务。")
 
         self.info_set("完成", str(success))
         self.info_set("失败", str(failed))
@@ -277,36 +308,71 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         )
         return not failed
 
-    def run_guild_sign_in(self) -> bool:
+    def _home_after_failed_step(self, name: str) -> bool:
+        """True once home is confirmed again after a failed sub-step.
+
+        A step that clicked nothing left home up; one that ended on another
+        page (a player without a guild lands on a join page) goes home first.
+        """
+        if self._wait_for_home_confirmation(f"{name}失败后主页确认", timeout=3.0):
+            return True
+        self.log_info(f"{name}：失败后不在主页，先返回主页再继续。")
+        return bool(recover_to_home(self))
+
+    def _find_guild_entry(self):
+        """Best guild entry match, looked for on a few frames."""
+        for look in range(GUILD_ENTRY_LOOKS):
+            if look:
+                self.sleep(GUILD_ENTRY_LOOK_SECONDS)
+            frame = self.capture_frame()
+            guild, guild_spec = self._match_best(frame, GUILD_ENTRY_TEMPLATES)
+            self.info_set("公会入口", f"{guild.score:.3f}")
+            self.info_set("公会入口模板", guild_spec.file_name)
+            if self._passes(guild, guild_spec):
+                return True, frame
+        return False, frame
+
+    def run_guild_sign_in(self) -> bool | str:
         if not self._wait_for_home_confirmation("公会签到入口前主页确认"):
             return False
 
-        frame = self.capture_frame()
-        guild, guild_spec = self._match_best(frame, GUILD_ENTRY_TEMPLATES)
-        self.info_set("公会入口", f"{guild.score:.3f}")
-        self.info_set("公会入口模板", guild_spec.file_name)
-
-        guild_ready = self._passes(guild, guild_spec)
+        guild_ready, frame = self._find_guild_entry()
         if not guild_ready:
             self._status_set("公会判断", "未识别到公会入口")
             self._status_set("公会签到成功", "否")
-            self.log_info("公会签到：未检测到公会入口模板，不点击公会按钮。")
+            if self._frame_confirms_home(frame, "公会入口"):
+                self.log_info("公会签到：未找到公会入口（可能未加入公会），跳过公会签到。")
+                return STEP_SKIPPED
+            self.log_info("公会签到：未检测到公会入口模板，且画面已不是主页，不点击公会按钮。")
             return False
 
         self._status_set("公会判断", "已识别入口，进入公会")
         self._sleep_after_recognition()
-        self._click_reference(*GUILD_SIGN_IN_ENTRY_REFERENCE_POINT, after_sleep=0.5)
+        seen = [None, ""]
+
+        def on_guild_page():
+            seen[:] = self._wait_guild_page(0.0)
+            return seen[0]
+
+        # A click the game swallowed leaves home up: only then press again.
+        entered = self.press_and_confirm(
+            "公会签到：公会入口",
+            lambda: self._click_reference(*GUILD_SIGN_IN_ENTRY_REFERENCE_POINT, after_sleep=0.5),
+            on_guild_page,
+            still_before=self._home_still_showing,
+            timeout=GUILD_ENTRY_RETRY_SECONDS,
+        )
         # Entering the guild page is the sign-in (user, 2026-09-27); the
         # 签到成功 toast only shows on the day's first visit, so waiting for it
         # cost ~15 s on every later run.  The page's fixed UI is the proof.
-        state, text = self._wait_guild_page(
+        state, text = seen if entered else self._wait_guild_page(
             float(self.config.get("loading 出现等待秒数", 6.0))
             + float(self.config.get("公会签到成功等待秒数", 8.0))
         )
         self.info_set("公会签到 OCR", text or "-")
         self._status_set("公会签到成功", "是" if state else "否")
         if state is None:
-            self.log_info("公会签到：未确认进入公会页面。")
+            self.log_info("公会签到：点了公会入口但没看到公会页面（可能未加入公会），未签到。")
             return False
         if state == "toast":
             self.log_info("公会签到：检测到签到成功提示。")
@@ -447,19 +513,90 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
                 continue
             frame, boxes = again, again_boxes
             claim = self._business_popup_box(boxes, frame, BUSINESS_COLLECT_CLAIM_TEXT)
+        claimed = True
+        if claim is not None and self._business_claim_greyed(frame, claim):
+            self.sleep(BUSINESS_CLAIM_GREY_RECHECK_SECONDS)
+            again = self.capture_frame()
+            again_boxes = self._daily_ocr_boxes(again, "business_collect")
+            again_claim = self._business_popup_box(again_boxes, again, BUSINESS_COLLECT_CLAIM_TEXT)
+            # A missed read keeps the box: the button does not move.
+            frame = again
+            if again_claim is not None:
+                boxes, claim = again_boxes, again_claim
         if claim is None:
             self.log_info("一键收菜：弹窗内未识别到「一键获得」按钮，视为无可收取，关闭弹窗。")
             self._status_set("一键收菜结果", "未找到一键获得")
             self._close_business_popup(boxes, frame)
+        elif self._business_claim_greyed(frame, claim):
+            self.log_info(
+                "一键收菜：「一键获得」是灰的，视为无可收取，关闭弹窗。"
+                f"（按钮亮度 {self._business_claim_colour(frame, claim)}）"
+            )
+            self._status_set("一键收菜结果", "按钮是灰的")
+            self._close_business_popup(boxes, frame)
         else:
             self.sleep(0.5)
-            self.log_info("一键收菜：点击 OCR 识别到的「一键获得」。")
-            self._click_ocr_box(claim, frame, after_sleep=2.0)
-            self._status_set("一键收菜结果", "已点击一键获得")
+            self.log_info(
+                "一键收菜：点击 OCR 识别到的「一键获得」。"
+                f"（按钮亮度 {self._business_claim_colour(frame, claim)}）"
+            )
+            # A lost click leaves the popup up, and closing it then looked
+            # like a claim: only the reward overlay counts.
+            claimed = self.press_and_confirm(
+                "一键收菜：一键获得",
+                lambda: self._click_ocr_box(claim, frame, after_sleep=0.5),
+                self._business_reward_shown,
+                still_before=self._business_claim_still_offered,
+                timeout=BUSINESS_CLAIM_CONFIRM_SECONDS,
+            ).confirmed
+            if claimed:
+                self._status_set("一键收菜结果", "已领取")
+            else:
+                self._status_set("一键收菜结果", "未确认领取")
+                self.log_info("一键收菜：按了「一键获得」没看到领取结果，本次不算完成。")
             self._settle_business_collect()
         home_ok = self._wait_for_home_confirmation("一键收菜返回主页")
         self._status_set("一键收菜返回主页结果", "通过" if home_ok else "失败")
-        return home_ok
+        return home_ok and claimed
+
+    @staticmethod
+    def _business_claim_colour(frame, box) -> tuple[float, float] | None:
+        """Median (brightness, saturation) of the button under an OCR box."""
+        if frame is None or box is None or getattr(frame, "ndim", 0) != 3:
+            return None
+        height, width = frame.shape[:2]
+        x0, y0 = max(0, int(box.x)), max(0, int(box.y))
+        x1 = min(width, int(box.x + box.width))
+        y1 = min(height, int(box.y + box.height))
+        if x1 - x0 < 4 or y1 - y0 < 4:
+            return None
+        hsv = cv2.cvtColor(np.ascontiguousarray(frame[y0:y1, x0:x1, :3]), cv2.COLOR_BGR2HSV)
+        return round(float(np.median(hsv[..., 2])), 1), round(float(np.median(hsv[..., 1])), 1)
+
+    def _business_claim_greyed(self, frame, box) -> bool:
+        colour = self._business_claim_colour(frame, box)
+        if colour is None:
+            return False
+        value, saturation = colour
+        low, high = BUSINESS_CLAIM_GREY_VALUE
+        return low <= value <= high and saturation <= BUSINESS_CLAIM_GREY_MAX_SATURATION
+
+    def _business_reward_shown(self) -> bool:
+        """The reward overlay that a landed 一键获得 opens."""
+        boxes = self._daily_ocr_boxes(self.capture_frame(), "一键收菜结果")
+        if self._first_box_with(boxes, OVERLAY_DISMISS_KEYWORDS) is not None:
+            return True
+        return self._keyword_match_count(self._boxes_text(boxes), list(REWARD_DIALOG_TITLES)) >= 1
+
+    def _business_claim_still_offered(self) -> bool:
+        """The popup with its 一键获得 still up and nothing over it."""
+        frame = self.capture_frame()
+        boxes = self._daily_ocr_boxes(frame, "business_collect")
+        if self._first_box_with(boxes, OVERLAY_DISMISS_KEYWORDS) is not None:
+            return False
+        if self._keyword_match_count(self._boxes_text(boxes), BUSINESS_COLLECT_KEYWORDS) < 2:
+            return False
+        return self._business_popup_box(boxes, frame, BUSINESS_COLLECT_CLAIM_TEXT) is not None
 
     def _home_still_showing(self, looks: int = 2) -> bool:
         """Home on ``looks`` frames in a row, read only (never clicks)."""

@@ -117,8 +117,6 @@ def parse_token_count(text: str) -> int | None:
 # The card list counts as not moved when its small grey picture changes this
 # little (mean of 0..255) between two scrolls.
 LIST_STILL_MAX_DIFF = 3.0
-# The last card of the 活动 list.
-LAST_CARD_TEXT = normalize_ocr_text("登录活动")
 
 
 def list_view(frame):
@@ -225,7 +223,8 @@ class EventRewardTask(_ClaimTaskBase):
         last_list_text = None
         last_view = None
         empty_reads = 0
-        seen_last_card = False
+        rescrolled = False
+        moved = 0  # scrolls down that moved the list
         for _step in range(LIST_MAX_STEPS + MAX_PAGE_ACTIONS):
             frame = self.capture_frame()
             target = self._next_badge(frame, skipped)
@@ -254,25 +253,39 @@ class EventRewardTask(_ClaimTaskBase):
                 self.sleep(0.6)
                 continue
             view = list_view(frame)
-            if LAST_CARD_TEXT in normalize_ocr_text(list_text):
-                # 登录活动 is the list's last card (Leo 2026-10-07).  To be safe
-                # scroll once more after first seeing it (Leo 2026-10-08), then
-                # stop the next time it shows.
-                if seen_last_card:
-                    break
-                seen_last_card = True
+            # No card counts as the last one: 登录活动 was, until 登录加成 and
+            # two Pickup cards came below it (live 10-10), and stopping on it
+            # left them unchecked.  Only a list that stays still is the end.
             if last_list_text is not None and (
                 list_text == last_list_text or views_match(view, last_view)
             ):
                 # Bottom: the list did not move.  Compared as a picture too:
                 # the captions' OCR varied a little at the bottom and the
                 # sweep went on scrolling ~25 more times (Leo 2026-10-07).
-                break
+                # A scroll the game dropped looks the same, so one more
+                # scroll first; only a second still list is the bottom.
+                if rescrolled:
+                    if not moved:
+                        # YES-BD2 #11: say so in the log.  Not a give-up frame:
+                        # the run goes on, and a later failure of this task
+                        # would show this screen instead of its own.
+                        self.log_info(
+                            "活动列表：往下滚两次都没动。可能活动只有一屏；"
+                            "如果下面还有活动，就是游戏没收到滚动。"
+                        )
+                    break
+                rescrolled = True
+                self.log_info("活动列表：滚动后列表没动，再滚一次确认是否到底。")
+            else:
+                rescrolled = False
+                if last_list_text is not None:
+                    moved += 1
             last_list_text = list_text
             last_view = view
             self.scroll_client(
                 LIST_SCROLL_POINT, -LIST_SCROLL_NOTCHES, after_sleep=LIST_SETTLE_SECONDS
             )
+        self.log_info(f"活动列表：这轮往下滚动了 {moved} 次，处理 {handled} 个。")
         return handled
 
     def _list_to_top(self) -> None:

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QWidget
 from src.tasks import run_log, run_report
 from src.ui.shell import data, theme
 from src.ui.shell.page import Page
+from src.ui.shell.trade_line import TradeLine
 from src.ui.shell.widgets import (
     Card,
     Picture,
@@ -107,6 +108,10 @@ class TaskRuns(QWidget):
                 texts.addWidget(
                     Text(note, "bad" if run.get("state") == run_log.FAIL else "muted", wrap=True)
                 )
+            if run.get("trade"):
+                trade = TradeLine()
+                trade.set_trade(run["trade"])
+                texts.addWidget(trade)
         layout.addLayout(texts, 1)
 
 

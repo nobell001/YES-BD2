@@ -19,6 +19,10 @@ from src.utils.ocr_utils import keyword_match_count
 BUSINESS_ENTRY_POINT = (165, 262)
 BUSINESS_POPUP_ROI = (650, 240, 640, 110)
 BUSINESS_POPUP_KEYWORDS = ("餐馆营业额现状", "立刻前往")
+# The whole popup, read when the restaurant row was not: the popup grows with
+# account progress, so its rows move (see DailyTask's 一键收菜).
+BUSINESS_POPUP_WIDE_ROI = (480, 80, 960, 980)
+BUSINESS_POPUP_WIDE_KEYWORDS = ("餐馆营业额现状", "渔笼收获情况", "助手工作情况", "一键获得")
 RESTAURANT_GO_ROI = (1040, 250, 240, 70)
 RESTAURANT_TITLE = ("格鲁菲餐厅",)
 REGULARS_POINT = (273, 285)
@@ -51,37 +55,71 @@ class RestaurantStoneTask(_ClaimTaskBase):
             return self._claim_fail("前往餐厅")
         self._sleep_after_recognition()
         self.info_set("当前阶段", "点击常客")
-        self._click_reference(*REGULARS_POINT, after_sleep=0.8)
-        toast = self._wait_stone_toast()
-        if keyword_match_count(toast, (STONE_TEXT,)) >= 1:
+        toast = [""]
+
+        def stone_toast() -> bool:
+            toast[0] = self._stone_toast_text()
+            return keyword_match_count(toast[0], (STONE_TEXT,)) >= 1
+
+        # No toast is also what a lost press shows, so 常客 is pressed once
+        # more while the restaurant is still up (harmless: without gifts it
+        # only pans the camera) before it counts as nothing to collect.
+        outcome = self.press_and_confirm(
+            "领取常客圣石：常客",
+            lambda: self._click_reference(*REGULARS_POINT, after_sleep=0.8),
+            stone_toast,
+            still_before=self._in_restaurant,
+            timeout=STONE_TOAST_WAIT_SECONDS,
+        )
+        if outcome:
             self.info_set("常客圣石结果", "已领取")
-            self.log_info(f"领取常客圣石：已领取（{toast}）。")
+            self.log_info(f"领取常客圣石：已领取（{toast[0]}）。")
+        elif outcome.presses >= 2:
+            self.info_set("常客圣石结果", "按了两次常客都没有圣石，今天没有可领的")
+            self.log_info("领取常客圣石：按了两次「常客」都没有看到圣石提示，今天没有可领的圣石。")
         else:
-            # Not a failure: without gifts the press only pans the camera.
-            self.info_set("常客圣石结果", "未看到圣石提示，未确认领取")
-            self.log_warning(
-                f"领取常客圣石：{STONE_TOAST_WAIT_SECONDS:.0f}秒内没有看到圣石提示，"
-                "未确认领取（可能今天已领取或常客没有礼物）。"
-            )
+            self.info_set("常客圣石结果", "未确认领取")
+            self.log_warning("领取常客圣石：按了「常客」后不在餐厅画面，没确认领取，下次再试。")
+            recover_to_home(self)
+            return self._claim_fail("领取常客圣石")
         if not recover_to_home(self):
             return self._claim_fail("餐厅返回主页")
         return True
 
-    def _wait_stone_toast(self) -> str:
-        """The 圣石 toast text, polled for ``STONE_TOAST_WAIT_SECONDS``."""
-        end_at = monotonic() + STONE_TOAST_WAIT_SECONDS
-        while True:
-            toast = self._boxes_text(
-                self._roi_boxes(self.capture_frame(), STONE_TOAST_ROI, "圣石")
-            )
-            self.info_set("常客圣石 OCR", toast or "-")
-            if keyword_match_count(toast, (STONE_TEXT,)) >= 1 or monotonic() >= end_at:
-                return toast
-            self.sleep(0.4)
+    def _in_restaurant(self) -> bool:
+        return self._title_visible(self.capture_frame(), RESTAURANT_TITLE, "餐厅")
+
+    def _stone_toast_text(self) -> str:
+        toast = self._boxes_text(self._roi_boxes(self.capture_frame(), STONE_TOAST_ROI, "圣石"))
+        self.info_set("常客圣石 OCR", toast or "-")
+        return toast
 
     def _popup_text(self) -> str:
         boxes = self._roi_boxes(self.capture_frame(), BUSINESS_POPUP_ROI, "经营管理")
         return self._boxes_text(boxes)
+
+    def _popup_open(self) -> bool:
+        if keyword_match_count(self._popup_text(), BUSINESS_POPUP_KEYWORDS) >= 2:
+            return True
+        boxes = self._roi_boxes(self.capture_frame(), BUSINESS_POPUP_WIDE_ROI, "经营管理整窗")
+        return keyword_match_count(self._boxes_text(boxes), BUSINESS_POPUP_WIDE_KEYWORDS) >= 2
+
+    def _home_without_taps(self, timeout: float) -> bool:
+        """Home on screen, only read.
+
+        The shared home check taps the left column to clear a login notice
+        when home reads dimmed, and an open 经营管理 popup dims home too: with
+        the popup up but not read, that tap could open something else (live
+        4K 2026-10-10 13:33: it ended on the 守山人休息处 hunt screen; the
+        tap is the only press in that window, inferred, not seen).
+        """
+        end_at = monotonic() + timeout
+        while True:
+            if self._home_confirmation_signals(self.capture_frame(), "经营管理重试前主页确认")[0]:
+                return True
+            if monotonic() >= end_at:
+                return False
+            self.sleep(0.35)
 
     def _open_business_popup(self) -> bool:
         for attempt in range(1, POPUP_CLICK_ATTEMPTS + 1):
@@ -89,10 +127,12 @@ class RestaurantStoneTask(_ClaimTaskBase):
             self._click_reference(*BUSINESS_ENTRY_POINT, after_sleep=1.2)
             end_at = monotonic() + 4.0
             while monotonic() <= end_at:
-                if keyword_match_count(self._popup_text(), BUSINESS_POPUP_KEYWORDS) >= 2:
+                if self._popup_open():
                     return True
                 self.sleep(0.5)
-            if not self._wait_for_home_confirmation("经营管理重试前主页确认", timeout=2.0):
+            if not self._home_without_taps(2.0):
+                self.log_info("领取常客圣石：点了经营管理，弹窗没认到，也不在主页，停下不再点。")
+                self._save_flow_diagnostic("restaurant_business_popup_not_open")
                 return False
             self.log_info(f"领取常客圣石：第{attempt}次点击经营管理未打开，重试。")
         return False

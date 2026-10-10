@@ -7,6 +7,7 @@ from enum import Enum
 from pathlib import Path
 from time import monotonic
 
+from src.tasks.map_trade import trade_detail
 from src.tasks.map_trade.action_icons import COOKING_ICON, SKILL_GROUP_CENTERS_REFERENCE
 from src.tasks.map_trade.models import (
     COOKING_RECIPE_TEMPLATES,
@@ -501,6 +502,7 @@ class CookingFlowMixin:
             self.task.log_warning(f"料理：{recipe} 制作超时，未确认结果条。")
             self._recover_cooking_list()
             return CookingRecipeOutcome.FAILED
+        trade_detail.note_dish(self, recipe, getattr(self, "_last_cooking_result_text", ""))
         if not self._return_from_detail_to_list(recipe):
             self.task.log_warning(f"料理：{recipe} 结果已确认，但未恢复料理列表。")
             return CookingRecipeOutcome.FAILED
@@ -785,6 +787,7 @@ class CookingFlowMixin:
             )
             if result_confirmed and self._cooking_detail_snapshot(recipe, frame) is not None:
                 self._status("料理状态", f"{recipe} 结果已确认：{text}")
+                self._last_cooking_result_text = text
                 return frame
             if monotonic() >= end_at:
                 self.task.log_warning(

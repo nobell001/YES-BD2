@@ -43,6 +43,12 @@ PROBE_OUTPUT_DIR = Path("probe_outputs")
 GREEN_MASK_TOLERANCE = 0
 CARTRIDGE_RECENT_ENTRY_POINT = (0.7875, 0.9111111111111111)
 RECENT_CARTRIDGE_SPECIAL_PAGE_SECONDS = 3.0
+# The game scrolls whatever it last saw under the pointer.  One wheel sent the
+# moment the cursor arrived, with the cursor put back 25 ms later, could land
+# before the game saw the pointer there: a player's 活动 list never went down
+# while the six-wheel scroll up did (YES-BD2 #11, 2026-10-10).  The cursor
+# now stays on the point this long before the first wheel and after the last.
+SCROLL_POINTER_SETTLE_SECONDS = 0.15
 RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS = 3
 # Windows may refuse to raise the game while the user works elsewhere.
 FOREGROUND_ATTEMPTS = 3
@@ -62,6 +68,45 @@ TEMPLATE_DIR = PROJECT_ROOT / "recognition-assets" / "template-assets"
 # Shared lock for task instances whose ``__init__`` never ran (object.__new__);
 # see ``BaseBD2Task._task_info_lock``.
 _INFO_FALLBACK_LOCK = threading.RLock()
+
+
+class PlayerSteppedIn(TaskDisabledException):
+    """继续 after the player used the paused game (src/tasks/takeover.py):
+    where the run stood is unknown.  A kind of Stop, so the many handlers
+    that pass Stop on pass it on too; the task's run takes it and starts
+    again from home (decision 8 of the 10-10 plan, its default)."""
+
+
+def _run_again_after_step_in(task, run, args, kwargs, stepped_in=False):
+    """``run``, once more from home each time the player used the game while
+    it was paused: its next press may no longer fit the screen."""
+    while True:
+        try:
+            if stepped_in and not _home_after_step_in(task):
+                return False
+            return run(task, *args, **kwargs)
+        except PlayerSteppedIn:
+            stepped_in = True
+
+
+def _home_after_step_in(task) -> bool:
+    name = getattr(task, "name", "")
+    cls = type(task)
+    home_task = getattr(cls, "start_from_home", False) or getattr(
+        cls, "recover_home_on_failure", False
+    )
+    if not home_task:
+        reason = "暂停时你动了游戏，不知道跑到哪一步了，这次先停下"
+    else:
+        from src.tasks.recovery import recover_to_home
+
+        if recover_to_home(task):
+            task.log_info(f"{name}：暂停时你动了游戏，已回到主页，这一项从头再跑。")
+            return True
+        reason = "暂停时你动了游戏，回不到主页，这一项先停下"
+    task.info_set("状态", f"{name}失败：{reason}。")
+    task.log_warning(f"{name}：{reason}。")
+    return False
 
 
 class CartridgeSpecialPageResult(Enum):
@@ -148,7 +193,13 @@ class BaseBD2Task(BaseTask):
             # The run the executor started (not a child of 一键日常): ok-script's
             # display request is given back however it ends (a Stop left it on).
             top = keep and getattr(getattr(self, "executor", None), "current_task", None) is self
+            if top:
+                self.player_stepped_in = False  # left by a run stopped while paused
             with problem_report.run_scope(self, keep) as scope, keep_awake.released_after(top):
+                # An unreadable account list: whose records these are is unknown.
+                if keep and self._accounts_stop():
+                    scope.ended = problem_report.SETUP
+                    return False
                 # Daily and weekly tasks first set a game size the tool was not
                 # tested on to 1920x1080, or say they could not (Leo 2026-10-09).
                 if constructed and (wanted or getattr(type(self), "start_from_home", False)):
@@ -159,10 +210,14 @@ class BaseBD2Task(BaseTask):
                     if keep and self._setup_stops():
                         scope.ended = problem_report.SETUP
                         return False
+                stepped_in = False
                 if constructed and getattr(type(self), "start_from_home", False):
-                    self._go_home_before_run()
+                    try:
+                        self._go_home_before_run()
+                    except PlayerSteppedIn:
+                        stepped_in = True  # on its way home: look again first
                 try:
-                    result = run(self, *args, **run_kwargs)
+                    result = _run_again_after_step_in(self, run, args, run_kwargs, stepped_in)
                 except TaskDisabledException:
                     problem_report.note_problem(self, "stop")
                     raise
@@ -194,6 +249,22 @@ class BaseBD2Task(BaseTask):
         guarded_run.__qualname__ = run.__qualname__
         guarded_run.__doc__ = run.__doc__
         cls.run = guarded_run
+
+    def sleep(self, timeout):
+        super().sleep(timeout)
+        # A pause holds the run inside a sleep: after 继续, nothing more is
+        # pressed when the player used the game meanwhile (takeover.py).
+        runner = getattr(getattr(self, "executor", None), "current_task", None)
+        stepped_in = getattr(runner, "player_stepped_in", False) is True
+        if stepped_in and not getattr(runner, "paused", False):
+            runner.player_stepped_in = False
+            raise PlayerSteppedIn()
+        return True
+
+    def _accounts_stop(self) -> bool:
+        from src.tasks import setup_check
+
+        return bool(setup_check.accounts_stop(self))
 
     def _setup_stops(self) -> bool:
         from src.tasks import setup_check
@@ -688,12 +759,16 @@ class BaseBD2Task(BaseTask):
             elif hasattr(interaction, "try_activate"):
                 interaction.try_activate()
             capture = getattr(interaction, "capture", None)
-            if capture is not None and hasattr(capture, "get_abs_cords"):
+            pointed = capture is not None and hasattr(capture, "get_abs_cords")
+            if pointed:
                 win32api.SetCursorPos(capture.get_abs_cords(x, y))
+                time.sleep(SCROLL_POINTER_SETTLE_SECONDS)
             for index in range(wheel_count):
                 interaction.scroll(x, y, int(scroll_amount))
                 if index + 1 < wheel_count:
                     time.sleep(wheel_interval)
+            if pointed:
+                time.sleep(SCROLL_POINTER_SETTLE_SECONDS)
 
         self.operate(action, block=True, restore_cursor=True)
         self.sleep(after_sleep)
@@ -933,9 +1008,14 @@ class BaseBD2Task(BaseTask):
         return click_quick_switch()
 
     def _save_flow_diagnostic(self, name: str) -> None:
-        """Persist a failure frame; report bundles pick up *_failed/_error stems."""
+        """Persist a failure frame; report bundles pick up *_failed/_error stems.
+
+        The frame is also what the 问题摘要 shows if this run fails.
+        """
         try:
-            self.save_frame(name, self.capture_frame())
+            frame = self.capture_frame()
+            problem_report.note_give_up(self, frame)
+            self.save_frame(name, frame)
         except (TaskDisabledException, FinishedException):
             raise
         except Exception as exc:

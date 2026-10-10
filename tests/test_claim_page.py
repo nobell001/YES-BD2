@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from src.tasks.claim_page import SETTLED_BRIGHTNESS_RATIO, ClaimPageMixin
+from src.tasks.claim_page import SETTLED_BRIGHTNESS_RATIO, ClaimButton, ClaimPageMixin
 
 
 def frame(title_level: int, body_level: int, height: int = 2160, width: int = 3840):
@@ -67,6 +67,73 @@ class TitleWaitTest(unittest.TestCase):
     def test_title_changing_during_a_transition_is_not_cut_short(self):
         task, _clock = self._task(["消耗品"] * 5 + [""] * 4 + ["装备"])
         self.assertTrue(task._wait_for_title("装备", ("装备",)))
+
+
+class ClaimAllConfirmTest(unittest.TestCase):
+    """A swallowed 全部领取 press left the page unchanged, which read as
+    「无新奖励或已直接领取」 with the rewards still there (press audit 10-09)."""
+
+    BUTTON = ClaimButton((1200, 930, 720, 150), ("全部领取",))
+
+    def _task(self, lands=(1,), popup_hides_button=False):
+        from types import SimpleNamespace
+
+        from src.tasks.RewardClaimTasks import MailRewardTask
+        from src.utils.press_confirm import press_and_confirm
+
+        game = {"lit": True, "presses": 0, "settled": 0}
+        clock = [0.0]
+        box = SimpleNamespace(name="全部领取", x=1500, y=980, width=200, height=50)
+
+        def capture():
+            image = np.zeros((1080, 1920, 3), dtype=np.uint8)
+            image[980:1030, 1500:1700] = 252 if game["lit"] else 127
+            return image
+
+        def press(_target, **_kwargs):
+            game["presses"] += 1
+            if game["presses"] in lands:
+                game["lit"] = False
+
+        task = object.__new__(MailRewardTask)
+        task.claim_log_name = "test"
+        task.info = {}
+        task.info_set = lambda key, value: task.info.__setitem__(key, value)
+        task.log_info = lambda *_a, **_k: None
+        task.sleep = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+        task.capture_frame = capture
+        task._roi_boxes = lambda *_a: [] if popup_hides_button and not game["lit"] else [box]
+        task._click_box = press
+        task._sleep_after_recognition = lambda: None
+        task._save_flow_diagnostic = lambda *_a: None
+        task._settle_after_claim = lambda *_a: game.__setitem__("settled", 1) or True
+        task.press_and_confirm = lambda label, do, confirmed, **options: press_and_confirm(
+            label, do, confirmed, sleep=task.sleep, log=task.log_info, clock=lambda: clock[0],
+            **options,
+        )
+        return task, game
+
+    def test_swallowed_press_is_pressed_again_then_reported_as_failure(self):
+        task, game = self._task(lands=())
+        self.assertFalse(task._claim_all("普通邮箱", self.BUTTON, ("邮箱",)))
+        self.assertEqual(2, game["presses"])
+        self.assertEqual(0, game["settled"])
+        self.assertIn("未领到", task.info["普通邮箱结果"])
+
+    def test_button_turning_grey_is_claimed_with_one_press(self):
+        task, game = self._task(lands=(1,))
+        self.assertTrue(task._claim_all("普通邮箱", self.BUTTON, ("邮箱",)))
+        self.assertEqual((1, 1), (game["presses"], game["settled"]))
+
+    def test_first_press_lost_second_lands(self):
+        task, game = self._task(lands=(2,))
+        self.assertTrue(task._claim_all("每日任务", self.BUTTON, ("每日任务",)))
+        self.assertEqual((2, 1), (game["presses"], game["settled"]))
+
+    def test_reward_popup_covering_the_button_counts(self):
+        task, game = self._task(lands=(1,), popup_hides_button=True)
+        self.assertTrue(task._claim_all("普通邮箱", self.BUTTON, ("邮箱",)))
+        self.assertEqual(1, game["presses"])
 
 
 if __name__ == "__main__":

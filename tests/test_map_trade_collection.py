@@ -52,6 +52,10 @@ from src.tasks.map_trade.navigator import (
     StoryBadgeCandidate,
     StoryBadgeDetection,
 )
+from src.tasks.map_trade.navigator_constants import (
+    FIRST_CARD_DIALOG_REGION,
+    FIRST_CARD_PAID_DIALOG_MESSAGE,
+)
 from src.tasks.map_trade.progress import (
     UTC_PLUS_8,
     ProgressStore,
@@ -767,23 +771,97 @@ class CollectionCardTest(unittest.TestCase):
         )
         self.assertEqual([], sleeps)
 
+    def _first_card_vision(self, frame, buttons, dialog, client_clicks):
+        """Vision for the card-entry wait: no insert prompt, no skip button."""
+
+        def ocr_text(_frame, name, roi=None):
+            if name == "首次卡带对话":
+                self.assertIs(frame, _frame)
+                self.assertEqual(FIRST_CARD_DIALOG_REGION, roi)
+                return dialog
+            return ""
+
+        def ocr_boxes(_frame, name, roi=None):
+            self.assertIs(frame, _frame)
+            self.assertEqual(("首次卡带确认", FIRST_CARD_CONFIRM_REGION), (name, roi))
+            return [
+                SimpleNamespace(name=text, x=900 + 200 * index, y=800, width=120, height=40)
+                for index, text in enumerate(buttons)
+            ]
+
+        return SimpleNamespace(
+            capture=lambda: frame,
+            simplify=lambda value: value,
+            ocr_text=ocr_text,
+            ocr_boxes=ocr_boxes,
+            match=lambda _frame, _spec: MatchResult(-1.0, (0, 0), (0, 0)),
+            passes=lambda result, _spec: result.score >= 0.72,
+            click_client=lambda point, shape, after_sleep=0: client_clicks.append(
+                (point, shape, after_sleep)
+            ),
+        )
+
+    def test_first_card_confirm_presses_only_an_exact_button_of_the_same_frame(self):
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        clicks = []
+        vision = self._first_card_vision(frame, ["取消", "确认"], "剧情 跳过 取消 确认", clicks)
+        navigator = Navigator(SimpleNamespace(config={}), vision)
+
+        self.assertTrue(navigator._handle_story_card_intermediate(frame))
+        self.assertEqual([((1160, 820), frame.shape, 0.8)], clicks)
+
+        clicks.clear()
+        vision = self._first_card_vision(frame, ["确认修改"], "确认修改", clicks)
+        navigator = Navigator(SimpleNamespace(config={}), vision)
+        self.assertFalse(navigator._handle_story_card_intermediate(frame))
+        self.assertEqual([], clicks)
+
+    def test_first_card_wait_never_confirms_a_dialog_that_may_spend(self):
+        # Review #11: any box containing 确认 used to be pressed while
+        # waiting to enter a card, a purchase or 钻石 prompt included.
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        for buttons, dialog in (
+            (["确认"], "是否消耗钻石购买该游戏卡 取消 确认"),
+            (["确认"], "使用鲜血鸡尾酒 确认"),
+            (["确认购买"], ""),
+        ):
+            with self.subTest(dialog=dialog or buttons):
+                clicks = []
+                saved = []
+                warnings = []
+                special_pages = []
+                task = SimpleNamespace(
+                    config={"加载页面等待秒数": 45.0},
+                    sleep=lambda *_args: None,
+                    save_frame=lambda name, image: (
+                        saved.append((name, image)) or Path(f"{name}.png")
+                    ),
+                    log_warning=warnings.append,
+                    _handle_recent_cartridge_special_pages=lambda **kwargs: (
+                        special_pages.append(kwargs) or CartridgeSpecialPageResult.HANDLED
+                    ),
+                )
+                navigator = Navigator(
+                    task, self._first_card_vision(frame, buttons, dialog, clicks)
+                )
+                navigator.classify = lambda _frame=None: ScreenState.UNKNOWN
+                navigator._black_frame = lambda _frame: False
+                navigator._auto_moving = lambda _frame: False
+
+                result = navigator._wait_for_story_sandbox(12, timeout=30.0, interval=0.0)
+
+                self.assertFalse(result.success)
+                self.assertEqual(FIRST_CARD_PAID_DIALOG_MESSAGE, result.message)
+                self.assertEqual([], clicks)
+                self.assertEqual([("map_card_paid_dialog_failed", frame)], saved)
+                self.assertEqual([], special_pages)
+                self.assertTrue(any("map_card_paid_dialog_failed.png" in w for w in warnings))
+
     def test_collection_card_entry_handles_skip_and_confirmation_with_mouse(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         client_clicks = []
-        ocr_clicks = []
         skip_result = MatchResult(0.99, (1500, 20), (100, 40), pixel_score=0.98)
         task = SimpleNamespace(config={}, sleep=lambda *_args: None)
-        prompts = iter(("", ""))
-        confirmations = iter(("确认",))
-
-        def ocr_text(_frame, name, roi=None):
-            if name == "新卡带插入提示":
-                return next(prompts)
-            if name == "首次卡带确认":
-                self.assertEqual(FIRST_CARD_CONFIRM_REGION, roi)
-                return next(confirmations)
-            return ""
-
         matches = iter(
             (
                 skip_result,
@@ -791,20 +869,9 @@ class CollectionCardTest(unittest.TestCase):
                 MatchResult(-1.0, (0, 0), (0, 0)),
             )
         )
-        vision = SimpleNamespace(
-            capture=lambda: frame,
-            simplify=lambda value: value,
-            ocr_text=ocr_text,
-            click_ocr=lambda patterns, roi, after_sleep, name: (
-                ocr_clicks.append((tuple(patterns), roi, after_sleep, name)) or True
-            ),
-            match=lambda _frame, spec: (
-                self.assertEqual(FIRST_CARD_SKIP_TEMPLATE, spec) or next(matches)
-            ),
-            passes=lambda result, _spec: result.score >= 0.72,
-            click_client=lambda point, shape, after_sleep=0: client_clicks.append(
-                (point, shape, after_sleep)
-            ),
+        vision = self._first_card_vision(frame, ["确认"], "确认", client_clicks)
+        vision.match = lambda _frame, spec: (
+            self.assertEqual(FIRST_CARD_SKIP_TEMPLATE, spec) or next(matches)
         )
         navigator = Navigator(task, vision)
         states = iter(
@@ -826,10 +893,9 @@ class CollectionCardTest(unittest.TestCase):
         result = navigator._wait_for_story_sandbox(12, timeout=2.0, interval=0.0)
 
         self.assertTrue(result.success)
-        self.assertEqual([(skip_result.center, frame.shape, 0.8)], client_clicks)
         self.assertEqual(
-            [((r"确认",), FIRST_CARD_CONFIRM_REGION, 0.8, "首次卡带确认")],
-            ocr_clicks,
+            [(skip_result.center, frame.shape, 0.8), ((960, 820), frame.shape, 0.8)],
+            client_clicks,
         )
 
     def test_collection_card_entry_requires_consecutive_stable_sandbox_frames(self):

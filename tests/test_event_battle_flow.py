@@ -241,3 +241,114 @@ class QuickBattleTest(unittest.TestCase):
         task = self._task([5], free_ap=0)
         task._open_quick_dialog = lambda: self.fail("dialog opened without AP")
         self.assertEqual("no_ap", task._run_quick_battle())
+
+
+class FreeApSwitchTest(unittest.TestCase):
+    """Review #28: a second press only when the first changed nothing."""
+
+    def _task(self, ratio, after_click):
+        task = make_task()
+        task.switch = ratio
+        task.clicks = []
+
+        def click(x, y, after_sleep=0):
+            task.clicks.append((x, y))
+            task.switch = after_click(task.switch)
+
+        task._click_reference = click
+        task._free_ap_switch_ratio = lambda roi: task.switch
+        settle = mock.patch.object(event_module, "FREE_AP_SWITCH_SETTLE_SECONDS", 0.0)
+        settle.start()
+        self.addCleanup(settle.stop)
+        return task
+
+    def test_an_off_switch_is_turned_on_with_one_click(self):
+        task = self._task(0.0, lambda _ratio: 0.4)
+        self.assertTrue(
+            task._ensure_free_ap_switch_on(
+                event_module.QUICK_FREE_AP_SWITCH_POINT, event_module.QUICK_FREE_AP_SWITCH_ROI
+            )
+        )
+        self.assertEqual([event_module.QUICK_FREE_AP_SWITCH_POINT], task.clicks)
+
+    def test_a_switch_never_read_as_on_is_clicked_twice_at_most(self):
+        task = self._task(0.0, lambda ratio: ratio)
+        self.assertFalse(task._ensure_free_ap_switch_on())
+        self.assertEqual([event_module.FREE_AP_SWITCH_POINT] * 2, task.clicks)
+
+
+class FailReasonTest(unittest.TestCase):
+    """A player's 问题摘要 said only 「普通战斗失败」 (2026-10-10): every
+    failure now says why, in 停在 and in the last line."""
+
+    def _task(self):
+        task = make_task()
+        task.name = "活动每日战斗"
+        task._save_flow_diagnostic = lambda name: None
+        task._settle_before_recovery = lambda: None
+        task.info_snapshot = lambda: dict(task.info)
+        patcher = mock.patch.object(event_module, "recover_to_home", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return task
+
+    def _summary_stage(self, task):
+        from src.tasks import problem_report
+
+        return problem_report._stage(task)
+
+    def test_unread_ap_is_named(self):
+        task = self._task()
+        task._open_mode = lambda mode: "ok"
+        task._stable_stage_state = lambda mode: {
+            "stage": 3,
+            "free_ap": None,
+            "bonus_ap": 0,
+            "auto": True,
+            "quick": False,
+        }
+        self.assertFalse(task.run_claim())
+        line = "活动每日战斗：普通战斗失败：关卡页上方的活动AP没读到。"
+        self.assertEqual(line, task.info["状态"])
+        self.assertEqual("普通战斗失败：关卡页上方的活动AP没读到", self._summary_stage(task))
+        task.log_warning.assert_called_once_with(line)
+
+    def test_event_page_that_never_opens_is_named(self):
+        task = self._task()
+        task._wait_for_hub = lambda timeout=0: False
+        task._wait_for_stage_page = lambda mode, timeout=0, quiet=False: False
+        homes = iter([True, False])
+        task._wait_for_home_confirmation = lambda *a, **k: next(homes)
+        task._find_stable_banner = lambda keywords: box("活动")
+        task._sleep_after_recognition = lambda: None
+        task._click_box = lambda *a, **k: None
+        self.assertFalse(task.run_claim())
+        self.assertEqual(
+            "普通战斗失败：点了活动横幅后，活动页一直没出来", self._summary_stage(task)
+        )
+
+    def test_count_check_names_the_numbers(self):
+        task = self._task()
+        task._open_mode = lambda mode: "ok"
+        task._stable_stage_state = lambda mode: {
+            "stage": 3,
+            "free_ap": 2,
+            "bonus_ap": 0,
+            "auto": True,
+            "quick": False,
+        }
+        task._sleep_after_recognition = lambda: None
+        task._click_reference = lambda *a, **k: None
+        task._dismiss_ap_shortage = lambda: False
+        task._wait_for_dialog = lambda: True
+        task._ensure_free_ap_switch_on = lambda *a: True
+        task._settled_cost = lambda read: 5
+        self.assertFalse(task.run_claim())
+        self.assertIn("场数对不上（读到 5，要打 2，免费AP 2），所以没开打", task.info["状态"])
+
+    def test_a_failure_without_a_known_reason_keeps_the_old_line(self):
+        task = self._task()
+        task._why = "上次的原因"
+        task._run_mode = lambda mode: "failed"
+        self.assertFalse(task.run_claim())
+        self.assertEqual("活动每日战斗：普通战斗失败。", task.info["状态"])

@@ -1,4 +1,11 @@
 if __name__ == "__main__":
+    # src/config.py turns off ok-script's check, which kills the open copy.
+    from src.compat import single_instance
+
+    if not single_instance.acquire():
+        single_instance.show_existing()
+        raise SystemExit(0)
+
     import ok
 
     from src.config import config

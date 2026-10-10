@@ -52,6 +52,8 @@ ENDED_SETUP = "setup"
 _lock = threading.RLock()
 _active: dict | None = None
 _loose: list[tuple[float, str, str]] = []
+# What a single trade run (outside a batch) sold and cooked.
+_loose_trade: list[tuple[float, dict]] = []
 _report_file: str | None = None
 
 
@@ -108,6 +110,7 @@ def row_started(key: str) -> None:
         row["state"] = RUN
         row["started"] = time.time()
         row["note"] = ""
+        row.pop("trade", None)
         _active["current"] = key
 
 
@@ -142,10 +145,38 @@ def _log_row(row: dict, label: str | None) -> None:
             note=str(row.get("note") or ""),
             via=str(label or ""),
             images=row.get("images"),
+            trade=row.get("trade"),
             folder=os.path.dirname(_report_path()),
         )
     except Exception as exc:  # never let the log break a run
         logger.error(f"run log failed: {exc}")
+
+
+def add_trade(trade: dict) -> None:
+    """What the running trade sold and cooked, shown under its row (YES-BD2 #6).
+
+    In a batch it goes on the running row; a single run's run-log entry
+    picks it up when it ends.
+    """
+    with _lock:
+        if _active is not None:
+            row = _row(_active.get("current") or "")
+            if row is not None:
+                row["trade"] = copy.deepcopy(trade)
+            return
+        _loose_trade.append((time.time(), copy.deepcopy(trade)))
+        del _loose_trade[:-4]
+
+
+def loose_trade(started: float | None, finished: float) -> dict | None:
+    """The trade summary a single run left between ``started`` and ``finished``."""
+    with _lock:
+        found = [
+            trade
+            for ts, trade in _loose_trade
+            if (started is None or ts >= started - 1) and ts <= finished + 1
+        ]
+    return copy.deepcopy(found[-1]) if found else None
 
 
 def add_note(key: str, note: str) -> None:

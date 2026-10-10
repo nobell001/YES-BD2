@@ -28,6 +28,7 @@ from src.ui.shell.page import Page
 from src.ui.shell.problem_page import ProblemCard
 from src.utils import accounts
 from src.ui.shell.safe import guarded
+from src.ui.shell.trade_line import TradeLine
 from src.ui.shell.widgets import (
     Bar,
     Button,
@@ -202,11 +203,13 @@ class RunRow(QWidget):
         self.note.hide()
         texts.addWidget(self.name)
         texts.addWidget(self.note)
+        self.trade = TradeLine()
+        texts.addWidget(self.trade)
         layout.addLayout(texts, 1)
         self.time = Text("", "muted")
         layout.addWidget(self.time, 0, Qt.AlignTop)
 
-    def set(self, state: str, note: str, time_text: str) -> None:
+    def set(self, state: str, note: str, time_text: str, trade: dict | None = None) -> None:
         if state != self._state:
             self._state = state
             self.update()
@@ -215,6 +218,7 @@ class RunRow(QWidget):
         self.note.set_text(note)
         self.note.setVisible(bool(note))
         self.note.set_role("bad" if state == "fail" else "muted")
+        self.trade.set_trade(trade)
         self.time.set_text(time_text)
 
     def paintEvent(self, _event):
@@ -261,7 +265,7 @@ class Timeline(Card):
                 time_text = fmt_clock(row["duration"])
             else:
                 time_text = ""
-            widget.set(state, str(row.get("note") or ""), time_text)
+            widget.set(state, str(row.get("note") or ""), time_text, row.get("trade"))
 
 
 class PictureDialog(QDialog):
@@ -1104,7 +1108,8 @@ class HomePage(Page):
             self.resume_summary_button.set_label(tf("从「{name}」继续", name=name))
             self.set_sub(tf("按继续会从「{name}」接着跑，做完的不会再跑", name=name))
         setup = ended == run_report.ENDED_SETUP
-        if setup:
+        # Also a finished run's word, e.g. why the PC was not shut down.
+        if setup or (stopped is None and report.get("notice")):
             self.set_sub(report.get("notice") or "")
         self.sum_boxes.setVisible(not setup)
         self.sum_body.setVisible(not setup)

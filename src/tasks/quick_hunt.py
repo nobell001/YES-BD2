@@ -17,7 +17,9 @@ from src.tasks.task_vision_mixin import (
 )
 from src.utils.calibration import HD_720
 from src.utils.colour_rules import switch_yellow_ratio
+from src.utils.free_switch import ensure_free_switch_on
 from src.utils.home_confirmation import HOME_LEFT_COLUMN_REQUIRED_HITS
+from src.utils.press_confirm import wait_for
 
 QUICK_HUNT_CHILD_CONFIG_KEYS = (
     "快速狩猎双倍策略",
@@ -47,6 +49,19 @@ def quick_hunt_free_pool(text: str) -> int | None:
     return int(matched.group(1)) if matched else None
 
 
+def quick_hunt_stone_value(text: str) -> int | None:
+    """One stone count as shown ("300", "1,250", "1.2K", "1.5万")."""
+    cleaned = re.sub(r"[,，\s]", "", str(text))
+    matched = re.search(r"(\d+(?:\.\d+)?)([KkMm万]?)", cleaned)
+    if not matched:
+        return None
+    number, unit = matched.groups()
+    if not unit:
+        return int(re.sub(r"\D", "", number))
+    scale = {"k": 1_000, "m": 1_000_000, "万": 10_000}[unit.lower()]
+    return round(float(number) * scale)
+
+
 def _quick_hunt_relative_roi(
     x1: int,
     y1: int,
@@ -61,6 +76,52 @@ def _quick_hunt_relative_roi(
         right / REFERENCE_WIDTH,
         bottom / REFERENCE_HEIGHT,
     )
+
+
+def quick_hunt_fold_button(frame) -> tuple[int, int] | None:
+    """Centre (frame pixels) of the folded panel's ∨ button, or None.
+
+    Language-free: a white ∨ (both ends high, the middle low) on a dark round
+    button.  Measured on the player's frame at 1080p: the ∨ is 25×15 px and
+    the button around it reads about 16 out of 255.
+    """
+    height, width = frame.shape[:2]
+    if frame.ndim < 3 or frame.shape[2] < 3:
+        return None
+    left, top, right, bottom = QUICK_HUNT_FOLD_BUTTON_ROI
+    x0, y0 = round(left * width), round(top * height)
+    region = frame[y0 : round(bottom * height), x0 : round(right * width), :3]
+    if region.size == 0:
+        return None
+    unit = height / REFERENCE_HEIGHT
+    hsv = cv2.cvtColor(np.ascontiguousarray(region), cv2.COLOR_BGR2HSV)
+    value = hsv[:, :, 2].astype(np.float32)
+    white = ((hsv[:, :, 2] >= 190) & (hsv[:, :, 1] <= 70)).astype(np.uint8)
+    count, labels, stats, _centres = cv2.connectedComponentsWithStats(white, connectivity=8)
+    rows, cols = np.mgrid[0 : region.shape[0], 0 : region.shape[1]]
+    for index in range(1, count):
+        x, y, w, h = (int(v) for v in stats[index][:4])
+        if not (14 * unit <= w <= 34 * unit and 7 * unit <= h <= 22 * unit):
+            continue
+        if not 1.3 <= w / h <= 3.2:
+            continue
+        piece = labels[y : y + h, x : x + w] == index
+        band, side = max(1, h // 3), max(1, w // 3)
+        top_band, bottom_band = piece[:band], piece[h - band :]
+        top_ends = (top_band[:, :side].mean() + top_band[:, w - side :].mean()) / 2
+        bottom_ends = (bottom_band[:, :side].mean() + bottom_band[:, w - side :].mean()) / 2
+        if top_ends < top_band[:, side : w - side].mean() + 0.15:
+            continue
+        if bottom_band[:, side : w - side].mean() < bottom_ends + 0.15:
+            continue  # not a ∨ (a ∧ folds the panel away again)
+        cx, cy = x + w / 2, y + h / 2
+        distance = np.hypot(cols - cx, rows - cy)
+        ring = (distance >= w * 0.75) & (distance <= 24 * unit)
+        if ring.sum() < 20 or float(value[ring].mean()) > 90:
+            continue
+        return x0 + round(cx), y0 + round(cy)
+    return None
+
 
 QUICK_HUNT_ENTRY_POINT = (1756 / REFERENCE_WIDTH, 262 / REFERENCE_HEIGHT)
 
@@ -87,11 +148,12 @@ QUICK_HUNT_FREE_SWITCH_BOX = (1222, 294, 44, 24)
 QUICK_HUNT_FREE_SWITCH_POINT = (1244, 306)
 QUICK_HUNT_FREE_LABEL_ROI = _quick_hunt_relative_roi(1040, 288, 1220, 324)
 QUICK_HUNT_FREE_SWITCH_MIN_RATIO = 0.05  # live on: 0.37
-QUICK_HUNT_FREE_SWITCH_ATTEMPTS = 3
 QUICK_HUNT_FREE_SWITCH_SETTLE_SECONDS = 2.0
 # Parts of the quick-hunt dialog / cave list are read for this long after
 # a click before a miss counts (one look failed when they drew late).
 QUICK_HUNT_DIALOG_DRAW_SECONDS = 3.0
+# Words only the open quick-hunt dialog shows in its count row.
+QUICK_HUNT_DIALOG_BUTTONS = re.compile(r"取消|MIN|MAX", re.IGNORECASE)
 QUICK_HUNT_HOME_LAST_WAIT_SECONDS = 6.0
 
 QUICK_HUNT_RESOURCE_ROI = _quick_hunt_relative_roi(1724, 80, 1602, 38)
@@ -105,6 +167,8 @@ QUICK_HUNT_COUNT_ROI = _quick_hunt_relative_roi(1298, 826, 623, 257)
 QUICK_HUNT_START_ROI = _quick_hunt_relative_roi(1136, 805, 963, 764)
 
 QUICK_HUNT_REWARD_ROI = _quick_hunt_relative_roi(1055, 1019, 857, 965)
+# After the 点击画面即可返回 tap: how long the reward page may take to go.
+QUICK_HUNT_REWARD_GONE_SECONDS = 3.0
 
 QUICK_HUNT_DIALOG_ROI = _quick_hunt_relative_roi(750, 630, 1200, 915)
 
@@ -121,8 +185,19 @@ QUICK_HUNT_CRYSTAL_CLICK_ROI = _quick_hunt_relative_roi(260, 520, 100, 400)
 # 读成"空/究"（圣石洞空/圣石洞究），四字全匹配从未命中；左列该三字前缀
 # 唯一，放宽到"圣石洞"。
 QUICK_HUNT_CRYSTAL_ENTRY_PATTERN = r"圣石洞"
+# Looks (strip then whole screen, about 4 s each) for the entry before the
+# screen counts as not showing the hunt menu.  A player's run (v0.1.17,
+# 1080p, 2026-10-10) read neither the entry nor the cave list for 30 s and
+# pressed the fixed point three times anyway.
+QUICK_HUNT_CRYSTAL_ENTRY_LOOKS = 2
+# The hunt menu's left column: the fixed point is pressed only under it.
+QUICK_HUNT_MENU_PATTERN = r"圣石洞|狩猎场|冒险航线"
 
 QUICK_HUNT_STONE_COUNT_ROI = _quick_hunt_relative_roi(1794, 288, 1689, 80)
+# The top-right panel can be folded away: then it shows only 火把 with a round
+# ∨ button under it and no stone counts at all (Bilibili 琴烟, v0.1.17, 1080p,
+# 2026-10-10).  Leo: 「聖石如果偵測玩家收起來 就把它點開」.
+QUICK_HUNT_FOLD_BUTTON_ROI = _quick_hunt_relative_roi(1650, 78, 1800, 170)
 
 QUICK_HUNT_DOUBLE_ROI = _quick_hunt_relative_roi(168, 337, 135, 205)
 
@@ -553,6 +628,19 @@ class QuickHuntFeatureMixin:
         )
         return is_red, (x, y), bgr, hsv
 
+    def _quick_hunt_menu_shown(self, timeout: float) -> bool:
+        text, _box = self._quick_hunt_wait_ocr(
+            [r"狩猎场"],
+            None,
+            timeout,
+            name="快速狩猎菜单确认",
+        )
+        if not text:
+            return False
+        self._status_set("快速狩猎入口", "已进入")
+        self._status_set("快速狩猎菜单", "狩猎场")
+        return True
+
     def _quick_hunt_open_menu(self) -> str:
         self._status_set("快速狩猎当前阶段", "确认首页并打开狩猎菜单")
         if not self._wait_for_quick_hunt_home():
@@ -576,15 +664,7 @@ class QuickHuntFeatureMixin:
 
             # User requirement: external coordinates must not be inferred or converted.
             # The menu is confirmed by full-frame OCR unless an ok-bd2 ROI is supplied.
-            text, _box = self._quick_hunt_wait_ocr(
-                [r"狩猎场"],
-                None,
-                confirm_timeout,
-                name="快速狩猎菜单确认",
-            )
-            if text:
-                self._status_set("快速狩猎入口", "已进入")
-                self._status_set("快速狩猎菜单", "狩猎场")
+            if self._quick_hunt_menu_shown(confirm_timeout):
                 return "opened"
             if attempt >= 3:
                 break
@@ -592,6 +672,11 @@ class QuickHuntFeatureMixin:
             # 单击定胜负直接失败）；仍在主页才补点，避免在未知页面盲点。
             home_ok, *_rest = self._quick_hunt_home_signals(self.capture_frame())
             if not home_ok:
+                # Neither 主页 nor the menu: most likely still loading (YES-BD2
+                # #8: 「画面还在转圈卡顿」).  Wait for the menu, press nothing.
+                self.log_info("快速狩猎：点了入口后画面还没出来，可能还在加载，再等一会。")
+                if self._quick_hunt_menu_shown(self._quick_hunt_ui_timeout()):
+                    return "opened"
                 break
             self.log_info(f"快速狩猎：第{attempt}次点击入口后未确认狩猎菜单，重试。")
 
@@ -687,34 +772,15 @@ class QuickHuntFeatureMixin:
         结算"点击画面即可返回"的关闭动画可能吞掉紧随其后的点击，单次盲点
         定胜负会让整个快速狩猎确定性失败；这里优先 OCR 识别左列"圣石洞穴"
         文字框点击其中心，识别不到再回退固定参考点，确认失败在有限次数内重试。
+        The fixed point is pressed only while the hunt menu is read; a screen
+        that is not the menu is not pressed at all, and what it showed goes
+        in the log for the 问题摘要.
         """
         confirm_timeout = max(3.0, self._quick_hunt_ui_timeout() / 2.0)
         confirm_patterns = [r"[火水风光暗].?洞穴"]
         for attempt in range(1, max(1, attempts) + 1):
-            clicked = self._quick_hunt_click_ocr(
-                [QUICK_HUNT_CRYSTAL_ENTRY_PATTERN],
-                QUICK_HUNT_CRYSTAL_CLICK_ROI,
-                2.0,
-                name="圣石洞穴入口",
-            )
-            if not clicked:
-                # RPT-20260902-225925：实机条带 OCR 连续 20 秒全空，但 6 秒前
-                # 整屏 OCR 能读到"圣石洞穴"，该客户端入口可能偏移到条带外；
-                # 条带未命中先整屏 OCR 兜底（"圣石洞"三字前缀在狩猎菜单内唯一）。
-                clicked = self._quick_hunt_click_ocr(
-                    [QUICK_HUNT_CRYSTAL_ENTRY_PATTERN],
-                    None,
-                    2.0,
-                    name="圣石洞穴入口整屏",
-                )
-            if not clicked:
-                seen = self._quick_hunt_ocr_text(
-                    self.capture_frame(),
-                    QUICK_HUNT_CRYSTAL_CLICK_ROI,
-                    name="圣石洞穴入口区域",
-                )
-                self._status_set("圣石洞穴入口区域 OCR", seen or "-")
-                self._click_reference(*QUICK_HUNT_CRYSTAL_POINT, after_sleep=0.8)
+            if not self._quick_hunt_press_crystal_entry():
+                break
             text, _box = self._quick_hunt_wait_ocr(
                 confirm_patterns,
                 QUICK_HUNT_CRYSTAL_TITLE_ROI,
@@ -729,8 +795,72 @@ class QuickHuntFeatureMixin:
                 + ("，重试。" if attempt < max(1, attempts) else "。")
             )
         self.log_info("快速狩猎：点击圣石洞穴后未确认属性洞穴列表。")
+        self._quick_hunt_log_screen("圣石洞穴没进去")
         self._save_flow_diagnostic("quick_hunt_crystal_entry_failed")
         return False
+
+    def _quick_hunt_press_crystal_entry(self) -> bool:
+        """Press the left column's 圣石洞穴; False when nothing was pressed."""
+        for look in range(QUICK_HUNT_CRYSTAL_ENTRY_LOOKS):
+            if look:
+                self._quick_hunt_clear_crystal_cover()
+            if self._quick_hunt_click_ocr(
+                [QUICK_HUNT_CRYSTAL_ENTRY_PATTERN],
+                QUICK_HUNT_CRYSTAL_CLICK_ROI,
+                2.0,
+                name="圣石洞穴入口",
+            ):
+                return True
+            # RPT-20260902-225925：实机条带 OCR 连续 20 秒全空，但 6 秒前
+            # 整屏 OCR 能读到"圣石洞穴"，该客户端入口可能偏移到条带外；
+            # 条带未命中先整屏 OCR 兜底（"圣石洞"三字前缀在狩猎菜单内唯一）。
+            if self._quick_hunt_click_ocr(
+                [QUICK_HUNT_CRYSTAL_ENTRY_PATTERN],
+                None,
+                2.0,
+                name="圣石洞穴入口整屏",
+            ):
+                return True
+        frame = self.capture_frame()
+        seen = self._quick_hunt_ocr_text(
+            frame,
+            QUICK_HUNT_CRYSTAL_CLICK_ROI,
+            name="圣石洞穴入口区域",
+        )
+        self._status_set("圣石洞穴入口区域 OCR", seen or "-")
+        menu = re.compile(QUICK_HUNT_MENU_PATTERN)
+        if not menu.search(self._normalize_text(seen)):
+            whole = self._quick_hunt_ocr_text(frame, None, name="圣石洞穴入口整屏文字")
+            if not menu.search(self._normalize_text(whole)):
+                self.log_info("快速狩猎：画面上没有狩猎菜单，没按圣石洞穴。")
+                return False
+        self._click_reference(*QUICK_HUNT_CRYSTAL_POINT, after_sleep=0.8)
+        return True
+
+    def _quick_hunt_clear_crystal_cover(self) -> None:
+        """Put away what was read over the hunt menu (reward page, dialog, popup)."""
+        stage = "圣石洞穴"
+        if self._quick_hunt_reward_shown(stage):
+            self.log_info("快速狩猎：结算画面还在，先点掉再找圣石洞穴。")
+            self._quick_hunt_close_reward(stage)
+            return
+        if self._quick_hunt_dialog_visible(stage):
+            self.log_info("快速狩猎：快速狩猎视窗还开着，先取消再找圣石洞穴。")
+            self._quick_hunt_cancel_dialog(stage)
+            return
+        popup = self._quick_hunt_ocr_text(
+            self.capture_frame(), QUICK_HUNT_DIALOG_ROI, name=f"{stage}-提示"
+        )
+        if any(word in self._normalize_text(popup) for word in ("不足", "无法", "耗尽")):
+            # The same tap that puts the shortage popup away after a hunt.
+            self.log_info("快速狩猎：资源不足提示还在，先点掉再找圣石洞穴。")
+            self._click_mf_reference(1, 1, after_sleep=0.5)
+
+    def _quick_hunt_log_screen(self, what: str) -> None:
+        """One log line with the words on screen, so a 问题摘要 shows where it was."""
+        text = self._quick_hunt_ocr_text(self.capture_frame(), None, name="快速狩猎当时画面")
+        words = " ".join(str(text or "").split())
+        self.log_info(f"快速狩猎：{what}，当时画面读到「{words[:50] or '没读到字'}」。")
 
     def _quick_hunt_select_adventure_route(self) -> str | None:
         preferred = str(self.config.get("快速狩猎资源倾向", "金币"))
@@ -809,13 +939,7 @@ class QuickHuntFeatureMixin:
         expected_map_pattern: str | None = None,
     ) -> str:
         self._status_set("快速狩猎当前阶段", stage)
-        if not self._quick_hunt_click_ocr(
-            [r"快速狩猎"],
-            QUICK_HUNT_BUTTON_ROI,
-            self._quick_hunt_ui_timeout(),
-            name=f"{stage}-快速狩猎按钮",
-            require_enabled=True,
-        ):
+        if not self._quick_hunt_open_dialog(stage):
             return "failed"
         if expected_map_pattern is not None:
             map_state, map_text, actual_map = self._quick_hunt_wait_map_confirmation(
@@ -860,6 +984,86 @@ class QuickHuntFeatureMixin:
             return "failed"
         return self._quick_hunt_wait_result(stage)
 
+    def _quick_hunt_open_dialog(self, stage: str) -> bool:
+        """Press 快速狩猎 and go on only once its dialog is on screen.
+
+        A player's run (v0.1.17, 1080p) pressed the button, found neither
+        「仅使用免费」 nor 「取消」 and stopped: the press had not opened the
+        dialog.  Opening it spends nothing, so a lost press is pressed once
+        more while the button is still shown.
+        """
+        button = f"{stage}-快速狩猎按钮"
+        self._quick_hunt_dialog_last_read = None
+        if not wait_for(
+            lambda: self._quick_hunt_button_ready(stage),
+            self._quick_hunt_ui_timeout(),
+            sleep=self.sleep,
+            poll=0.4,
+        ):
+            self.log_info(f"快速狩猎：未找到可点击 OCR 目标：{button}")
+            return False
+        outcome = self.press_and_confirm(
+            f"快速狩猎：{stage}打开快速狩猎视窗",
+            lambda: self._quick_hunt_click_ocr(
+                [r"快速狩猎"],
+                QUICK_HUNT_BUTTON_ROI,
+                2.0,
+                name=button,
+                require_enabled=True,
+            ),
+            lambda: self._quick_hunt_dialog_visible(stage),
+            still_before=lambda: self._quick_hunt_button_ready(stage),
+            timeout=QUICK_HUNT_DIALOG_DRAW_SECONDS,
+        )
+        if not outcome:
+            self.log_warning(
+                f"快速狩猎：{stage}按了「快速狩猎」{outcome.presses}次都没看到快速狩猎视窗，"
+                f"这一项先不做。{self._quick_hunt_dialog_seen()}"
+            )
+        return bool(outcome)
+
+    def _quick_hunt_button_ready(self, stage: str) -> bool:
+        """One look: the 快速狩猎 button is shown and lit (no dialog over it)."""
+
+        frame = self.capture_frame()
+        boxes = self._quick_vision().ocr_boxes(
+            frame, f"{stage}-快速狩猎按钮", relative_roi=QUICK_HUNT_BUTTON_ROI
+        )
+        return any(
+            "快速狩猎" in self._normalize_text(getattr(box, "name", ""))
+            and self._quick_hunt_box_enabled(frame, box)
+            for box in boxes
+        )
+
+    def _quick_hunt_dialog_visible(self, stage: str) -> bool:
+        """One look: the quick-hunt dialog shows 仅使用免费 or 取消/MIN/MAX."""
+
+        frame = self.capture_frame()
+        label = self._quick_hunt_ocr_text(
+            frame, QUICK_HUNT_FREE_LABEL_ROI, name=f"{stage}-视窗确认-仅使用免费"
+        )
+        if "仅使用免费" in self._normalize_text(label):
+            return True
+        buttons = self._quick_hunt_ocr_text(
+            frame, QUICK_HUNT_COUNT_ROI, name=f"{stage}-视窗确认-次数"
+        )
+        # Kept for the failure line, so a player's log says what was shown.
+        self._quick_hunt_dialog_last_read = (frame, label, buttons)
+        return bool(QUICK_HUNT_DIALOG_BUTTONS.search(self._normalize_text(buttons)))
+
+    def _quick_hunt_dialog_seen(self) -> str:
+        """What the last dialog check read, for the failure line in the log."""
+
+        last = getattr(self, "_quick_hunt_dialog_last_read", None)
+        if last is None:
+            return "当时画面没读到字。"
+        frame, label, buttons = last
+        place = self._quick_hunt_current_map_context(frame)
+        return (
+            f"当时画面：开关处读到「{label or '-'}」，按钮处读到「{buttons or '-'}」，"
+            f"所在地图「{place or '-'}」。"
+        )
+
     def _quick_hunt_cancel_dialog(self, stage: str) -> None:
         self._quick_hunt_click_ocr(
             [r"取消"],
@@ -868,7 +1072,7 @@ class QuickHuntFeatureMixin:
             name=f"{stage}-取消",
         )
 
-    def _quick_hunt_free_switch_on(self) -> bool:
+    def _quick_hunt_free_switch_ratio(self) -> float:
         frame = self.capture_frame()
         height, width = frame.shape[:2]
         x, y, w, h = QUICK_HUNT_FREE_SWITCH_BOX
@@ -877,10 +1081,10 @@ class QuickHuntFeatureMixin:
             round(x / 1920 * width) : round((x + w) / 1920 * width),
         ]
         if crop.size == 0 or crop.ndim != 3:
-            return False
+            return 0.0
         ratio = switch_yellow_ratio(crop)
         self._status_set("快速狩猎免费开关", f"黄色占比 {ratio:.3f}")
-        return ratio > QUICK_HUNT_FREE_SWITCH_MIN_RATIO
+        return ratio
 
     def _quick_hunt_ensure_free_only(self, stage: str) -> bool:
         """The dialog shows 仅使用免费… and its switch is on (turned on if needed)."""
@@ -895,18 +1099,23 @@ class QuickHuntFeatureMixin:
                 break
             self.sleep(0.4)
         if "仅使用免费" not in self._normalize_text(label):
-            self.log_warning(f"快速狩猎：{stage}未找到「仅使用免费」开关，取消以免动用存量。")
+            self.log_warning(
+                f"快速狩猎：{stage}未找到「仅使用免费」开关，取消以免动用存量。"
+                f"开关处读到「{label or '-'}」。"
+            )
             return False
-        for attempt in range(1, QUICK_HUNT_FREE_SWITCH_ATTEMPTS + 1):
-            if self._quick_hunt_free_switch_on():
-                return True
-            self.log_info(f"快速狩猎：{stage}打开「仅使用免费」（第{attempt}次）。")
-            self._click_reference(*QUICK_HUNT_FREE_SWITCH_POINT, after_sleep=0.5)
-            end_at = monotonic() + QUICK_HUNT_FREE_SWITCH_SETTLE_SECONDS
-            while monotonic() <= end_at:
-                if self._quick_hunt_free_switch_on():
-                    return True
-                self.sleep(0.5)
+        # One press at most: a second one would turn off a switch that was
+        # on but not recognised as on (review #28).
+        if ensure_free_switch_on(
+            f"快速狩猎：{stage}「仅使用免费」",
+            self._quick_hunt_free_switch_ratio,
+            lambda: self._click_reference(*QUICK_HUNT_FREE_SWITCH_POINT, after_sleep=0.5),
+            on_above=QUICK_HUNT_FREE_SWITCH_MIN_RATIO,
+            settle=QUICK_HUNT_FREE_SWITCH_SETTLE_SECONDS,
+            sleep=self.sleep,
+            log=self.log_info,
+        ):
+            return True
         self.log_warning(f"快速狩猎：{stage}无法确认「仅使用免费」已开启，取消。")
         return False
 
@@ -953,12 +1162,8 @@ class QuickHuntFeatureMixin:
                 QUICK_HUNT_REWARD_ROI,
                 name=f"{stage}-奖励",
             )
-            normalized = self._normalize_text(reward_text)
-            if ("点击" in normalized and "返回" in normalized) or (
-                "画面" in normalized and "即可" in normalized
-            ):
-                self._click_mf_reference(1, 1, after_sleep=0.8)
-                return "done"
+            if self._quick_hunt_reward_text(reward_text):
+                return "done" if self._quick_hunt_close_reward(stage) else "failed"
 
             dialog_text = self._quick_hunt_ocr_text(
                 frame,
@@ -975,48 +1180,172 @@ class QuickHuntFeatureMixin:
         self.log_info(f"快速狩猎：{stage}等待结算超时。")
         return "failed"
 
+    def _quick_hunt_reward_text(self, text: str) -> bool:
+        normalized = self._normalize_text(text)
+        return ("点击" in normalized and "返回" in normalized) or (
+            "画面" in normalized and "即可" in normalized
+        )
+
+    def _quick_hunt_reward_shown(self, stage: str) -> bool:
+        return self._quick_hunt_reward_text(
+            self._quick_hunt_ocr_text(
+                self.capture_frame(), QUICK_HUNT_REWARD_ROI, name=f"{stage}-奖励"
+            )
+        )
+
+    def _quick_hunt_close_reward(self, stage: str) -> bool:
+        """Tap the reward page away; done only once it is gone on two looks.
+
+        A lost tap left the page over the route list, where the double check
+        then found nothing and skipped the route as if all were done.
+        """
+
+        def gone() -> bool:
+            if self._quick_hunt_reward_shown(stage):
+                return False
+            self.sleep(0.3)
+            return not self._quick_hunt_reward_shown(stage)
+
+        if self.press_and_confirm(
+            f"快速狩猎：{stage}结算「点击画面即可返回」",
+            lambda: self._click_mf_reference(1, 1, after_sleep=0.8),
+            gone,
+            still_before=lambda: self._quick_hunt_reward_shown(stage),
+            timeout=QUICK_HUNT_REWARD_GONE_SECONDS,
+        ):
+            return True
+        self.log_warning(f"快速狩猎：{stage}结算画面点不掉，停止，下次再跑。")
+        return False
+
     def _quick_hunt_stone_counts(self) -> dict[str, int] | None:
+        counts = self._quick_hunt_wait_stone_counts()
+        unfolded = False
+        if counts is None and self._quick_hunt_unfold_stone_panel():
+            unfolded = True
+            counts = self._quick_hunt_wait_stone_counts()
+            if counts is not None:
+                self.log_info("快速狩猎：右上的圣石栏原本收起来了，已点开并读到数量。")
+        if counts is None:
+            seen = " / ".join(self._quick_hunt_stone_seen) or "没读到数字"
+            if unfolded:
+                why = "右上的圣石栏原本收起来了，点开后还是没读到。"
+            elif not self._quick_hunt_stone_seen:
+                why = "右上一个数字都没有，圣石栏可能收起来了。"
+            else:
+                why = ""
+            self.log_info(
+                "快速狩猎：圣石数量区域未从上到下识别出火、水、风、光、暗5个数字，"
+                f"读到：{seen}。{why}"
+            )
+            self._save_flow_diagnostic("quick_hunt_stone_count_failed")
+        return counts
+
+    def _quick_hunt_wait_stone_counts(self) -> dict[str, int] | None:
         # The counts sit apart from the cave title that was waited for.
         end_at = monotonic() + QUICK_HUNT_DIALOG_DRAW_SECONDS
+        self._quick_hunt_stone_seen = []
         while True:
             counts = self._quick_hunt_read_stone_counts()
             if counts is not None or monotonic() >= end_at:
-                break
+                return counts
             self.sleep(0.5)
-        if counts is None:
-            self.log_info(
-                "快速狩猎：圣石数量区域未从上到下识别出火、水、风、光、暗5个数字。"
+
+    def _quick_hunt_unfold_stone_panel(self) -> bool:
+        """Press the folded panel's ∨ once, when two looks both find it."""
+        first = quick_hunt_fold_button(self.capture_frame())
+        if first is None:
+            return False
+        self.sleep(0.3)
+        frame = self.capture_frame()
+        second = quick_hunt_fold_button(frame)
+        height, width = frame.shape[:2]
+        near = max(3, round(4 * height / REFERENCE_HEIGHT))
+        if second is None or max(abs(second[0] - first[0]), abs(second[1] - first[1])) > near:
+            return False
+        point = (
+            round(second[0] * REFERENCE_WIDTH / width),
+            round(second[1] * REFERENCE_HEIGHT / height),
+        )
+
+        def counts_show() -> bool:
+            # Confirmed by the counts, not by the ∨ going: pressed again on an
+            # open panel it could fold it away.
+            return self._quick_hunt_read_stone_counts() is not None or bool(
+                self._quick_hunt_stone_seen
             )
-        return counts
+
+        self.log_info("快速狩猎：右上的圣石栏收起来了，点开它。")
+        self.press_and_confirm(
+            "快速狩猎：点开右上的圣石栏",
+            lambda: self._click_reference(*point, after_sleep=0.8),
+            counts_show,
+            still_before=lambda: (
+                quick_hunt_fold_button(self.capture_frame()) is not None
+                and not self._quick_hunt_stone_seen
+            ),
+            timeout=2.0,
+        )
+        return True
 
     def _quick_hunt_read_stone_counts(self) -> dict[str, int] | None:
+        """The five counts top to bottom, read as shown, then enlarged.
+
+        A player's 1080p run (2026-10-10) stopped here.  The counts are small
+        digits like the torch counter, which is read as if the frame were 4K
+        for that reason; a count split into two boxes ("1," "250") is one row.
+        """
         frame = self.capture_frame()
+        scale = max(1.0, SMALL_TEXT_HEIGHT / max(1, frame.shape[0]))
+        rows: list[tuple[float, str]] = []
+        for enlarged in (False, True):
+            if enlarged and scale == 1.0:
+                break
+            rows = self._quick_hunt_stone_rows(frame, scale if enlarged else None)
+            if len(rows) == len(QUICK_HUNT_STONE_ELEMENTS):
+                break
+        values = [quick_hunt_stone_value(text) for _y, text in rows]
+        self._quick_hunt_stone_seen = [text for _y, text in rows]
+        if len(rows) != len(QUICK_HUNT_STONE_ELEMENTS) or None in values:
+            self._status_set(
+                "快速狩猎圣石数量",
+                f"需要5个数字，实际识别{len(rows)}个",
+            )
+            return None
+        return dict(zip(QUICK_HUNT_STONE_ELEMENTS, values))
+
+    def _quick_hunt_stone_rows(self, frame, ocr_scale: float | None) -> list[tuple[float, str]]:
+        """Digit boxes of the count column joined into rows, top to bottom."""
+        extra = {} if ocr_scale is None else {"ocr_scale": ocr_scale}
         boxes = self._quick_vision().ocr_boxes(
             frame,
             "圣石属性数量",
             relative_roi=QUICK_HUNT_STONE_COUNT_ROI,
+            **extra,
         )
-        values: list[tuple[float, int]] = []
+        found: list[tuple[float, float, float, str]] = []
         for box in boxes:
             text = str(getattr(box, "name", ""))
-            digits = re.sub(r"\D", "", text)
-            if not digits:
+            if not re.search(r"\d", text):
                 continue
             center = self._quick_hunt_box_center(box)
             if center is None:
                 continue
-            values.append((center[1], int(digits)))
-        values.sort(key=lambda item: item[0])
-        if len(values) != len(QUICK_HUNT_STONE_ELEMENTS):
-            self._status_set(
-                "快速狩猎圣石数量",
-                f"需要5个数字，实际识别{len(values)}个",
-            )
-            return None
-        return {
-            element: value
-            for element, (_center_y, value) in zip(QUICK_HUNT_STONE_ELEMENTS, values)
-        }
+            height = float(getattr(box, "height", 0) or 0)
+            found.append((center[1], center[0], height, text))
+        found.sort()
+        rows: list[list[tuple[float, float, float, str]]] = []
+        for item in found:
+            if rows:
+                last = rows[-1]
+                tall = max(entry[2] for entry in last + [item]) or 1.0
+                if abs(item[0] - last[0][0]) < tall * 0.6:
+                    last.append(item)
+                    continue
+            rows.append([item])
+        return [
+            (row[0][0], "".join(text for _y, _x, _h, text in sorted(row, key=lambda e: e[1])))
+            for row in rows
+        ]
 
     def _quick_hunt_resource_empty(self, resource: str) -> bool:
         # 单帧 OCR 曾把 30/90 读成 0/90（24 读成 4），误判已耗尽、跳过狩猎还报成功；

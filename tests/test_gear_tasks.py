@@ -81,6 +81,7 @@ class RefineRetryTest(unittest.TestCase):
         task.name = "每日精炼一次"
         task.info_set = lambda *a: None
         task.log_info = lambda *a, **k: None
+        task.log_warning = lambda *a, **k: None
         task._open_equipment_bag = lambda: True
         task.capture_frame = lambda: None
         task._grid_boxes = lambda frame: []
@@ -99,6 +100,19 @@ class RefineRetryTest(unittest.TestCase):
         with mock.patch("src.tasks.GearTasks.badge_cells", return_value=cells):
             self.assertTrue(task.run_claim())
         self.assertEqual([(0, 1), (0, 6)], task.tried)
+
+    def test_unconfirmed_refine_is_a_failure_that_still_goes_home(self):
+        # Review: an unconfirmed refine was recorded as the daily refine done.
+        from unittest import mock
+
+        task = self._task(["unconfirmed"])
+        home = []
+        task._leave_to_home = lambda *a: home.append(1) or True
+        task._claim_fail = lambda stage: task.tried.append(stage) or False
+        with mock.patch("src.tasks.GearTasks.badge_cells", return_value=[(0, 1, 21)]):
+            self.assertFalse(task.run_claim())
+        self.assertEqual([(0, 1), "确认精炼结果"], task.tried)
+        self.assertEqual([1], home)
 
     def test_all_maxed_fails_but_still_goes_home(self):
         from unittest import mock
@@ -194,18 +208,22 @@ class RefinePressTest(unittest.TestCase):
     the material count in the top bar going down (live 4K: 430,934 ->
     430,904 with a floating -30)."""
 
-    def _task(self, after_click):
+    def _task(self, after_click, top="430,934 115"):
         """``after_click(clicks)`` -> (top bar text, page changed) once pressed."""
+        from functools import partial
         from unittest import mock
 
         import numpy as np
 
-        from src.tasks import GearTasks
         from src.tasks.GearTasks import MISSION_TOAST_ROI, REFINE_TRACE_ROI, DailyRefineTask
+        from src.utils.press_confirm import press_and_confirm
 
         task = object.__new__(DailyRefineTask)
         clock = [0.0]
-        patcher = mock.patch.object(GearTasks, "monotonic", lambda: clock[0])
+        patcher = mock.patch(
+            "src.tasks.BaseBD2Task._press_and_confirm",
+            partial(press_and_confirm, clock=lambda: clock[0]),
+        )
         patcher.start()
         self.addCleanup(patcher.stop)
         task.sleep = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
@@ -216,7 +234,7 @@ class RefinePressTest(unittest.TestCase):
         task._save_flow_diagnostic = lambda *a: None
         task.clicks = []
         task._click_box = lambda *_a, **_k: task.clicks.append(1)
-        state = {"top": "430,934 115", "changed": False}
+        state = {"top": top, "changed": False}
 
         def capture():
             if task.clicks:
@@ -262,11 +280,25 @@ class RefinePressTest(unittest.TestCase):
         self.assertEqual([], task.warnings)
 
     def test_changed_page_without_proof_is_not_pressed_again(self):
-        # Unconfirmed is a warning, not a failure (the old flow never looked).
+        # Only an animation, no lower count or toast: the press landed, so
+        # it stays a warning, and the paid button is not pressed again (a
+        # retry of a refine that did land would refine twice).
         task = self._task(lambda _n: ("430,934 115", True))
         self.assertEqual("refined", task._press_refine_once(object()))
         self.assertEqual(1, len(task.clicks))
         self.assertEqual(1, len(task.warnings))
+
+    def test_two_lost_presses_are_not_done(self):
+        task = self._task(lambda _n: ("430,934 115", False))
+        self.assertEqual("unconfirmed", task._press_refine_once(object()))
+        self.assertEqual(2, len(task.clicks))
+        self.assertEqual(1, len(task.warnings))
+
+    def test_unreadable_counts_never_get_a_second_press(self):
+        # Without the material count nothing proves the press was lost.
+        task = self._task(lambda _n: ("", False), top="")
+        self.assertEqual("unconfirmed", task._press_refine_once(object()))
+        self.assertEqual(1, len(task.clicks))
 
 
 if __name__ == "__main__":

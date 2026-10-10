@@ -11,6 +11,9 @@ existing install simply becomes account 1.  Other accounts live in
 ``configs/accounts/<id>/``.  ``configs/accounts.json`` holds the list, the
 current account and each account's ticks; it is read again whenever it
 changed, so the tool in the 桌面分身 follows the outer one.
+
+A list that cannot be read is never taken as "only account 1": runs do not
+start until the player sorts it out (``unreadable``, setup_check).
 """
 
 from __future__ import annotations
@@ -20,6 +23,8 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+
+from src.compat.safe_json import read_text_retrying, write_text_atomic
 
 MAX_ACCOUNTS = 5  # Leo 2026-10-09
 AVATAR_MAX_BYTES = 8 * 1024 * 1024  # Leo 2026-10-09: 「8mb內」
@@ -48,39 +53,63 @@ class Account:
             return 0
 
 
-_cache: tuple[float | None, dict] | None = None
+# (mtime, list, problem): problem is "" or BROKEN.
+_cache: tuple[float | None, dict, str] | None = None
+# The last list read fine: used while the file is held open elsewhere.
+_last_good: dict | None = None
+BROKEN = "broken"  # the content is not a list; a copy is kept as .corrupt
+BUSY = "busy"  # held open elsewhere (an antivirus scan, the other tool)
 
 
 def _file() -> Path:
     return ACCOUNTS_FILE
 
 
-def _read() -> dict:
-    global _cache
+def _load() -> tuple[dict, str]:
+    global _cache, _last_good
     path = _file()
     try:
         mtime = os.path.getmtime(path)
     except OSError:
         mtime = None
     if _cache is not None and _cache[0] == mtime and mtime is not None:
-        return _cache[1]
+        return _cache[1], _cache[2]
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        value = {}
+        value = json.loads(read_text_retrying(path))
+    except FileNotFoundError:
+        return {}, ""  # a fresh install is account 1
+    except OSError:
+        # Not cached: read again next time.
+        return dict(_last_good or {}), BUSY
+    except ValueError:
+        value = None
     if not isinstance(value, dict):
-        value = {}
-    _cache = (mtime, value)
-    return value
+        try:
+            shutil.copy2(path, f"{path}.corrupt")
+        except OSError:
+            pass
+        _cache = (mtime, {}, BROKEN)
+        return {}, BROKEN
+    _cache = (mtime, value, "")
+    _last_good = value
+    return value, ""
+
+
+def _read() -> dict:
+    return _load()[0]
+
+
+def unreadable() -> str:
+    """BROKEN or BUSY when the list cannot be read, so whose records a run
+    would write is unknown; "" when it is fine (or not made yet)."""
+    return _load()[1]
 
 
 def _write(state: dict) -> None:
     global _cache
     path = _file()
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(".tmp")
-    temp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
-    os.replace(temp, path)
+    write_text_atomic(path, json.dumps(state, ensure_ascii=False, indent=1))
     _cache = None
 
 
@@ -277,5 +306,6 @@ def switch(account_id: str, config=None, tick_keys=()) -> bool:
 
 def reset_cache() -> None:
     """Tests change folders between cases."""
-    global _cache
+    global _cache, _last_good
     _cache = None
+    _last_good = None

@@ -29,6 +29,8 @@ VISIT_PAGE_ROI = (0, 110, 1920, 970)
 VISIT_RANDOM_WAIT_SECONDS = 2.5
 # One read 1.5 s after the like missed a counter that updated late.
 LIKE_RESULT_SECONDS = 4.0
+# 下一间 counts once another home's like counter shows.
+NEXT_HOME_WAIT_SECONDS = 5.0
 HOME_PAGES_TITLE_KEYWORDS = VISIT_TITLE_KEYWORDS + MY_HOME_TITLE_KEYWORDS
 
 
@@ -88,6 +90,7 @@ class HomePopularityTask(_ClaimTaskBase):
         wanted = max(0, int(self.config.get("点赞次数", 3)))
         budget = max(wanted, int(self.config.get("最多翻看小屋数", 8)))
         liked = 0
+        self._home_counts = set()
         for visit in range(1, budget + 1):
             if liked >= wanted:
                 break
@@ -98,8 +101,8 @@ class HomePopularityTask(_ClaimTaskBase):
             if self._like_current_home(visit):
                 liked += 1
             self.info_set("点赞进度", f"{liked}/{wanted}")
-            if liked < wanted:
-                self._click_reference(*NEXT_HOME_POINT, after_sleep=2.5)
+            if liked < wanted and not self._next_home(visit):
+                break
 
         if not self._leave_to_home("小屋", HOME_PAGES_TITLE_KEYWORDS):
             return self._claim_fail("小屋返回主页")
@@ -133,12 +136,49 @@ class HomePopularityTask(_ClaimTaskBase):
         self.info_set("当前阶段", f"第{visit}间小屋：点赞")
         self._click_reference(*LIKE_BUTTON_POINT, after_sleep=0.5)
         after = self._wait_like_count_above(before)
+        # What this home showed, a +1 that lands late included.
+        self._home_counts = {count for count in (before, after) if count is not None}
+        if before is not None:
+            self._home_counts.add(before + 1)
         self.info_set(f"第{visit}间人气", f"{before} -> {after}")
         if before is not None and after is not None and after > before:
             self.log_info(f"小屋增加人气：第{visit}间点赞成功（{before} -> {after}）。")
             return True
         self.log_info(f"小屋增加人气：第{visit}间点赞未生效（{before} -> {after}），换下一间。")
         return False
+
+    def _next_home(self, visit: int) -> bool:
+        """Press 下一间 until a home with another like count shows.
+
+        A lost press leaves this home up, and a like on it again could take
+        the like back: the next like waits for a count this home never had.
+        """
+        left = set(self._home_counts)
+        current = self._like_count()
+        if current is not None:
+            left.add(current)
+        if not left:
+            self.log_info(f"小屋增加人气：第{visit}间读不到人气数，无法确认换了小屋，停止点赞。")
+            return False
+        last = [None]
+
+        def other_home() -> bool:
+            # Two agreeing reads: one misread number is not another home.
+            count = self._like_count()
+            agreed = count is not None and count not in left and count == last[0]
+            last[0] = count
+            return agreed
+
+        outcome = self.press_and_confirm(
+            f"小屋增加人气：第{visit}间「下一间」",
+            lambda: self._click_reference(*NEXT_HOME_POINT, after_sleep=0.5),
+            other_home,
+            still_before=lambda: self._like_count() in left,
+            timeout=NEXT_HOME_WAIT_SECONDS,
+        )
+        if not outcome:
+            self.log_info("小屋增加人气：没确认换到另一间小屋，停止点赞（同一间不重复点赞）。")
+        return outcome.confirmed
 
     def _wait_like_count_above(self, before: int | None) -> int | None:
         """The counter once two reads agree it went above ``before``.

@@ -380,9 +380,13 @@ def open_sign_in_options() -> None:
     os.startfile("ms-settings:signinoptions")
 
 
-def request_job(task: str, run_mode: str | None = None) -> None:
+def request_job(task: str, run_mode: str | None = None, by_player: bool = True) -> None:
+    """``by_player`` False: 打开就自动跑 handed it over, not a press (a job
+    file without the key is a press, as before)."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     job = {"task": task, "run_mode": run_mode, "at": time.time()}
+    if not by_player:
+        job["by_player"] = False
     JOB_FILE.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
 
 

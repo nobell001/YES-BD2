@@ -1274,6 +1274,9 @@ class SellFlowTest(unittest.TestCase):
 
         def click(x, y, after_sleep=0):
             clicks.append(x)
+            if (x, y) == SALE_MAX_POINT:
+                state["selected"] = owned
+                return
             # The slider lands 900 short of where it was aimed (11000 kept):
             # 11900 is still fine, no second click.
             ratio = max(0.0, min(1.0, (x - left) / (right - left)))
@@ -1283,7 +1286,9 @@ class SellFlowTest(unittest.TestCase):
         self.assertTrue(
             trader._choose_sale_quantity(CalendarEntry("兽肉", "S3", reserve=10000), owned, 99999)
         )
-        self.assertEqual(1, len(clicks))
+        # MAX checks the owned count, then one slider click.
+        self.assertEqual(SALE_MAX_POINT[0], clicks[0])
+        self.assertEqual(2, len(clicks))
         self.assertTrue(10000 <= owned - state["selected"] <= 12000)
         self.assertEqual([], warnings)
 
@@ -1427,17 +1432,25 @@ class SellFlowTest(unittest.TestCase):
         self.assertEqual(1, len(sleeps))
         self.assertEqual([], warnings)
 
-    def _slider_trader(self, owned, shift):
-        """A dialog whose slider sells more than its position says (shift)."""
+    def _slider_trader(self, owned, shift, available=None):
+        """A dialog whose slider sells more than its position says (shift).
+
+        ``owned`` is the real stock; MAX and the slider reach at most
+        min(owned, available).
+        """
         left, _top, right, _bottom = SALE_SLIDER_REGION
         state = {"selected": None}
         clicks = []
         warnings = []
+        most = min(owned, available) if available else owned
 
         def click(x, y, after_sleep=0):
             clicks.append(x)
+            if (x, y) == SALE_MAX_POINT:
+                state["selected"] = most
+                return
             ratio = max(0.0, min(1.0, (x - left) / (right - left) + shift))
-            state["selected"] = round(1 + (owned - 1) * ratio)
+            state["selected"] = round(1 + (most - 1) * ratio)
 
         trader = object.__new__(Trader)
         trader.task = SimpleNamespace(
@@ -1470,7 +1483,7 @@ class SellFlowTest(unittest.TestCase):
     def test_a_group_that_keeps_the_reserve_is_sold_with_max(self):
         # Live 2026-10-07: 兽肉 684771, keep 10000, groups of 99999.
         owned = 684771
-        trader, _state, clicks, warnings = self._slider_trader(owned, shift=0.0)
+        trader, _state, clicks, warnings = self._slider_trader(owned, shift=0.0, available=99999)
         self.assertTrue(
             trader._choose_sale_quantity(CalendarEntry("兽肉", "S1", reserve=10000), owned, 99999)
         )
@@ -1479,21 +1492,43 @@ class SellFlowTest(unittest.TestCase):
 
     def test_a_group_reaching_into_the_reserve_uses_the_slider(self):
         owned = 105000
-        left, _top, right, _bottom = SALE_SLIDER_REGION
-        trader, state, clicks, warnings = self._slider_trader(owned, shift=0.0)
-
-        def click(x, y, after_sleep=0):
-            clicks.append(x)
-            ratio = max(0.0, min(1.0, (x - left) / (right - left)))
-            state["selected"] = round(1 + (99999 - 1) * ratio)
-
-        trader.task.operate_click = click
+        trader, state, clicks, warnings = self._slider_trader(owned, shift=0.0, available=99999)
         self.assertTrue(
             trader._choose_sale_quantity(CalendarEntry("兽肉", "S1", reserve=10000), owned, 99999)
         )
         self.assertGreaterEqual(owned - state["selected"], 10000)
-        self.assertNotIn(SALE_MAX_POINT[0], clicks)
+        # MAX only checks the owned count; the slider makes the selection.
+        self.assertEqual(SALE_MAX_POINT[0], clicks[0])
+        self.assertNotIn(SALE_MAX_POINT[0], clicks[1:])
         self.assertEqual([], warnings)
+
+    def test_an_owned_count_with_an_extra_digit_sells_nothing(self):
+        # Review #15: 4245 owned, read 14245 on every look, keep 2000.  The
+        # slider can never select more than 4245; the old fallback sold all
+        # 4245 and logged 「保留10000个」.
+        trader, state, clicks, warnings = self._slider_trader(4245, shift=0.0, available=99999)
+        messages = []
+        trader.task.log_info = messages.append
+        self.assertFalse(
+            trader._choose_sale_quantity(CalendarEntry("番茄", "S1", reserve=2000), 14245, 99999)
+        )
+        self.assertEqual([SALE_MAX_POINT[0]], clicks)
+        self.assertEqual(1, len(warnings))
+        self.assertIn("可能把拥有数量认错了", warnings[0])
+        self.assertFalse(any("保留" in message for message in messages))
+
+    def test_an_owned_count_with_an_extra_digit_is_caught_when_the_group_is_the_stock(self):
+        # The dialog's 可购买 is the real stock (4245): owned - group looked
+        # like it kept 10000, and MAX alone would have sold everything.
+        for read in (14245, 42455, 42450):
+            with self.subTest(read=read):
+                trader, _state, _clicks, warnings = self._slider_trader(4245, 0.0, 4245)
+                self.assertFalse(
+                    trader._choose_sale_quantity(
+                        CalendarEntry("番茄", "S1", reserve=2000), read, 4245
+                    )
+                )
+                self.assertEqual(1, len(warnings))
 
     def test_reserve_slider_that_cannot_be_corrected_sells_nothing(self):
         owned = 8400
@@ -3533,31 +3568,111 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
                 self.assertTrue(trader.run_buy())
                 self.assertTrue(trader._buy_completed_in_current_shop)
 
-    def test_phase_failure_stops_later_phases(self):
-        actions = []
+    def _phase_task(self, statuses, actions, recovered=False):
         task = object.__new__(MapTradeTask)
         task.config = {"买": True, "卖": True, "制作料理": True}
-        task.info_set = lambda *_args: None
+        task.info_set = statuses.__setitem__
         task.log_info = lambda *_args: None
         task.log_warning = lambda *_args: None
         task.log_error = lambda *_args: None
+        task.log_completion = lambda *_args: None
         task._save_diagnostic = lambda *_args: None
+        task._recover_home_after_trade = lambda: actions.append("recover") or recovered
+        return task
+
+    def test_a_failed_buy_still_sells_from_home(self):
+        # Audit #14: a failed 买 or 料理 stopped the day's 120% sale too.
+        actions = []
+        statuses = {}
+        task = self._phase_task(statuses, actions)
         navigator = SimpleNamespace(
-            return_home=lambda: (
-                actions.append("home")
-                or NavigationResult(
-                    True,
-                    ScreenState.HOME,
-                )
+            return_home=lambda: actions.append("home") or NavigationResult(True, ScreenState.HOME)
+        )
+        phases = (
+            ("买", "买", lambda: actions.append("buy") or False),
+            # 料理 cooks what 买 bought today: not without it.
+            ("制作料理", "制作料理", lambda: actions.append("cook") or True),
+            ("卖", "卖", lambda: actions.append("sell") or True),
+        )
+
+        self.assertFalse(
+            task._run_phases(navigator, phases, after_home=lambda: actions.append("left shop"))
+        )
+        self.assertEqual(["buy", "home", "left shop", "sell", "home"], actions)
+        self.assertEqual("买", statuses["失败"])
+        self.assertEqual("卖", statuses["完成"])
+        self.assertEqual("制作料理", statuses["跳过"])
+        self.assertEqual("跑商部分流程未完成。", statuses["状态"])
+
+    def test_a_failed_or_broken_cooking_still_sells(self):
+        def broken():
+            raise RuntimeError("料理页变了")
+
+        for cook in (lambda: False, broken):
+            actions = []
+            statuses = {}
+            task = self._phase_task(statuses, actions)
+            navigator = SimpleNamespace(
+                return_home=lambda: actions.append("home")
+                or NavigationResult(True, ScreenState.HOME)
             )
+            phases = (
+                ("买", "买", lambda: actions.append("buy") or True),
+                ("制作料理", "制作料理", lambda: actions.append("cook") or cook()),
+                ("卖", "卖", lambda: actions.append("sell") or True),
+            )
+
+            self.assertFalse(task._run_phases(navigator, phases))
+            self.assertEqual(["buy", "cook", "home", "sell", "home"], actions)
+            self.assertEqual("制作料理", statuses["失败"])
+            self.assertEqual("买、卖", statuses["完成"])
+
+    def test_later_phases_stop_when_home_is_not_reached(self):
+        actions = []
+        statuses = {}
+        task = self._phase_task(statuses, actions, recovered=False)
+        navigator = SimpleNamespace(
+            return_home=lambda: actions.append("home")
+            or NavigationResult(False, ScreenState.UNKNOWN, "没有安全返回路径")
         )
         phases = (
             ("买", "买", lambda: actions.append("buy") or False),
             ("卖", "卖", lambda: actions.append("sell") or True),
         )
 
-        self.assertFalse(task._run_phases(navigator, phases))
-        self.assertEqual(["buy", "home"], actions)
+        self.assertFalse(
+            task._run_phases(navigator, phases, after_home=lambda: actions.append("left shop"))
+        )
+        # Tried once, not again on the way out.
+        self.assertEqual(["buy", "home", "recover"], actions)
+        self.assertEqual("买、返回章节主页", statuses["失败"])
+
+    def test_trade_run_forgets_the_open_shop_after_going_home(self):
+        # 买 leaves the shop open for 卖; once home, 卖 must enter it anew.
+        trader = object.__new__(Trader)
+        trader._buy_completed_in_current_shop = True
+        task = object.__new__(MapTradeTask)
+        task.config = {"启用": True}
+        seen = {}
+
+        def run_phases(_navigator, phases, after_home=None):
+            seen["phases"] = [phase[0] for phase in phases]
+            seen["after_home"] = after_home
+            return True
+
+        task._run_phases = run_phases
+        with (
+            patch("src.tasks.MapTradeTask.Vision"),
+            patch("src.tasks.MapTradeTask.Navigator"),
+            patch("src.tasks.MapTradeTask.ProgressStore"),
+            patch("src.tasks.MapTradeTask.PhaseLedger"),
+            patch("src.tasks.MapTradeTask.Trader", return_value=trader),
+        ):
+            self.assertTrue(task.run())
+        self.assertEqual(["买", "制作料理", "卖"], seen["phases"])
+        seen["after_home"]()
+        self.assertFalse(trader._buy_completed_in_current_shop)
+        self.assertEqual({"制作料理": "买"}, MapTradeTask.phase_needs)
 
     def test_successful_phases_emit_standalone_completion_notification(self):
         actions = []

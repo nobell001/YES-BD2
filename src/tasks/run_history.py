@@ -273,12 +273,17 @@ class RunHistoryStore:
             # The child's own time when the batch measured it (older batches
             # only knew the whole run's duration).
             child_duration = max(0.0, child_end - child_start) if child_start else duration
+            # One started before the 08:00 refresh counts for the game day
+            # (and week) it started in, not the new one.
+            stamp = child_end
+            if child_start and day_start_ts(child_start) != day_start_ts(child_end):
+                stamp = child_start
             self._records[name] = {
-                "finished": child_end,
+                "finished": stamp,
                 "duration": child_duration,
                 "status": "随一键完成日常完成" if completed else "随一键完成日常失败",
                 "ok": completed,
-                "days": _merge_days(self._records.get(name), child_end, completed),
+                "days": _merge_days(self._records.get(name), stamp, completed),
             }
         return recorded
 
@@ -309,6 +314,7 @@ def _log_single_run(task, info: dict, ok: bool, started, finished: float, folder
             finished=finished,
             note="" if ok else str(info.get("状态", "")),
             images=run_report.loose_pictures(started, finished),
+            trade=run_report.loose_trade(started, finished),
             folder=folder,
         )
     except Exception as exc:  # never let the log break a run

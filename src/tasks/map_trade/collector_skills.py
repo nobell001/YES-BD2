@@ -811,7 +811,7 @@ class SkillExecutionMixin:
         armed: list[tuple[SkillAction, object, ActionIconDetection, tuple[int, int]]] = []
         map_done = False
         for action in actions:
-            if map_done:
+            if map_done and action.name != SUMMON_ACTION.name:
                 # Leo 2026-10-07: a grey 吸收 (with 探查 on) means the map was
                 # done this week; 压制 stays pressable as monsters come back,
                 # and pressing it again only spent a count.
@@ -824,6 +824,14 @@ class SkillExecutionMixin:
             early, prepared = self._prepare_action(action, card_id=card_id, map_role=map_role)
             if action.name == ABSORB_ACTION.name and early is not None and self._grey_done:
                 map_done = True
+            elif action.name == SUMMON_ACTION.name and map_done and not (
+                early is not None and self._grey_done
+            ):
+                # 吸收 grey but 召集 still bright: only 吸收 was done here by
+                # hand (live 4K 2026-10-09: the run skipped 召集 and 压制 and
+                # 💀4 stayed; YES-BD2 #10, E5/E7 marked done without 压制).
+                # Leo's rule: grey 吸收 alone is not done, 召集 and 压制 go on.
+                map_done = False
             if early is not None:
                 results.append(early)
                 if not early.completed:

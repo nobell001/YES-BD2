@@ -267,6 +267,42 @@ class RunHistoryStoreTest(unittest.TestCase):
             self.store.is_completed_today("公会、小屋、酒馆", now=_beijing_ts(2026, 8, 18, 9, 0))
         )
 
+    def _child_across(self, name, started, finished):
+        class ChildCls:
+            pass
+
+        children = [_ChildSpec(name, ChildCls)]
+        executor = _ExecutorStub({ChildCls: _ChildTaskStub(name)})
+        info = {"状态": "一键完成日常完成。", "完成": name, "失败": "-", "跳过": "-"}
+        batch = _TaskStub("一键完成日常", info=info, child_tasks=children, executor=executor)
+        batch._child_started = {name: started}
+        batch._child_finished = {name: finished}
+        self.store.record_task_done(batch, finished=finished + 60)
+
+    def test_batch_child_started_before_8am_is_the_old_days(self):
+        # Started 07:58, finished 08:01: the new day still has it to do.
+        self._child_across(
+            "快速狩猎", _beijing_ts(2026, 8, 18, 7, 58), _beijing_ts(2026, 8, 18, 8, 1)
+        )
+        now = _beijing_ts(2026, 8, 18, 9, 0)
+        self.assertFalse(self.store.is_completed_today("快速狩猎", now=now))
+        self.assertEqual([True, None], self.store.recent_days("快速狩猎", 2, now=now))
+
+    def test_batch_child_started_before_monday_8am_is_last_weeks(self):
+        self._child_across(
+            "末日之书", _beijing_ts(2026, 8, 17, 7, 59), _beijing_ts(2026, 8, 17, 8, 1)
+        )
+        now = _beijing_ts(2026, 8, 17, 9, 0)
+        self.assertFalse(self.store.is_completed_this_week("末日之书", now=now))
+
+    def test_batch_child_within_one_day_keeps_its_finish_time(self):
+        finished = _beijing_ts(2026, 8, 18, 8, 3)
+        self._child_across("快速狩猎", _beijing_ts(2026, 8, 18, 8, 1), finished)
+        self.assertEqual(finished, self.store.last_run("快速狩猎")["finished"])
+        self.assertTrue(
+            self.store.is_completed_today("快速狩猎", now=_beijing_ts(2026, 8, 18, 9, 0))
+        )
+
     def test_corrupt_file_loads_empty(self):
         with open(self.path, "w", encoding="utf-8") as file:
             file.write("{not json")

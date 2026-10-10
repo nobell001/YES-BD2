@@ -74,6 +74,9 @@ class MapTradeLegacyConfigTest(unittest.TestCase):
                 actions.append("sell")
                 return True
 
+            def left_shop(self):
+                actions.append("left shop")
+
         with (
             patch.object(map_trade_task_module, "Vision", lambda *_args: object()),
             patch.object(map_trade_task_module, "ProgressStore", FakeProgress),
@@ -93,7 +96,8 @@ class MapTradeLegacyConfigTest(unittest.TestCase):
             task.config["制作料理"] = True
             with patch.object(FakeTrader, "run_cooking", lambda _: False):
                 self.assertFalse(MapTradeTask.run(task))
-            self.assertEqual(["buy", "home"], actions)
+            # Audit #14: a failed 料理 no longer costs the day's 卖.
+            self.assertEqual(["buy", "home", "left shop", "sell", "home"], actions)
 
 
 class _NoLedger:
@@ -252,3 +256,26 @@ class MapTradeConfigTest(unittest.TestCase):
             self.assertEqual(0.31, migrated[MAP_OCR_THRESHOLD_KEY])
             self.assertEqual(61.0, migrated["加载页面等待秒数"])
             self.assertEqual(4, migrated["卡带单步重试次数"])
+
+    def test_unreadable_price_table_keeps_the_saved_unticks(self):
+        # 2026-10-09 review: a price table that cannot be read at start (an
+        # update cut short, an antivirus scan) must not wipe the 不卖 choices.
+        from src.tasks.map_trade import sale_days
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            saved = Path(temp_dir) / "MapTradeTask.json"
+            saved.write_text(json.dumps({"出售19号": ["杏仁"]}), encoding="utf-8")
+
+            def launch():
+                task = MapTradeTask(SimpleNamespace(scene=None), SimpleNamespace())
+                task.load_config()
+                return task
+
+            with patch("ok.util.config.Config.config_folder", temp_dir):
+                missing = Path(temp_dir) / "price_calendar.v1.json"
+                with patch.object(sale_days, "BUNDLED_CALENDAR_FILE", missing):
+                    self.assertEqual(["杏仁"], launch().config["出售19号"])
+                stored = json.loads(saved.read_text(encoding="utf-8"))
+                self.assertEqual(["杏仁"], stored["出售19号"])
+                # Readable again: still not sold.
+                self.assertEqual(["杏仁"], launch().config["出售19号"])

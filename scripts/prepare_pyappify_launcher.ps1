@@ -3,7 +3,7 @@
     # The version our patched launcher reports. Installed launchers replace
     # themselves only with a higher one (ok's update_pyappify), so bump this
     # whenever the launcher patches below change.
-    [string]$LauncherVersion = "1.2.4",
+    [string]$LauncherVersion = "1.2.5",
     [string]$BuildDir = "pyappify_build",
     [ValidateSet("zlib", "lzma")]
     [string]$NsisCompression = "lzma",
@@ -303,6 +303,8 @@ Set-Content -LiteralPath $appTsxPath -Value $appTsx -Encoding UTF8
 
 $appServicePath = Join-Path $buildPath "src-tauri\src\app_service.rs"
 $libRsPath = Join-Path $buildPath "src-tauri\src\lib.rs"
+$gitRsPath = Join-Path $buildPath "src-tauri\src\git.rs"
+$loggerRsPath = Join-Path $buildPath "src-tauri\src\utils\logger.rs"
 $i18nPath = Join-Path $buildPath "src\i18n.ts"
 
 # Every patch below must hit exactly once, or the build fails loudly (the old
@@ -318,8 +320,107 @@ function Replace-Once([string]$Text, [string]$Search, [string]$Replacement, [str
 # git on Windows may check the sources out with CRLF; the searches below are LF.
 $appService = (Get-Content -LiteralPath $appServicePath -Raw -Encoding UTF8) -replace "`r`n", "`n"
 $libRs = (Get-Content -LiteralPath $libRsPath -Raw -Encoding UTF8) -replace "`r`n", "`n"
+$gitRs = (Get-Content -LiteralPath $gitRsPath -Raw -Encoding UTF8) -replace "`r`n", "`n"
+$loggerRs = (Get-Content -LiteralPath $loggerRsPath -Raw -Encoding UTF8) -replace "`r`n", "`n"
 $appTsx = (Get-Content -LiteralPath $appTsxPath -Raw -Encoding UTF8) -replace "`r`n", "`n"
 $i18n = (Get-Content -LiteralPath $i18nPath -Raw -Encoding UTF8) -replace "`r`n", "`n"
+
+# Start the installed version when GitHub can't be reached (player report
+# 2026-10-10: 「启动应用」 stayed grey). Every open fetched the tags first and
+# gave up on a failed fetch, so an install whose network can't reach GitHub
+# (the Full setup from a mainland network, or an accelerator turned off later)
+# never learned its own version: the start button stayed disabled and auto
+# start never ran. A failed fetch now falls back to the tags already on disk.
+$gitRs = Replace-Once $gitRs `
+    (@'
+        remote
+            .fetch(
+                &["+refs/tags/*:refs/tags/*"],
+                Some(&mut fetch_options),
+                None,
+            )
+            .with_context(|| {
+                format!(
+                    "Failed to fetch tags for repository {}",
+                    repo_path_for_task.display()
+                )
+            })?;
+        prune_deleted_local_tags_from_remote(&repo, "origin", &app_name_for_task)?;
+'@ -replace "`r`n", "`n") `
+    (@'
+        match remote.fetch(
+            &["+refs/tags/*:refs/tags/*"],
+            Some(&mut fetch_options),
+            None,
+        ) {
+            Ok(()) => prune_deleted_local_tags_from_remote(&repo, "origin", &app_name_for_task)?,
+            Err(e) => {
+                warn!(
+                    "Failed to fetch tags for repository {}, using the local tags: {}",
+                    repo_path_for_task.display(),
+                    e
+                );
+                emit_info!(
+                    app_name_for_task,
+                    "Cannot reach the update server; using the installed version."
+                );
+            }
+        }
+'@ -replace "`r`n", "`n") `
+    "use local tags when the tag fetch fails"
+$appService = Replace-Once $appService `
+    ("        ensure_repository(&app).await?;`n        let previous_known_version = app.current_version.clone();") `
+    ("        if let Err(e) = ensure_repository(&app).await {`n" +
+     "            warn!(`n" +
+     "                `"Could not update the repository of '{}', continuing with the local copy: {:?}`",`n" +
+     "                app.name, e`n" +
+     "            );`n" +
+     "        }`n" +
+     "        let previous_known_version = app.current_version.clone();") `
+    "open with the local copy when the fetch fails"
+
+# Update before starting, even when 「启动应用」 is pressed during the update
+# check (player report 2026-10-10: auto start ticked, v0.1.11 started although
+# v0.1.17 was out, and the update had to be clicked by hand). The auto update
+# and the auto start only run once the tags are fetched, but the button is
+# live as soon as the window shows the installed version, and start_app marks
+# that check done: a press during the fetch started the old version and the
+# check (update and auto start alike) was skipped. A start now waits for the
+# check, so the newest version is installed first when the update method
+# updates by itself (自动更新, the default), then the tool starts; when GitHub
+# can't be reached the check uses the local tags (above) and the installed
+# version starts.
+$appService = Replace-Once $appService `
+    'static AUTO_START_CANCELLED: AtomicBool = AtomicBool::new(false);' `
+    ('static AUTO_START_CANCELLED: AtomicBool = AtomicBool::new(false);' + "`n" +
+     'static STARTUP_CHECK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));') `
+    "startup check lock"
+$appService = Replace-Once $appService `
+    ("    emit_app().await;`n`n    if update_app_from_disk().await? {") `
+    ("    emit_app().await;`n`n    let _startup_check = STARTUP_CHECK.lock().await;`n    if update_app_from_disk().await? {") `
+    "hold the startup check from the fetch on"
+$appService = Replace-Once $appService `
+    ("pub async fn start_app(app_handle: AppHandle, app_name: String) -> Result<(), Error> {`n" +
+     "    AUTO_START_CANCELLED.store(true, AtomicOrdering::SeqCst);") `
+    ("pub async fn start_app(app_handle: AppHandle, app_name: String) -> Result<(), Error> {`n" +
+     "    if STARTUP_CHECK.try_lock().is_err() {`n" +
+     "        info!(`"Start of '{}' asked during the update check; starting after it.`", app_name);`n" +
+     "    }`n" +
+     "    drop(STARTUP_CHECK.lock().await);`n" +
+     "    AUTO_START_CANCELLED.store(true, AtomicOrdering::SeqCst);") `
+    "start after the update check"
+
+# GitHub refuses the launcher log as an attachment because it had no extension
+# (app.2026-10-10, player report 2026-10-10). New logs are app.<date>.txt; the
+# launcher never reads or deletes old logs, so app.<date> files just stay.
+$loggerRs = Replace-Once $loggerRs `
+    '        let file_appender = rolling::daily(&self.log_dir, &self.file_prefix);' `
+    ("        let file_appender = rolling::RollingFileAppender::builder()`n" +
+     "            .rotation(rolling::Rotation::DAILY)`n" +
+     "            .filename_prefix(self.file_prefix.clone())`n" +
+     "            .filename_suffix(`"txt`")`n" +
+     "            .build(&self.log_dir)?;") `
+    "name the launcher log app.<date>.txt"
 
 # Hide the launcher window once the tool is seen running.
 $appService = Replace-Once $appService `
@@ -409,6 +510,8 @@ foreach ($entry in @(
 
 Set-Content -LiteralPath $appServicePath -Value $appService -Encoding UTF8
 Set-Content -LiteralPath $libRsPath -Value $libRs -Encoding UTF8
+Set-Content -LiteralPath $gitRsPath -Value $gitRs -Encoding UTF8
+Set-Content -LiteralPath $loggerRsPath -Value $loggerRs -Encoding UTF8
 Set-Content -LiteralPath $appTsxPath -Value $appTsx -Encoding UTF8
 Set-Content -LiteralPath $i18nPath -Value $i18n -Encoding UTF8
 

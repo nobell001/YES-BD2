@@ -19,6 +19,7 @@ import base64
 import json
 import re
 import time
+from difflib import SequenceMatcher
 from pathlib import Path
 from time import monotonic
 from types import SimpleNamespace
@@ -115,6 +116,16 @@ SELECTION_MATCH_MIN = 0.75
 # The user's bag sort, saved before switching so a crash or Stop mid-run can
 # be undone on the next run.
 SORT_STATE_FILE = Path("configs") / "junk_gear_sort.json"
+# Sort kinds (sort_category) a label must match to be saved.  An unlisted kind
+# still works for the run; only a crash or Stop is not undone next run.
+KNOWN_SORT_KINDS = ("获得时间", "强化", "稀有度", "星级", "套装", "级别")
+# A kind or direction one character off (OCR at 1080p) still matches.
+SORT_MATCH_RATIO = 0.75
+# Extra menu reads to get two in a row that agree on the active label.
+SORT_SETTLE_READS = 3
+# A saved sort that failed to restore this often, or this old, is dropped.
+SORT_RESTORE_MAX_FAILURES = 2
+SORT_STATE_MAX_AGE_SECONDS = 2 * 24 * 3600
 # Junk a failed run judged but did not dismantle (their "!" badges are gone once
 # the bag was opened): icon snapshots matched against the next run's grid.
 PENDING_FILE = Path("configs") / "junk_gear_pending.json"
@@ -213,10 +224,22 @@ def sort_direction(label: str) -> str:
     return core.split("从", 1)[1].replace("排序", "") if "从" in core else ""
 
 
+def similar_sort_text(a: str, b: str) -> bool:
+    return a == b or bool(a and b and SequenceMatcher(None, a, b).ratio() >= SORT_MATCH_RATIO)
+
+
 def same_sort(a: str | None, b: str | None) -> bool:
+    """Same kind and direction; a saved label one character off still
+    matches, or it could never be restored (review #22)."""
     if not a or not b:
         return False
-    return sort_category(a) == sort_category(b) and sort_direction(a) == sort_direction(b)
+    return similar_sort_text(sort_category(a), sort_category(b)) and similar_sort_text(
+        sort_direction(a), sort_direction(b)
+    )
+
+
+def known_sort_kind(label: str) -> bool:
+    return any(similar_sort_text(sort_category(label), kind) for kind in KNOWN_SORT_KINDS)
 
 
 def active_sort_label(boxes) -> str | None:
@@ -266,7 +289,11 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
         if not self._open_equipment_bag():
             return self._claim_fail("打开背包装备页")
         pending = self._saved_sort()
-        if pending and not self._restore_sort(pending):
+        if (
+            pending
+            and not self._restore_sort(pending)
+            and not self._sort_restore_given_up(pending)
+        ):
             self.log_warning(f"{LABEL}：上次中断的背包排序「{pending}」未能恢复，本次不处理。")
             return self._claim_fail("恢复上次的背包排序")
         self._clear_saved_sort()
@@ -274,6 +301,7 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
         if original_sort is None:
             return self._claim_fail("切换为按获得时间排序")
         ok = True
+        failed_stage = "强化分解"
         stopped = False
         try:
             cap = max(1, min(int(self.config.get("最多处理件数", 10)), MAX_ITEMS_PER_RUN))
@@ -297,14 +325,23 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
                 self.log_info("爛装强化分解：没有带新获得标记（黄色!）的装备。")
             else:
                 junk = self._classify_cells(cells, stars, frame)
-                if junk and colours_distorted:
+                if junk is None:
+                    # Their "!" badges are gone: kept for the next run, or a
+                    # lost click would drop them for good.
+                    ok, failed_stage = False, "识别新装备"
+                    self._save_pending(
+                        cells, frame, keep_date=any(cell in carried for cell in cells)
+                    )
+                elif junk and colours_distorted:
                     self.log_info(
                         f"爛装强化分解：画面颜色异常，识别出 {len(junk)} 件爛装，未分解。"
                     )
                 elif junk:
                     ok = self._enhance_and_dismantle(junk, frame)
                     if not ok:
-                        self._save_pending(junk, frame)
+                        self._save_pending(
+                            junk, frame, keep_date=any(cell in carried for cell in junk)
+                        )
             if ok and not colours_distorted:
                 self._clear_pending()
         except (TaskDisabledException, FinishedException):
@@ -322,7 +359,7 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
         if not stopped:
             self._restore_bag_detail_view()
         if not ok:
-            return self._claim_fail("强化分解")
+            return self._claim_fail(failed_stage)
         return self._leave_to_home("背包", EQUIPMENT_TITLE_KEYWORDS)
 
     def _colours_distorted(self) -> bool:
@@ -356,20 +393,35 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
         x, y = GRID_COLUMNS[column] + dx, GRID_ROWS[row] + dy
         return cv2.cvtColor(frame[y : y + height, x : x + width], cv2.COLOR_BGR2GRAY)
 
-    def _save_pending(self, cells: list[tuple[int, int]], frame) -> None:
+    def _save_pending(
+        self, cells: list[tuple[int, int]], frame, keep_date: bool = False
+    ) -> None:
         icons = []
         for cell in cells:
             ok, png = cv2.imencode(".png", self._cell_icon(frame, cell))
             if ok:
                 icons.append(base64.b64encode(png.tobytes()).decode("ascii"))
+        saved = time.time()
+        if keep_date:
+            # Items carried over keep the date they were first saved: re-dated
+            # on every failure, the age limit never ended a repeating failure.
+            saved = min(saved, self._pending_saved_at())
         try:
             _pending_file().parent.mkdir(parents=True, exist_ok=True)
             _pending_file().write_text(
-                json.dumps({"saved": time.time(), "icons": icons}), encoding="utf-8"
+                json.dumps({"saved": saved, "icons": icons}), encoding="utf-8"
             )
             self.log_info(f"{LABEL}：{len(icons)} 件爛装这次没分解，已记下，下次接着处理。")
         except OSError as exc:
             self.log_warning(f"{LABEL}：记录未完成的爛装失败：{exc}")
+
+    @staticmethod
+    def _pending_saved_at() -> float:
+        try:
+            data = json.loads(_pending_file().read_text(encoding="utf-8"))
+            return float(data.get("saved", time.time()))
+        except (OSError, ValueError, TypeError, AttributeError):
+            return time.time()
 
     def _clear_pending(self) -> None:
         try:
@@ -463,7 +515,7 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
         2026-09-28).  Small steps down to the end, then up to the top.
         """
         boxes = self._sort_menu_boxes()
-        if self._box_with(boxes, (keyword,)) is not None:
+        if self._sort_option_shown(boxes, keyword):
             return boxes
         for direction in (1, -1):
             last_text = self._boxes_text(boxes)
@@ -475,7 +527,7 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
                     after_sleep=0.5,
                 )
                 boxes = self._sort_menu_boxes()
-                if self._box_with(boxes, (keyword,)) is not None:
+                if self._sort_option_shown(boxes, keyword):
                     return boxes
                 text = self._boxes_text(boxes)
                 if text == last_text:
@@ -484,34 +536,76 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
         return boxes
 
     @staticmethod
+    def _sort_option_shown(boxes, keyword: str) -> bool:
+        kind = sort_category(keyword)
+        return JunkGearTask._box_with(boxes, (keyword,)) is not None or any(
+            similar_sort_text(sort_category(getattr(box, "name", "")), kind) for box in boxes
+        )
+
+    @staticmethod
     def _inactive_option(boxes, keyword: str):
         """The option of that sort kind; clicking the active one flips it."""
-        for box in boxes:
-            name = str(getattr(box, "name", ""))
-            if keyword and sort_category(name) == keyword and not sort_direction(name):
+        if not keyword:
+            return None
+        options = [
+            box for box in boxes
+            if similar_sort_text(sort_category(getattr(box, "name", "")), keyword)
+        ]
+        for box in options:
+            if not sort_direction(getattr(box, "name", "")):
                 return box
-        return JunkGearTask._box_with(boxes, (keyword,)) if keyword else None
+        return options[0] if options else JunkGearTask._box_with(boxes, (keyword,))
 
     def _close_sort_menu(self) -> None:
         self._click_reference(*SORT_MENU_CLOSE_POINT, after_sleep=1.0)
 
     @staticmethod
-    def _saved_sort() -> str | None:
+    def _sort_state() -> dict:
         try:
             saved = json.loads(_sort_state_file().read_text(encoding="utf-8"))
-            return saved.get("original") or None
         except (OSError, ValueError):
-            return None
+            return {}
+        return saved if isinstance(saved, dict) else {}
+
+    @staticmethod
+    def _saved_sort() -> str | None:
+        return JunkGearTask._sort_state().get("original") or None
+
+    @staticmethod
+    def _write_sort_state(state: dict) -> None:
+        try:
+            _sort_state_file().parent.mkdir(parents=True, exist_ok=True)
+            _sort_state_file().write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
 
     @staticmethod
     def _save_sort(original: str) -> None:
+        JunkGearTask._write_sort_state({"original": original, "saved": time.time()})
+
+    def _sort_restore_given_up(self, label: str) -> bool:
+        """Count a failed restore of the saved sort; True once it is dropped.
+
+        A misread label may never be restored; kept, it failed every run
+        until the file was deleted by hand (review #22).  Files from before
+        the save date was written count as old.
+        """
+        state = self._sort_state()
         try:
-            _sort_state_file().parent.mkdir(parents=True, exist_ok=True)
-            _sort_state_file().write_text(
-                json.dumps({"original": original}, ensure_ascii=False), encoding="utf-8"
-            )
-        except OSError:
-            pass
+            failures = int(state.get("failures", 0)) + 1
+            age = time.time() - float(state.get("saved", 0))
+        except (TypeError, ValueError):
+            failures, age = SORT_RESTORE_MAX_FAILURES, 0.0
+        if failures < SORT_RESTORE_MAX_FAILURES and age <= SORT_STATE_MAX_AGE_SECONDS:
+            self._write_sort_state({**state, "failures": failures})
+            return False
+        self._clear_saved_sort()
+        self.log_warning(
+            f"{LABEL}：上次中断的背包排序「{label}」一直没能恢复，已不再恢复，继续处理；"
+            "背包排序请自行调回。",
+            notify=True,
+        )
+        return True
 
     @staticmethod
     def _clear_saved_sort() -> None:
@@ -520,8 +614,26 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
         except OSError:
             pass
 
+    def _settled_sort_boxes(self, boxes: list) -> tuple[list, bool]:
+        """Menu boxes, and whether two reads in a row agreed on the active
+        label.  A read while the menu fades in can drop a character (1080p),
+        and a label saved from one such read was never found again."""
+        label = active_sort_label(boxes)
+        for _read in range(SORT_SETTLE_READS):
+            self.sleep(0.4)
+            again = self._sort_menu_boxes()
+            again_label = active_sort_label(again)
+            if label is not None and again_label == label:
+                return again, True
+            if again_label is not None:
+                boxes, label = again, again_label
+        return boxes, False
+
     def _switch_to_newest_first(self) -> str | None:
         boxes = self._open_sort_menu()
+        settled = False
+        if boxes:
+            boxes, settled = self._settled_sort_boxes(boxes)
         original = active_sort_label(boxes)
         if not boxes or original is None:
             self.log_info(
@@ -531,7 +643,13 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
             if boxes:
                 self._close_sort_menu()
             return None
-        self._save_sort(original)
+        if settled and known_sort_kind(original):
+            self._save_sort(original)
+        else:
+            self.log_info(
+                f"{LABEL}：当前排序「{original}」没读稳或不认识，不记下"
+                "（这次中途停止的话，下次不会自动改回）。"
+            )
         for _attempt in range(3):
             active = active_sort_label(boxes)
             if active and TIME_SORT_TEXT in active and NEWEST_FIRST_TEXT in active:
@@ -703,7 +821,8 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
 
     def _classify_cells(
         self, cells: list[tuple[int, int]], stars: dict[str, int], frame=None
-    ) -> list[tuple[int, int]]:
+    ) -> list[tuple[int, int]] | None:
+        """The junk cells, or None when a detail popup did not open or close."""
         junk: list[tuple[int, int]] = []
         report = []
         for row, column in cells:
@@ -728,14 +847,24 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
             # A stale popup (swallowed close) would make the next click hit
             # it and give this cell the previous item's verdict.
             if not self._wait_detail(False):
-                self.log_warning(f"{LABEL}：点击前装备详情未关闭，全部保留，不分解。")
-                return []
-            self._click_reference(GRID_COLUMNS[column], GRID_ROWS[row], after_sleep=1.3)
-            if not self._wait_detail(True):
+                self.log_warning(f"{LABEL}：点击前装备详情未关闭，这次不分解，下次再处理。")
+                return None
+            opened = self.press_and_confirm(
+                f"{LABEL}：打开第{row + 1}行第{column + 1}列",
+                lambda: self._click_reference(
+                    GRID_COLUMNS[column], GRID_ROWS[row], after_sleep=1.3
+                ),
+                lambda: self._wait_detail(True, timeout=0),
+                still_before=lambda: self._wait_detail(False, timeout=0),
+                timeout=DETAIL_STATE_TIMEOUT,
+                poll=0.4,
+            )
+            if not opened:
                 self.log_warning(
-                    f"{LABEL}：第{row + 1}行第{column + 1}列的详情没有打开，全部保留，不分解。"
+                    f"{LABEL}：第{row + 1}行第{column + 1}列的详情没有打开，"
+                    "这次不分解，下次再处理。"
                 )
-                return []
+                return None
             item, text = self._read_detail()
             for _retry in range(DETAIL_READ_RETRIES):
                 # The popup animates in; the first frame can miss the name row.
@@ -756,10 +885,19 @@ class JunkGearTask(EnhanceDialogMixin, DailyRefineTask):
             report.append(f"{label}:{'爛装' if verdict else '保留'}[{reason}]")
             if verdict:
                 junk.append((row, column))
-            self._click_reference(*DETAIL_CLOSE_POINT, after_sleep=1.0)
-            if not self._wait_detail(False):
-                self.log_warning(f"{LABEL}：装备详情关闭失败，全部保留，不分解。")
-                return []
+            closed = self.press_and_confirm(
+                f"{LABEL}：关闭装备详情",
+                lambda: self._click_reference(*DETAIL_CLOSE_POINT, after_sleep=1.0),
+                lambda: self._wait_detail(False, timeout=0),
+                # Only while the popup still shows: without it the ✕ point is
+                # the cell at row 2, column 6 and would open another item.
+                still_before=lambda: self._wait_detail(True, timeout=0),
+                timeout=DETAIL_STATE_TIMEOUT,
+                poll=0.4,
+            )
+            if not closed:
+                self.log_warning(f"{LABEL}：装备详情关闭失败，这次不分解，下次再处理。")
+                return None
         summary = "；".join(report)
         self.info_set("新装备识别", summary)
         self.log_info(f"爛装强化分解：{summary}")

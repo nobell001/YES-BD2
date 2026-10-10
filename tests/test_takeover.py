@@ -6,6 +6,7 @@ from unittest import mock
 
 from src.tasks import takeover
 from src.tasks.takeover import (
+    LLKHF_ALTDOWN,
     LLKHF_INJECTED,
     LLMHF_INJECTED,
     TakeoverMonitor,
@@ -14,6 +15,7 @@ from src.tasks.takeover import (
 )
 
 LBUTTONDOWN, MOUSEMOVE, KEYDOWN, KEYUP = 0x0201, 0x0200, 0x0100, 0x0101
+SYSKEYDOWN, VK_F4 = 0x0104, 0x73
 
 
 class RulesTest(unittest.TestCase):
@@ -38,6 +40,15 @@ class RulesTest(unittest.TestCase):
         self.assertFalse(key_takeover(KEYUP, 0, ord("W"), game_in_front=True))
         # Live 2026-10-07: a PrintScreen for a bug report stopped the run.
         self.assertFalse(key_takeover(KEYDOWN, 0, 0x2C, game_in_front=True))
+
+    def test_alt_f4_on_the_game_is_the_player_closing_it(self):
+        # decision 9 of the 10-10 plan, its default: not a 闪退 to reopen.
+        self.assertTrue(key_takeover(SYSKEYDOWN, LLKHF_ALTDOWN, VK_F4, game_in_front=True))
+        self.assertFalse(key_takeover(KEYDOWN, 0, VK_F4, game_in_front=True))
+        self.assertFalse(
+            key_takeover(SYSKEYDOWN, LLKHF_ALTDOWN | LLKHF_INJECTED, VK_F4, game_in_front=True)
+        )
+        self.assertFalse(key_takeover(SYSKEYDOWN, LLKHF_ALTDOWN, VK_F4, game_in_front=False))
 
 
 class MonitorTest(unittest.TestCase):
@@ -120,6 +131,49 @@ class MonitorTest(unittest.TestCase):
         monitor.on_task(task)  # the same task started again
         self._click(monitor, 100)
         self.assertEqual(2, executor.stop_current_task.call_count)
+
+
+class PausedRunTest(unittest.TestCase):
+    """The plan's default for decision 8: 暂停 is there so the player can
+    step in; a click on the paused game marks the run instead of stopping it."""
+
+    def _monitor(self):
+        monitor, executor, task = MonitorTest._monitor(self)
+        del monitor._take_over  # the real one: a paused run is never stopped
+        monitor.in_clone = False
+        task.paused = True
+        return monitor, executor, task
+
+    def test_a_click_on_the_paused_game_does_not_stop_it(self):
+        monitor, executor, task = self._monitor()
+        MonitorTest._click(self, monitor, 100)
+        executor.stop_current_task.assert_not_called()
+        task.log_warning.assert_not_called()
+        self.assertTrue(task.player_stepped_in)
+
+    def test_the_click_that_brings_the_paused_game_forward_counts(self):
+        monitor, _executor, task = self._monitor()
+        MonitorTest._click(self, monitor, 100, front=555)
+        self.assertTrue(task.player_stepped_in)
+
+    def test_a_key_on_the_paused_game_does_not_stop_it(self):
+        monitor, executor, task = self._monitor()
+        MonitorTest._key(self, monitor)
+        executor.stop_current_task.assert_not_called()
+        self.assertTrue(task.player_stepped_in)
+
+    def test_a_click_elsewhere_while_paused_is_nothing(self):
+        monitor, _executor, task = self._monitor()
+        MonitorTest._click(self, monitor, 555)
+        self.assertFalse(getattr(task, "player_stepped_in", False))
+
+    def test_after_continue_a_click_stops_as_before(self):
+        monitor, executor, task = self._monitor()
+        task.paused = False
+        inline = lambda target, args, daemon: SimpleNamespace(start=lambda: target(*args))  # noqa: E731
+        with mock.patch.object(takeover.threading, "Thread", inline):
+            MonitorTest._click(self, monitor, 100)
+        executor.stop_current_task.assert_called_once()
 
 
 class InstallTest(unittest.TestCase):

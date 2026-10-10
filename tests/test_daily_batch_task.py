@@ -1,6 +1,7 @@
 import tempfile
 import time
 import unittest
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -15,7 +16,7 @@ from src.tasks.DailyBatchTask import (
     DailyBatchTask,
 )
 from src.tasks.MapCollectionTask import MapCollectionTask
-from src.tasks.run_history import RunHistoryStore, set_default_store
+from src.tasks.run_history import BEIJING_TZ, RunHistoryStore, set_default_store
 from src.tasks.task_notifications import log_task_completion
 
 _report_dir = None
@@ -37,6 +38,10 @@ def tearDownModule():
     run_report.set_report_file(None)
     _TICKS.stop()
     _report_dir.cleanup()
+
+
+def _beijing_ts(year, month, day, hour, minute=0) -> float:
+    return datetime(year, month, day, hour, minute, tzinfo=BEIJING_TZ).timestamp()
 
 
 class _ChildTask:
@@ -707,6 +712,39 @@ class DailyBatchTaskTest(unittest.TestCase):
 
         self.assertEqual([("快速狩猎", True)], calls)
 
+    def _run_after_a_failure(self, by_player):
+        class First:
+            pass
+
+        calls = []
+        first = _ChildTask("快速狩猎", calls)
+        specs = (DailyBatchChild("第一项", First),)
+        task, _resets = self.make_task(
+            {First: first},
+            specs,
+            {"启用": True, "第一项": True},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            schedule_store = scheduler.TaskScheduleStore(f"{temp_dir}/schedule.json")
+            scheduler.set_default_store(schedule_store)
+            set_default_store(RunHistoryStore(f"{temp_dir}/history.json"))
+            try:
+                schedule_store.delay_after_run("快速狩猎", ok=False)
+                task.request_run_mode(RUN_MODE_INCOMPLETE, by_player=by_player)
+                self.assertTrue(DailyBatchTask.run(task))
+            finally:
+                scheduler.set_default_store(None)
+                set_default_store(None)
+        return calls
+
+    def test_a_players_own_press_runs_a_just_failed_child(self):
+        # Bilibili 雪见璃 2026-10-10: 「一键日常还设置了5分钟的cd」.
+        self.assertEqual([("快速狩猎", True)], self._run_after_a_failure(by_player=True))
+
+    def test_an_automatic_start_still_waits_out_the_failure(self):
+        # 打开就自动跑 and the run after a 闪退 must not loop on a stuck screen.
+        self.assertEqual([], self._run_after_a_failure(by_player=False))
+
     def test_requested_run_mode_expires_and_defaults_to_all(self):
         # MEDIUM 回归：「执行剩余」请求的 run_mode 带有效期。启动失败时
         # run() 不执行、请求无法消费，过期作废，避免残留的 INCOMPLETE 被
@@ -1070,6 +1108,41 @@ class DailyBatchTaskTest(unittest.TestCase):
         self.assertNotIn("自动关机", task.info.get("状态", ""))
         self.assertTrue(errors)
 
+    def test_no_shutdown_on_the_clone_desktop(self):
+        # 桌面分身里关机关的是整台电脑，而玩家正在外面用电脑（2026-10-09 检查）。
+        from src.tasks.DailyBatchTask import CLONE_NO_SHUTDOWN_NOTE
+        from src.utils import clone_desktop
+
+        class First:
+            pass
+
+        first = _ChildTask("first", [])
+        specs = (DailyBatchChild("第一项", First),)
+        task, _resets = self.make_task(
+            {First: first},
+            specs,
+            {"启用": True, "完成日常后自动关机": True, "第一项": True},
+        )
+        logged = []
+        task.log_info = lambda message, *_args, **_kwargs: logged.append(message)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            set_default_store(RunHistoryStore(f"{temp_dir}/history.json"))
+            try:
+                with (
+                    mock.patch.object(clone_desktop, "in_clone", return_value=True),
+                    mock.patch(
+                        "src.tasks.DailyBatchTask._schedule_system_shutdown"
+                    ) as shutdown,
+                ):
+                    self.assertTrue(DailyBatchTask.run(task))
+            finally:
+                set_default_store(None)
+
+        shutdown.assert_not_called()
+        self.assertTrue(any(CLONE_NO_SHUTDOWN_NOTE in message for message in logged))
+        # The 结算 page (also the one outside the clone) shows why.
+        self.assertEqual(CLONE_NO_SHUTDOWN_NOTE, run_report.load("一键完成日常")["notice"])
+
     def test_schedule_system_shutdown_uses_system32_and_reports_exit_code(self):
         from src.tasks.DailyBatchTask import _schedule_system_shutdown
 
@@ -1093,6 +1166,65 @@ class DailyBatchTaskTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DayBoundaryChildTest(unittest.TestCase):
+    """A child that started before the 08:00 refresh and finished after it
+    is the old day's (week's) work, not the new one's."""
+
+    def _run_across(self, name, start, end, weekly=False):
+        class Child:
+            pass
+
+        clock = [start]
+        child = _ChildTask(name, [])
+        child.run = lambda: clock.__setitem__(0, end) or True
+        task, _resets = DailyBatchTaskTest.make_task(
+            self,
+            {Child: child},
+            (DailyBatchChild("那一项", Child, weekly=weekly),),
+            {"启用": True, "那一项": True},
+        )
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        schedule = scheduler.TaskScheduleStore(f"{folder.name}/schedule.json")
+        scheduler.set_default_store(schedule)
+        set_default_store(RunHistoryStore(f"{folder.name}/history.json"))
+        try:
+            with mock.patch("time.time", side_effect=lambda: clock[0]):
+                self.assertTrue(DailyBatchTask.run(task, RUN_MODE_ALL))
+        finally:
+            scheduler.set_default_store(None)
+            set_default_store(None)
+        return task, schedule
+
+    def test_a_daily_child_done_across_08_00_stays_due_for_the_new_day(self):
+        _task, schedule = self._run_across(
+            "快速狩猎", _beijing_ts(2026, 10, 13, 7, 58), _beijing_ts(2026, 10, 13, 8, 1)
+        )
+        self.assertTrue(schedule.is_due("快速狩猎", now=_beijing_ts(2026, 10, 13, 8, 5)))
+
+    def test_a_weekly_child_started_before_monday_08_00_keeps_its_tick(self):
+        weekly_ticks.STATE_FILE.unlink(missing_ok=True)
+        task, schedule = self._run_across(
+            "末日之书",
+            _beijing_ts(2026, 10, 12, 7, 59),
+            _beijing_ts(2026, 10, 12, 8, 1),
+            weekly=True,
+        )
+        self.assertIs(True, task.config["那一项"])
+        self.assertTrue(schedule.is_due("末日之书", now=_beijing_ts(2026, 10, 12, 8, 5)))
+
+    def test_a_weekly_child_done_within_the_week_loses_its_tick(self):
+        weekly_ticks.STATE_FILE.unlink(missing_ok=True)
+        task, schedule = self._run_across(
+            "末日之书",
+            _beijing_ts(2026, 10, 12, 8, 1),
+            _beijing_ts(2026, 10, 12, 8, 3),
+            weekly=True,
+        )
+        self.assertIs(False, task.config["那一项"])
+        self.assertFalse(schedule.is_due("末日之书", now=_beijing_ts(2026, 10, 12, 8, 5)))
 
 
 class OnlyIncompleteFlagTest(unittest.TestCase):
@@ -1156,6 +1288,10 @@ class CrashRestartTest(unittest.TestCase):
         opener = mock.patch.object(DailyBatchTask, "_open_game")
         self.open_game = opener.start()
         self.addCleanup(opener.stop)
+        # The 10 s countdown before the game is opened again.
+        sleeper = mock.patch.object(DailyBatchTask, "sleep")
+        self.sleep = sleeper.start()
+        self.addCleanup(sleeper.stop)
         self.schedule = mock.Mock()
         self.schedule.is_due.return_value = True
         store = mock.patch("src.tasks.scheduler.default_store", return_value=self.schedule)
@@ -1250,17 +1386,98 @@ class CrashRestartTest(unittest.TestCase):
 
         self.assertEqual(RUN_MODE_INCOMPLETE, task._take_run_mode(None))
 
+    def _player_start(self, task, run_mode):
+        """What a start button does (actions.start), down to the run."""
+        from src.ui.shell import actions, clone_flow, data
+
+        def start(each):
+            each._enabled = True  # ok-script enables the task it starts
+            DailyBatchTask.run(each)
+
+        app = SimpleNamespace(start_controller=SimpleNamespace(start=start))
+        task.name = "一键完成日常"
+        task._enabled = task._paused = False
+        with (
+            mock.patch.object(data, "busy", return_value=False),
+            mock.patch.object(data, "og", return_value=SimpleNamespace(app=app)),
+            mock.patch.object(clone_flow, "busy_in_clone", return_value=False),
+            mock.patch.object(clone_flow, "restart_outdated_clone", return_value=False),
+            mock.patch.object(clone_flow, "hand_to_clone", return_value=False),
+            mock.patch.object(clone_flow, "end_idle_clone", return_value=True),
+            mock.patch.object(actions, "bring_game_to_front"),
+        ):
+            self.assertTrue(actions.start(task, None, run_mode))
+
+    def _stop_during_login_wait(self, task, login):
+        from src.ui.shell import actions, data
+
+        task.disable = mock.Mock()
+        login.config = {"_enabled": False}
+        with (
+            mock.patch.object(data, "onetime_tasks", lambda: [task]),
+            mock.patch.object(
+                data, "executor", lambda: SimpleNamespace(get_task_by_class=lambda _cls: login)
+            ),
+        ):
+            actions.stop(None)
+
     def test_a_new_start_by_the_player_runs_everything_again(self):
         task, calls, login = self._batch()
         DailyBatchTask.run(task, RUN_MODE_ALL)
         self.game["running"] = True
         login._finished = True  # logged in again
-        task._resuming_after_crash = False
         calls.clear()
 
-        DailyBatchTask.run(task, RUN_MODE_ALL)
+        self._player_start(task, RUN_MODE_ALL)
 
         self.assertEqual(("first", True), calls[0])
+
+    def test_stop_during_the_login_wait_then_a_new_start_runs_everything(self):
+        # Finding 75: it skipped 第一项 as done before the 闪退 and kept the
+        # restart count.
+        task, calls, login = self._batch()
+        DailyBatchTask.run(task, RUN_MODE_ALL)
+        self._stop_during_login_wait(task, login)
+        self.assertFalse(task._start_after_login)
+        self.game["running"] = True
+        calls.clear()
+
+        self.assertTrue(DailyBatchTask.run(task, RUN_MODE_ALL))
+
+        self.assertEqual([("first", True), ("crash", True), ("later", True)], calls)
+        self.assertEqual(0, task._crash_restarts)
+
+    def test_a_login_past_08_00_redoes_what_was_done_before_the_crash(self):
+        # 闪退 at 07:58, logged in again at 08:05: that was yesterday's work.
+        clock = [_beijing_ts(2026, 10, 13, 7, 58)]
+        with mock.patch("time.time", side_effect=lambda: clock[0]):
+            task, calls, login = self._batch()
+            DailyBatchTask.run(task, RUN_MODE_ALL)
+            self.game["running"] = True
+            login._finished = True
+            calls.clear()
+            clock[0] = _beijing_ts(2026, 10, 13, 8, 5)
+
+            DailyBatchTask.run(task)
+
+        self.assertEqual([("first", True), ("crash", True), ("later", True)], calls)
+
+    def test_items_done_before_08_00_are_redone_after_a_crash_past_it(self):
+        clock = [_beijing_ts(2026, 10, 13, 7, 58)]
+        with mock.patch("time.time", side_effect=lambda: clock[0]):
+            task, calls, login = self._batch()
+            # 第一项 starts at 07:58 and ends at 08:01; then the game closes.
+            first = task.executor.get_task_by_class(task.child_tasks[0].task_class)
+            run_first = first.run
+            first.run = lambda: clock.__setitem__(0, clock[0] + 180) or run_first()
+            DailyBatchTask.run(task, RUN_MODE_ALL)
+            self.game["running"] = True
+            login._finished = True
+            calls.clear()
+
+            DailyBatchTask.run(task)
+
+        self.assertEqual([("first", True), ("crash", True), ("later", True)], calls)
 
     def test_closed_between_children_is_a_crash_too(self):
         task, calls, _login = self._batch(crash_result=True)
@@ -1290,6 +1507,48 @@ class CrashRestartTest(unittest.TestCase):
 
         self.open_game.assert_called_once()
         self.assertEqual(1, task._crash_restarts)
+
+    def test_the_game_is_opened_again_after_a_visible_countdown(self):
+        # The plan's default for decision 9: the player may have closed it
+        # (the taskbar, the X).
+        task, _calls, _login = self._batch()
+        task.log_warning = mock.Mock()
+        shown = []
+        self.sleep.side_effect = lambda seconds: shown.append((seconds, task.info["状态"]))
+        self.open_game.side_effect = lambda: shown.append("open")
+
+        DailyBatchTask.run(task)
+
+        self.assertEqual("open", shown[-1])
+        self.assertEqual([1] * 10, [seconds for seconds, _text in shown[:-1]])
+        self.assertEqual("游戏关掉了，10 秒后重开，按停止取消。", shown[0][1])
+        self.assertEqual("游戏关掉了，1 秒后重开，按停止取消。", shown[9][1])
+        task.log_warning.assert_any_call("游戏关掉了，10 秒后重开，按停止取消。", notify=True)
+
+    def test_stop_during_the_countdown_does_not_open_the_game(self):
+        from ok.task.exceptions import TaskDisabledException
+
+        task, _calls, login = self._batch()
+        ticks = []
+
+        def sleep(_seconds):
+            ticks.append(1)
+            if len(ticks) == 3:
+                task._enabled = False  # 停止 pressed
+
+        self.sleep.side_effect = sleep
+        with tempfile.TemporaryDirectory() as folder:
+            set_default_store(RunHistoryStore(f"{folder}/history.json"))
+            try:
+                with self.assertRaises(TaskDisabledException):
+                    DailyBatchTask.run(task)
+            finally:
+                set_default_store(None)
+
+        self.open_game.assert_not_called()
+        self.assertFalse(login._enabled)  # not armed for the reopen
+        self.assertFalse(getattr(task, "_start_after_login", False))
+        self.assertEqual(run_report.ENDED_STOPPED, task._report_ended)
 
     def test_game_not_open_at_the_start_is_no_crash(self):
         for running in (False, None):  # closed, or cannot tell

@@ -1,5 +1,6 @@
 from qfluentwidgets import FluentIcon
 
+from src.tasks import problem_report
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.quick_hunt import (
     QUICK_HUNT_CHILD_CONFIG_KEYS,
@@ -140,6 +141,13 @@ class QuickHuntTask(
 
         self.info_set("状态", "快速狩猎启动。")
         success = self.run_quick_hunt()
+        if not success and self._wait_for_quick_hunt_home():
+            # Leo's rule: a step that stays stuck is tried once more from 主页,
+            # then the run stops there (YES-BD2 #8, 2026-10-10: 「卡住了建议
+            # 设置成退出主界面从头再来」).  What was already used up is skipped.
+            self.log_info("快速狩猎：这次没做完，已回到主页，从头再试一次。")
+            problem_report.forget_give_up()
+            success = self.run_quick_hunt()
         self.info_set("状态", "快速狩猎完成。" if success else "快速狩猎失败。")
         if success:
             self.log_completion("快速狩猎：流程完成并返回主页。")

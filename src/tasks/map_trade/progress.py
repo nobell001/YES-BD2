@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
+from src.compat.safe_json import read_text_retrying, write_text_atomic
 from src.tasks.map_trade.collector_constants import UNSUPPORTED_COLLECTION_CARD_NUMBERS
 from src.tasks.map_trade.data import SHOP_PURCHASE_REFERENCES
 from src.tasks.map_trade.models import (
@@ -35,6 +36,18 @@ VALID_TARGET_KEYS = {
 VALID_FAVORITE_SHOP_IDS = frozenset(SHOP_PURCHASE_REFERENCES)
 VALID_ACTION_NAMES = frozenset({"吸收", "召集", "压制"})
 VALID_MAP_ROLE_NAMES = frozenset(role.value for role in CollectionMapRole)
+# The UI, the 桌面分身 tool, an antivirus or OneDrive can hold the file open
+# for a moment (Windows then refuses to read or replace it).
+READ_FAILED_MESSAGE = (
+    "跑图进度文件暂时打不开（可能被防毒软件或 OneDrive 占用），进度没有动，请稍后再按开始。"
+)
+SAVE_FAILED_MESSAGE = (
+    "跑图进度存不进去（文件可能被防毒软件或 OneDrive 占用），先停在这里，稍后再按开始会接着跑。"
+)
+
+
+class ProgressFileError(RuntimeError):
+    """The progress file stayed held open elsewhere after a few tries."""
 
 
 def _effective_time(now: datetime) -> datetime:
@@ -428,9 +441,15 @@ class ProgressStore:
         if not self.path.exists():
             return {}
         try:
-            value = json.loads(self.path.read_text(encoding="utf-8"))
+            value = json.loads(read_text_retrying(self.path))
             return value if isinstance(value, dict) else {}
-        except (OSError, ValueError, TypeError):
+        except FileNotFoundError:
+            return {}
+        except OSError as exc:
+            # Held open elsewhere, not broken: a fresh week saved over it
+            # would lose the week's cards and the 跑商 records.
+            raise ProgressFileError(READ_FAILED_MESSAGE) from exc
+        except (ValueError, TypeError):
             try:
                 stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
                 backup = self.path.with_suffix(f".corrupt-{stamp}.json")
@@ -471,12 +490,13 @@ class ProgressStore:
             "observed_limits": dict(self.state.observed_limits),
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.path.with_suffix(self.path.suffix + ".tmp")
-        temp_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        temp_path.replace(self.path)
+        try:
+            write_text_atomic(
+                self.path,
+                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            )
+        except OSError as exc:
+            raise ProgressFileError(SAVE_FAILED_MESSAGE) from exc
 
     @staticmethod
     def _action_name(action: str) -> str:

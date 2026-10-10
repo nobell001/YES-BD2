@@ -1,6 +1,7 @@
 """Map-trade navigator tests (split from test_map_trade.py)."""
 
 import unittest
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -46,6 +47,7 @@ from src.tasks.map_trade.navigator_constants import (
     SandboxConfirmation,
 )
 from src.tasks.map_trade.vision import Vision
+from src.utils.press_confirm import press_and_confirm
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -956,12 +958,16 @@ class NavigatorTest(unittest.TestCase):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         clicks = []
         box = SimpleNamespace(name="确认", x=700, y=500, width=120, height=40)
-        task = SimpleNamespace(info_set=lambda *_args: None)
+        task = SimpleNamespace(
+            info_set=lambda *_args: None, sleep=lambda *_args: None, log_info=lambda *_a: None
+        )
         vision = SimpleNamespace(
+            capture=lambda: frame,
             ocr_boxes=lambda received, name: (
                 self.assertIs(received, frame)
                 or self.assertEqual("箱庭徒步导航传送阵确认", name)
-                or [box]
+                # the dialog closes once its button was pressed
+                or ([] if clicks else [box])
             ),
             simplify=lambda value: value,
             click_client=lambda point, shape, after_sleep=0: clicks.append(
@@ -1989,3 +1995,196 @@ class WalkExitRetryTest(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual([(609, 737)], clicks)
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+class LostPressTest(unittest.TestCase):
+    """A press the game swallowed must not end as done (review batch 2):
+    pressed once more after 1.5 s while the screen is unchanged, and
+    reported as not done when that one is lost too."""
+
+    def _run(self, clock, call):
+        with patch("src.tasks.map_trade.navigator_sandbox.monotonic", clock), patch(
+            "src.tasks.map_trade.navigator_sandbox.press_and_confirm",
+            partial(press_and_confirm, clock=clock),
+            create=True,
+        ):
+            return call()
+
+    def _destination_navigator(self, lands_on=None):
+        """The dialog's 确认 stays up until press number ``lands_on``."""
+        clock = FakeClock()
+        frame = np.zeros((1080, 1920, 3), np.uint8)
+        presses = []
+
+        def boxes(_frame, _name):
+            if lands_on is not None and len(presses) >= lands_on:
+                return []
+            return [SimpleNamespace(name="确认", x=700, y=500, width=120, height=40)]
+
+        vision = SimpleNamespace(
+            capture=lambda: frame,
+            ocr_boxes=boxes,
+            simplify=lambda text: text,
+            click_client=lambda point, _shape, after_sleep=0: presses.append(point),
+        )
+        logs = []
+        task = SimpleNamespace(sleep=clock.sleep, log_info=logs.append, info_set=lambda *_a: None)
+        navigator = Navigator(task, vision)
+        navigator._walk_text = lambda _frame: ""
+        return navigator, frame, presses, clock, logs
+
+    def test_a_lost_destination_confirm_is_pressed_once_more(self):
+        navigator, frame, presses, clock, logs = self._destination_navigator(lands_on=2)
+
+        confirmed = self._run(
+            clock, lambda: navigator._click_sandbox_navigation_destination_confirmation(frame)
+        )
+
+        self.assertTrue(confirmed)
+        self.assertEqual([(760, 520), (760, 520)], presses)
+        self.assertTrue(any("补按" in line for line in logs))
+
+    def test_a_destination_confirm_lost_twice_stops_the_walk_fallback(self):
+        navigator, frame, presses, clock, _logs = self._destination_navigator()
+        teleport = MatchResult(0.96, (500, 300), (40, 40), pixel_score=0.90, zncc_score=0.88)
+        navigator._open_field_map = lambda: "安全 测试镇"
+        navigator._sandbox_navigation_page_has_keyword = lambda _frame: True
+        navigator._sandbox_navigation_teleport = lambda _frame: teleport
+        navigator._click_sandbox_navigation_menu_teleport = lambda _frame: False
+        closed = []
+        navigator._close_confirmed_map_page = lambda *a, **k: closed.append(True)
+        navigator._wait_auto_move_finished = lambda _timeout: self.fail("waited for a walk")
+        navigator._click_sandbox_teleport_interaction = lambda **_k: self.fail(
+            "waited for a prompt that never shows"
+        )
+
+        result = self._run(clock, navigator._walk_to_sandbox_teleport_interaction)
+
+        self.assertFalse(result.success)
+        self.assertIn("未确认目的地按钮", result.message)
+        # The map icon, then 确认 twice; never a third time.
+        self.assertEqual([teleport.center, (760, 520), (760, 520)], presses)
+        self.assertEqual([True], closed)
+
+    def _nav_menu_navigator(self, lands_on=None, dialog=False):
+        """The ≡ menu stays open until press number ``lands_on``; with
+        ``dialog`` the press opens 立即前往 over the still-listed menu."""
+        clock = FakeClock()
+        frame = np.zeros((1080, 1920, 3), np.uint8)
+        presses = []
+
+        def landed():
+            return lands_on is not None and len(presses) >= lands_on
+
+        def boxes(_frame, _name, _roi):
+            if landed() and not dialog:
+                return []
+            return [
+                SimpleNamespace(name=text, x=300, y=100 + 60 * row, width=80, height=30)
+                for row, text in enumerate(("旅馆", "狩猎场", "艾琳"))
+            ]
+
+        vision = SimpleNamespace(
+            capture=lambda: frame,
+            ocr_boxes=boxes,
+            ocr_text=lambda _frame, name, **_k: (
+                "立即前往" if dialog and landed() and name == "前往确认" else ""
+            ),
+            simplify=lambda text: text,
+            click_template=lambda *_a, **_k: True,
+            click_client=lambda point, _shape, after_sleep=0: presses.append(point),
+        )
+        warnings = []
+        task = SimpleNamespace(
+            sleep=clock.sleep,
+            log_info=lambda *_a: None,
+            log_warning=warnings.append,
+            info_set=lambda *_a: None,
+        )
+        navigator = Navigator(task, vision)
+        navigator._confirm_travel = lambda: "moving"
+        trips = []
+        navigator._wait_for_field_hud = lambda **_k: (
+            trips.append(True) or NavigationResult(True, ScreenState.SANDBOX)
+        )
+        navigator._wait_auto_move_finished = lambda _timeout: "done"
+        navigator._loading_timeout = lambda: 1.0
+        return navigator, presses, clock, trips, warnings
+
+    def test_a_lost_nav_menu_press_is_pressed_once_more(self):
+        navigator, presses, clock, trips, _warnings = self._nav_menu_navigator(lands_on=2)
+
+        entry = self._run(clock, lambda: navigator._travel_via_nav_menu("狩猎场", "艾琳"))
+
+        self.assertEqual("狩猎场", entry)
+        self.assertEqual([(340, 175), (340, 175)], presses)
+        self.assertEqual([True], trips)
+
+    def test_a_nav_menu_press_lost_twice_is_no_trip(self):
+        # It used to pass the field check on the unchanged field and report
+        # the character at 狩猎场.
+        navigator, presses, clock, trips, warnings = self._nav_menu_navigator()
+
+        entry = self._run(clock, lambda: navigator._travel_via_nav_menu("狩猎场", "艾琳"))
+
+        self.assertIsNone(entry)
+        self.assertEqual(2, len(presses))
+        self.assertEqual([], trips)
+        self.assertTrue(any("没有反应" in text for text in warnings))
+
+    def test_the_travel_dialog_over_the_menu_counts_as_taken(self):
+        navigator, presses, clock, trips, _warnings = self._nav_menu_navigator(
+            lands_on=1, dialog=True
+        )
+
+        entry = self._run(clock, lambda: navigator._travel_via_nav_menu("狩猎场", "艾琳"))
+
+        self.assertEqual("狩猎场", entry)
+        self.assertEqual(1, len(presses))
+        self.assertEqual([True], trips)
+
+    def _page_navigator(self, pages):
+        clock = FakeClock()
+        presses = []
+        navigator = Navigator(
+            SimpleNamespace(sleep=clock.sleep, info_set=lambda *_a: None),
+            SimpleNamespace(
+                click_client=lambda point, _shape, after_sleep=0: presses.append(point)
+            ),
+        )
+        navigator._capture_area_map_context = lambda _card: pages(len(presses))
+        return navigator, presses, clock
+
+    def test_a_dropped_page_arrow_press_is_pressed_again(self):
+        card = CARD_BY_ID["Q_sp2"]
+        town = NavigatorTest._area_context("安全 达雷普镇", card.targets[0].key, right=True)
+        battle = NavigatorTest._area_context("战斗Ⅰ 封锁矿山", card.targets[1].key, left=True)
+        navigator, presses, clock = self._page_navigator(
+            lambda pressed: battle if pressed >= 2 else town
+        )
+
+        changed = self._run(clock, lambda: navigator._move_area_map(card, town, "right"))
+
+        self.assertIs(battle, changed)
+        self.assertEqual(2, len(presses))
+
+    def test_a_page_that_never_turns_is_the_end_after_two_presses(self):
+        card = CARD_BY_ID["Q_sp2"]
+        town = NavigatorTest._area_context("安全 达雷普镇", card.targets[0].key, right=True)
+        navigator, presses, clock = self._page_navigator(lambda _pressed: town)
+
+        changed = self._run(clock, lambda: navigator._move_area_map(card, town, "right"))
+
+        self.assertIsNone(changed)
+        self.assertEqual(2, len(presses))

@@ -18,13 +18,17 @@ from src.tasks.map_trade.models import (
     CollectionMapRole,
 )
 from src.tasks.map_trade.progress import (
+    READ_FAILED_MESSAGE,
+    SAVE_FAILED_MESSAGE,
     STATE_SCHEMA_VERSION,
     UTC_PLUS_8,
     VALID_FAVORITE_SHOP_IDS,
+    ProgressFileError,
     ProgressStore,
     daily_cycle_key,
     weekly_cycle_key,
 )
+from tests.helpers import held_open
 from tests.helpers.map_trade import _seed_action_records
 
 
@@ -388,6 +392,60 @@ class ProgressTest(unittest.TestCase):
 
             self.assertEqual({}, state.cards)
             self.assertEqual(1, len(list(path.parent.glob("progress.corrupt-*.json"))))
+
+    # The UI, the 桌面分身 tool, an antivirus or OneDrive can hold the file
+    # open; Windows then refuses the read or the swap-in (WinError 5).
+    def _saved(self, temp_dir):
+        path = Path(temp_dir) / "progress.json"
+        now = datetime(2026, 7, 12, 12, tzinfo=UTC_PLUS_8)
+        store = ProgressStore(path, lambda: now)
+        state = store.load()
+        state.cooking_week = state.weekly_key
+        state.cooking_recipes = [DEFAULT_RECIPES[0]]
+        store.save()
+        return path, now
+
+    def test_save_while_the_file_is_held_open_a_moment_still_lands(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path, now = self._saved(temp_dir)
+            store = ProgressStore(path, lambda: now)
+            store.load()
+            with held_open.replace_refused(path, 2), held_open.no_wait():
+                store.mark_depleted_today()
+            self.assertTrue(json.loads(path.read_text(encoding="utf-8"))["depleted_today"])
+
+    def test_save_held_open_too_long_stops_with_a_clear_message(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path, now = self._saved(temp_dir)
+            before = path.read_bytes()
+            store = ProgressStore(path, lambda: now)
+            store.load()
+            with held_open.replace_refused(path), held_open.no_wait():
+                with self.assertRaises(ProgressFileError) as caught:
+                    store.mark_depleted_today()
+            self.assertIsInstance(caught.exception, RuntimeError)  # Collector stops on it
+            self.assertEqual(SAVE_FAILED_MESSAGE, str(caught.exception))
+            self.assertEqual(before, path.read_bytes())
+            self.assertFalse(path.with_suffix(".json.tmp").exists())
+
+    def test_read_held_open_a_moment_is_tried_again(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path, now = self._saved(temp_dir)
+            with held_open.read_refused(path, 2), held_open.no_wait():
+                state = ProgressStore(path, lambda: now).load()
+            self.assertEqual({DEFAULT_RECIPES[0]}, state.completed_cooking_recipes)
+
+    def test_file_held_open_is_never_taken_for_broken_and_overwritten(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path, now = self._saved(temp_dir)
+            before = path.read_bytes()
+            with held_open.read_refused(path), held_open.no_wait():
+                with self.assertRaises(ProgressFileError) as caught:
+                    ProgressStore(path, lambda: now).load()
+            self.assertEqual(READ_FAILED_MESSAGE, str(caught.exception))
+            # Not reset to a fresh week, and no 跑商 record lost.
+            self.assertEqual(before, path.read_bytes())
+            self.assertEqual([], list(path.parent.glob("progress.corrupt-*.json")))
 
     def test_schema_three_migrates_without_losing_collection_or_trade_state(self):
         with tempfile.TemporaryDirectory() as temp_dir:

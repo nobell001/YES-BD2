@@ -1519,21 +1519,28 @@ class PVPTaskHelperTest(unittest.TestCase):
         )
         self.assertFalse(PVPTask._matches_any("正在进行", [r"反复战斗结果"]))
 
-    def test_result_wait_timeout_scales_by_multiplier(self):
+    def test_result_wait_timeout_scales_by_battles_with_a_floor(self):
         task = object.__new__(PVPTask)
         task.config = {}
 
-        self.assertEqual(20 * 60, PVPTask._result_wait_timeout(task, 1))
-        self.assertEqual(5 * 60, PVPTask._result_wait_timeout(task, 4))
-        self.assertEqual(4 * 60, PVPTask._result_wait_timeout(task, 5))
+        self.assertEqual(20 * 60, PVPTask._result_wait_timeout(task, 40))
+        self.assertEqual(5 * 60, PVPTask._result_wait_timeout(task, 10))
+        self.assertEqual(4 * 60, PVPTask._result_wait_timeout(task, 8))
+        # One or two battles (40x x 1, 18x x 2) used to get 30 s / 66 s.
+        self.assertEqual(90, PVPTask._result_wait_timeout(task, 1))
+        self.assertEqual(90, PVPTask._result_wait_timeout(task, 2))
 
-    def test_result_patterns_include_completed_count_from_multiplier(self):
+    def test_result_patterns_include_completed_count_set(self):
         task = object.__new__(PVPTask)
 
-        patterns = PVPTask._pvp_result_patterns(task, 4)
+        patterns = PVPTask._pvp_result_patterns(task, 10)
         text = "反复战斗结果 胜利分 已完成10次的战斗。 攻击成绩"
 
         self.assertGreaterEqual(PVPTask._ocr_pattern_match_count(text, patterns), 4)
+        # 10x x 1 used to expect 已完成4次.
+        one = "反复战斗结果 胜利分 已完成1次的战斗。 攻击成绩"
+        patterns = PVPTask._pvp_result_patterns(task, 1)
+        self.assertEqual(4, PVPTask._ocr_pattern_match_count(one, patterns))
 
     def test_result_screen_roi_converts_from_2560_reference(self):
         self.assertEqual(
@@ -1609,7 +1616,7 @@ class PVPTaskHelperTest(unittest.TestCase):
         task.log_warning = lambda message, notify=False: harness.warnings.append(message)
         task.sleep = harness.sleeps.append
         task.capture_frame = lambda: np.zeros((1440, 2560, 3), dtype=np.uint8)
-        task._ocr_text = lambda _frame, name, roi=None: harness.texts.get(name, "")
+        task._ocr_text = lambda _frame, name, roi=None, **_kw: harness.texts.get(name, "")
         return task, harness
 
     def test_battle_start_window_prefers_battle_signal_over_ap_shortage(self):
@@ -1617,7 +1624,7 @@ class PVPTaskHelperTest(unittest.TestCase):
         harness.texts["PVP 战斗中"] = "正在进行"
         harness.texts["PVP AP不足"] = "鲜血鸡尾酒不足"
 
-        self.assertEqual("started", PVPTask._wait_battle_start_or_ap_shortage(task, 4))
+        self.assertEqual("started", PVPTask._battle_start_state(task, 4))
         self.assertEqual("正在进行", harness.infos["PVP 战斗中 OCR"])
         self.assertNotIn("PVP AP不足 OCR", harness.infos)
         self.assertEqual([], harness.sleeps)
@@ -1628,7 +1635,7 @@ class PVPTaskHelperTest(unittest.TestCase):
 
         self.assertEqual(
             "ap_shortage",
-            PVPTask._wait_battle_start_or_ap_shortage(task, 4),
+            PVPTask._battle_start_state(task, 4),
         )
         self.assertEqual("鲜血鸡尾酒不足", harness.infos["PVP AP不足 OCR"])
 
@@ -1638,7 +1645,7 @@ class PVPTaskHelperTest(unittest.TestCase):
 
         self.assertEqual(
             "ap_depleted",
-            PVPTask._wait_battle_start_or_ap_shortage(task, 1),
+            PVPTask._battle_start_state(task, 1),
         )
         self.assertEqual("鲜血鸡尾酒不足", harness.infos["PVP AP不足 OCR"])
 
@@ -1646,7 +1653,7 @@ class PVPTaskHelperTest(unittest.TestCase):
         task, harness = self._make_battle_window_task()
         task.config = {"PVP 战斗开始等待秒数": 0.0}
         harness.texts["PVP AP不足"] = "强化材料不足"
-        self.assertEqual("started", PVPTask._wait_battle_start_or_ap_shortage(task, 4))
+        self.assertIsNone(PVPTask._battle_start_state(task, 4))
         self.assertNotIn("PVP AP不足 OCR", harness.infos)
 
     def test_failed_setup_presses_read_cancel_only(self):
@@ -1776,19 +1783,16 @@ class PVPTaskHelperTest(unittest.TestCase):
                 self.assertEqual("镜中之战失败：AP 不足弹窗未能关闭。", infos["状态"])
 
     def test_battle_start_window_times_out_to_settlement_wait(self):
+        # No signal read, but the dialog is gone: loading or battle screen.
         task, harness = self._make_battle_window_task()
-        task.config = {"PVP 战斗开始等待秒数": 30.0}
+        task.config = {"PVP 战斗开始等待秒数": 0.0}
+        task.log_info = lambda *_args, **_kwargs: None
+        presses = []
+        task._click_screen_reference = lambda x, y, after_sleep=0.0: presses.append((x, y))
 
-        with patch(
-            "src.tasks.PVPTask.monotonic",
-            side_effect=(0.0, 0.0, 100.0),
-        ):
-            self.assertEqual(
-                "started",
-                PVPTask._wait_battle_start_or_ap_shortage(task, 1),
-            )
+        self.assertEqual("started", PVPTask._press_battle_start(task, 1))
 
-        self.assertEqual([0.5], harness.sleeps)
+        self.assertEqual([PVP_BATTLE_START_SCREEN_POINT], presses)
         self.assertEqual(1, len(harness.warnings))
 
     def test_battle_start_window_skips_none_frames(self):
@@ -1797,8 +1801,8 @@ class PVPTaskHelperTest(unittest.TestCase):
         task.capture_frame = lambda: next(frames, None)
         harness.texts["PVP 战斗中"] = "正在进行"
 
-        self.assertEqual("started", PVPTask._wait_battle_start_or_ap_shortage(task, 1))
-        self.assertEqual([0.5], harness.sleeps)
+        self.assertIsNone(PVPTask._battle_start_state(task, 1))
+        self.assertEqual("started", PVPTask._battle_start_state(task, 1))
 
     def test_wait_result_uses_dynamic_timeout_and_majority_roi(self):
         task = object.__new__(PVPTask)
@@ -1864,6 +1868,102 @@ class PVPTaskHelperTest(unittest.TestCase):
         task._return_home_from_pvp_hub = lambda: False
 
         self.assertFalse(PVPTask._wait_result_and_leave(task, 1))
+
+    def test_one_battle_at_40x_waits_90_seconds_and_on_while_it_runs(self):
+        task = object.__new__(PVPTask)
+        task.config = {}
+        task.info_set = lambda *_args, **_kwargs: None
+        task._verified_battles = 1
+        calls = {}
+
+        def fake_wait(patterns, min_matches, timeout, name, roi, **kwargs):
+            calls.update(patterns=patterns, timeout=timeout, cap=kwargs.get("max_timeout"))
+            return True, ""
+
+        task._wait_for_ocr_pattern_majority = fake_wait
+        task.sleep = lambda *_args, **_kwargs: None
+        task._click_screen_reference = lambda *_args, **_kwargs: None
+        task._click_leave_button = lambda: True
+        task._ensure_pvp_hub_after_leave = lambda: True
+        task._return_home_from_pvp_hub = lambda: True
+
+        self.assertTrue(PVPTask._wait_result_and_leave(task, 40))
+        self.assertEqual(90, calls["timeout"])  # was 30 s
+        self.assertEqual(180, calls["cap"])
+        self.assertEqual(
+            4,
+            PVPTask._ocr_pattern_match_count(
+                "反复战斗结果 胜利分 已完成1次的战斗 攻击成绩", calls["patterns"]
+            ),
+        )
+
+    def _result_wait_on_a_clock(self, screen):
+        """Run the result wait (90 s, cap 180 s); screen(t) -> (result, battle) texts."""
+        task = object.__new__(PVPTask)
+        task.info_set = lambda *_args, **_kwargs: None
+        clock = [0.0]
+        task.capture_frame = lambda: clock[0]
+        task._ocr_text = lambda frame, name, roi=None, **_kwargs: (
+            screen(frame)[1] if name == "PVP 战斗中 OCR" else screen(frame)[0]
+        )
+        task.sleep = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+        with patch("src.tasks.PVPTask.monotonic", lambda: clock[0]):
+            found, _text = PVPTask._wait_for_ocr_pattern_majority(
+                task,
+                PVPTask._pvp_result_patterns(task, 1),
+                min_matches=4,
+                timeout=90,
+                name="PVP 结算",
+                extra_wait_patterns=[(r"正在进行", None, "PVP 战斗中 OCR")],
+                max_timeout=180,
+            )
+        return found, clock[0]
+
+    def test_result_wait_goes_on_while_the_battle_runs(self):
+        result = "反复战斗结果 胜利分 已完成1次的战斗 攻击成绩"
+        found, _now = self._result_wait_on_a_clock(
+            lambda t: ("", "正在进行") if t < 120 else (result, "")
+        )
+        self.assertTrue(found)
+
+    def test_result_wait_ends_15_seconds_after_the_battle_is_gone(self):
+        found, now = self._result_wait_on_a_clock(
+            lambda t: ("", "正在进行") if t < 100 else ("", "")
+        )
+        self.assertFalse(found)
+        self.assertTrue(114 <= now <= 116, now)
+
+    def test_result_wait_stops_at_the_cap_even_while_fighting(self):
+        found, now = self._result_wait_on_a_clock(lambda t: ("", "正在进行"))
+        self.assertFalse(found)
+        self.assertTrue(180 <= now <= 181, now)
+
+    def _timed_out_result_task(self, screen_text, leave_read):
+        task = object.__new__(PVPTask)
+        task.config = {}
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_warning = Mock()
+        task._verified_battles = 1
+        task._wait_for_ocr_pattern_majority = lambda *_args, **_kwargs: (False, "")
+        task.capture_frame = lambda: np.zeros((1080, 1920, 3), dtype=np.uint8)
+        task._ocr_text = lambda *_args, **_kwargs: screen_text
+        steps = []
+        task._close_result_page = lambda: steps.append("✕")
+        task._click_leave_button = lambda: steps.append("离开") or leave_read
+        task._ensure_pvp_hub_after_leave = lambda: steps.append("箱庭") or True
+        task._return_home_from_pvp_hub = lambda: steps.append("主页") or True
+        return task, steps
+
+    def test_result_timeout_leaves_a_misread_result_before_failing(self):
+        # Recovery cannot press ✕ or 离开: left there, 一键日常 stopped.
+        task, steps = self._timed_out_result_task("反复战斗结果 胜利分", leave_read=True)
+        self.assertFalse(PVPTask._wait_result_and_leave(task, 40))
+        self.assertEqual(["✕", "离开", "箱庭", "主页"], steps)
+
+    def test_result_timeout_does_not_press_the_close_point_blind(self):
+        task, steps = self._timed_out_result_task("", leave_read=False)
+        self.assertFalse(PVPTask._wait_result_and_leave(task, 40))
+        self.assertEqual(["离开"], steps)  # looked for 离开 only; none read
 
     def test_pvp_entry_wait_handles_weekly_reward_then_rank_drop_before_hub(self):
         task = object.__new__(PVPTask)
@@ -3010,91 +3110,87 @@ class PVPTaskHelperTest(unittest.TestCase):
         self.assertEqual([10], multiplier_calls)
         self.assertNotIn((1381, 1061, 2.0), clicks)
 
-    def test_ensure_free_ap_enabled_retries_click_until_switch_turns_on(self):
+    def _free_switch_task(self, ratio, after_click=None, free_text="12/40"):
+        """The switch reads ``ratio``; each click applies ``after_click``."""
         task = object.__new__(PVPTask)
         task.info_set = lambda *_args, **_kwargs: None
         task.log_info = lambda *_args, **_kwargs: None
-        switch = {"on": False, "clicks": 0}
-
-        def fake_click(x, y, after_sleep=0.0):
-            switch["clicks"] += 1
-            if switch["clicks"] >= 2:
-                switch["on"] = True
-
-        task._free_ap_switch_on = lambda: switch["on"]
-        task._click_screen_reference = fake_click
-
-        self.assertTrue(PVPTask._ensure_free_ap_enabled(task))
-        self.assertEqual(2, switch["clicks"])
-
-    def test_ensure_free_ap_enabled_fails_after_retry_budget(self):
-        task = object.__new__(PVPTask)
-        task.info_set = lambda *_args, **_kwargs: None
-        task.log_info = lambda *_args, **_kwargs: None
-        task._free_ap_switch_on = lambda: False
         task.capture_frame = lambda: None
-        task._ocr_text = lambda *_args, **_kwargs: "12/40"
+        task._ocr_text = lambda *_args, **_kwargs: free_text
         task.sleep = lambda *_args: None
         task._free_cocktails_short = False
-        clicks = []
-        task._click_screen_reference = lambda x, y, after_sleep=0.0: clicks.append((x, y))
+        switch = {"ratio": ratio, "clicks": []}
+
+        def fake_click(x, y, after_sleep=0.0):
+            switch["clicks"].append((x, y))
+            if after_click is not None:
+                switch["ratio"] = after_click(switch["ratio"])
+
+        task._free_ap_switch_ratio = lambda: switch["ratio"]
+        task._click_screen_reference = fake_click
+        settle = patch("src.tasks.PVPTask.PVP_FREE_AP_SWITCH_SETTLE_SECONDS", 0.0)
+        settle.start()
+        self.addCleanup(settle.stop)
+        return task, switch
+
+    def test_ensure_free_ap_enabled_turns_an_off_switch_on_with_one_click(self):
+        task, switch = self._free_switch_task(0.0, lambda _ratio: 0.37)
+
+        self.assertTrue(PVPTask._ensure_free_ap_enabled(task))
+        self.assertEqual([PVP_FREE_AP_SWITCH_SCREEN_POINT], switch["clicks"])
+
+    def test_ensure_free_ap_enabled_clicks_twice_only_when_nothing_changed(self):
+        # Review #28: an "on" yellow that is not recognised reads as off; the
+        # old three clicks left the player's switch turned off.  Two clicks
+        # that both change nothing put an invisible toggle back as it was.
+        task, switch = self._free_switch_task(0.0, lambda ratio: ratio)
 
         self.assertFalse(PVPTask._ensure_free_ap_enabled(task))
         self.assertFalse(task._free_cocktails_short)
-        self.assertEqual(
-            [PVP_FREE_AP_SWITCH_SCREEN_POINT] * PVP_CLICK_VERIFY_ATTEMPTS,
-            clicks,
-        )
+        self.assertEqual([PVP_FREE_AP_SWITCH_SCREEN_POINT] * 2, switch["clicks"])
+
+    def test_ensure_free_ap_enabled_presses_again_after_a_swallowed_click(self):
+        # BUG-20260906-01: the network swallowed the first click.
+        results = iter((0.0, 0.37))
+        task, switch = self._free_switch_task(0.0, lambda _ratio: next(results))
+
+        self.assertTrue(PVPTask._ensure_free_ap_enabled(task))
+        self.assertEqual([PVP_FREE_AP_SWITCH_SCREEN_POINT] * 2, switch["clicks"])
+
+    def test_ensure_free_ap_enabled_restores_a_switch_its_click_turned_off(self):
+        # Faintly yellow (on, not recognised); the click took the yellow away.
+        task, switch = self._free_switch_task(0.03, lambda ratio: 0.0 if ratio else 0.03)
+
+        self.assertFalse(PVPTask._ensure_free_ap_enabled(task))
+        self.assertEqual([PVP_FREE_AP_SWITCH_SCREEN_POINT] * 2, switch["clicks"])
+        self.assertEqual(0.03, switch["ratio"])
+
+    def test_ensure_free_ap_enabled_leaves_the_switch_alone_with_distorted_colours(self):
+        from src.utils import colour_check
+
+        previous = colour_check.last_check()
+        self.addCleanup(lambda: colour_check.remember(previous))
+        colour_check.remember(colour_check.ColourCheck(40.0, "测试"))
+        task, switch = self._free_switch_task(0.0, lambda _ratio: 0.37)
+
+        self.assertFalse(PVPTask._ensure_free_ap_enabled(task))
+        self.assertEqual([], switch["clicks"])
 
     def test_ensure_free_ap_enabled_reports_no_free_cocktails_as_done(self):
         # Live 4K 2026-09-30: 0/40 free, the game refuses the switch.
-        task = object.__new__(PVPTask)
-        task.info_set = lambda *_args, **_kwargs: None
-        task.log_info = lambda *_args, **_kwargs: None
-        task._free_ap_switch_on = lambda: False
-        task._click_screen_reference = lambda x, y, after_sleep=0.0: None
-        task.capture_frame = lambda: None
-        task._ocr_text = lambda *_args, **_kwargs: "0/40 +1.42K"
-        task.sleep = lambda *_args: None
-        task._free_cocktails_short = False
+        task, _switch = self._free_switch_task(0.0, free_text="0/40 +1.42K")
 
         self.assertFalse(PVPTask._ensure_free_ap_enabled(task))
         self.assertTrue(task._free_cocktails_short)
 
     def test_ensure_free_ap_enabled_single_zero_read_does_not_end_day(self):
         # A dropped digit (10/40 -> 0/40) on one frame must not end the day.
-        task = object.__new__(PVPTask)
-        task.info_set = lambda *_args, **_kwargs: None
-        task.log_info = lambda *_args, **_kwargs: None
-        task._free_ap_switch_on = lambda: False
-        task._click_screen_reference = lambda x, y, after_sleep=0.0: None
-        task.capture_frame = lambda: None
+        task, _switch = self._free_switch_task(0.0)
         reads = iter(["0/40 +1.42K", "10/40 +1.42K"])
         task._ocr_text = lambda *_args, **_kwargs: next(reads)
-        task.sleep = lambda *_args: None
-        task._free_cocktails_short = False
 
         self.assertFalse(PVPTask._ensure_free_ap_enabled(task))
         self.assertFalse(task._free_cocktails_short)
-
-    def test_ensure_free_ap_enabled_readback_confirms_last_click(self):
-        # 末次点击生效时不能误报失败：循环外必须回读一次开关状态
-        # （BUG-20260912-02）。
-        task = object.__new__(PVPTask)
-        task.info_set = lambda *_args, **_kwargs: None
-        task.log_info = lambda *_args, **_kwargs: None
-        switch = {"on": False, "clicks": 0}
-
-        def fake_click(x, y, after_sleep=0.0):
-            switch["clicks"] += 1
-            if switch["clicks"] >= PVP_CLICK_VERIFY_ATTEMPTS:
-                switch["on"] = True
-
-        task._free_ap_switch_on = lambda: switch["on"]
-        task._click_screen_reference = fake_click
-
-        self.assertTrue(PVPTask._ensure_free_ap_enabled(task))
-        self.assertEqual(PVP_CLICK_VERIFY_ATTEMPTS, switch["clicks"])
 
     def _make_multiplier_harness(self, swallow_button=False, swallow_option=False):
         task = object.__new__(PVPTask)
@@ -3116,6 +3212,8 @@ class PVPTaskHelperTest(unittest.TestCase):
                 state["main"] = state["setting"]
 
         task._click_screen_reference = fake_click
+        # No 确认 read: the fixed point is pressed (2026-10-10 confirm change).
+        task._click_ocr_pattern_center = lambda *_args, **_kwargs: False
         task._multiplier_matches = (
             lambda multiplier, timeout=2.0: state["main"] == multiplier
         )
@@ -3236,6 +3334,7 @@ class PVPTaskHelperTest(unittest.TestCase):
             state["landed"] = len(state["clicks"]) >= 2
 
         task._click_screen_reference = fake_click
+        task._click_ocr_pattern_center = lambda *_args, **_kwargs: False
         task._multiplier_matches = lambda multiplier, timeout=2.0: state["landed"]
         task._wait_for_ocr_patterns = lambda *args, **kwargs: (
             not state["landed"],
@@ -3255,8 +3354,13 @@ class PVPTaskHelperTest(unittest.TestCase):
         task.log_info = lambda *_args, **_kwargs: None
         clicks = []
         task._click_screen_reference = lambda x, y, after_sleep=0.0: clicks.append((x, y))
+        task._click_ocr_pattern_center = lambda *_args, **_kwargs: False
         task._multiplier_matches = lambda multiplier, timeout=2.0: False
         task._wait_for_ocr_patterns = lambda *args, **kwargs: (False, "")
+        task._setting_multiplier_matches = lambda _multiplier: False
+        task._start_cost_is = lambda _multiplier: False
+        task._multiplier_seen = lambda: ""
+        task._save_flow_diagnostic = lambda _name: None
 
         self.assertFalse(PVPTask._confirm_setting_multiplier(task, 4))
         self.assertEqual([PVP_MULTIPLIER_CONFIRM_SCREEN_POINT], clicks)
@@ -3412,6 +3516,11 @@ class PvpFreeCocktailGuardTest(unittest.TestCase):
         task = self._task("1倍战斗开始1", "36/40", "自动战斗 40次")
         self.assertFalse(PVPTask._verify_free_cost(task, 1, 0))
 
+    def test_the_checked_count_is_kept_for_the_result_wait(self):
+        task = self._task("10倍战斗开始10", "36/40", "自动战斗 1次")
+        self.assertTrue(PVPTask._verify_free_cost(task, 10, 1))
+        self.assertEqual(1, task._verified_battles)
+
     def test_cancelled_dialog_never_presses_start(self):
         task = object.__new__(PVPTask)
         task.config = {"战斗场数": "2"}
@@ -3434,12 +3543,15 @@ class PvpFreeCocktailGuardTest(unittest.TestCase):
     def test_count_stepping_stops_at_the_cap(self):
         task = object.__new__(PVPTask)
         task.info_set = lambda *_a: None
+        task.log_info = lambda *_a, **_k: None
         task.sleep = lambda *_a: None
         presses = []
         task._click_reference = lambda *a, **k: presses.append(a)
         task._battle_count_value = lambda: 2
-        self.assertEqual(2, PVPTask._set_battle_count(task, 3))
-        self.assertLessEqual(len(presses), 2)  # MIN, one +1, then stop
+        with patch("src.tasks.PVPTask.PVP_COUNT_CONFIRM_SECONDS", 0.0):
+            self.assertEqual(2, PVPTask._set_battle_count(task, 3))
+        # MIN, +1, the same +1 once more (it may have been swallowed), then stop.
+        self.assertLessEqual(len(presses), 3)
 
 
 

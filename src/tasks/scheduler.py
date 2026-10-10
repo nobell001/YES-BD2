@@ -86,7 +86,9 @@ class SchedulePolicy:
 
 
 # 受调度任务注册表，键为任务显示名（run_history 同名）。
-# 日常类锚定 08:00（UTC+8）；每周跑图锚定周一 08:00。
+# 日常类锚定 08:00（UTC+8），周常锚定周一 08:00。每周跑图每天都跑（一天最多
+# 7 张，按周进度跑到本周做完），所以也是日常：锚在周一时，周二成功后整周
+# 都被「跑没跑完的」跳过（2026-10-10 预防检查）。
 # 不注册“一键完成日常”自身：自动调度只消费子任务账本，批处理整体只在
 # “仅执行今日未完成”模式下作为载体启动，其自身 next_run 无消费者。
 TASK_POLICIES: dict[str, SchedulePolicy] = {
@@ -103,7 +105,7 @@ TASK_POLICIES: dict[str, SchedulePolicy] = {
     "领取任务奖励": SchedulePolicy("daily"),
     "领取通行证": SchedulePolicy("daily"),
     "领取邮件": SchedulePolicy("daily"),
-    "每周跑图": SchedulePolicy("weekly"),
+    "每周跑图": SchedulePolicy("daily"),
     "浏览街机菜单": SchedulePolicy("weekly"),
     "小屋增加人气": SchedulePolicy("weekly"),
     "每周制作装备": SchedulePolicy("weekly"),
@@ -113,6 +115,18 @@ TASK_POLICIES: dict[str, SchedulePolicy] = {
 
 def policy_for(task_name: str) -> SchedulePolicy | None:
     return TASK_POLICIES.get(str(task_name))
+
+
+def _success_next_run(policy: SchedulePolicy, moment: float) -> float | None:
+    """When a task that succeeded at ``moment`` is due again under ``policy``."""
+    candidates: list[float] = []
+    if policy.anchor == "daily":
+        candidates.append(next_daily_anchor_ts(moment))
+    elif policy.anchor == "weekly":
+        candidates.append(next_weekly_anchor_ts(moment))
+    if policy.success_interval_minutes > 0:
+        candidates.append(moment + policy.success_interval_minutes * 60.0)
+    return min(candidates) if candidates else None
 
 
 class TaskScheduleStore:
@@ -157,7 +171,18 @@ class TaskScheduleStore:
         if record is None:
             return None
         value = record.get("next_run")
-        return float(value) if isinstance(value, (int, float)) else None
+        if not isinstance(value, (int, float)):
+            return None
+        value = float(value)
+        # A success saved under an older, longer policy (每周跑图 was weekly
+        # until 2026-10-10) must not keep the task waiting past today's policy.
+        policy = policy_for(task_name)
+        updated = record.get("updated")
+        if record.get("ok") and policy is not None and isinstance(updated, (int, float)):
+            again = _success_next_run(policy, float(updated))
+            if again is not None:
+                value = min(value, again)
+        return value
 
     def last_run_ok(self, task_name: str) -> bool | None:
         record = self._records.get(str(task_name))
@@ -199,14 +224,9 @@ class TaskScheduleStore:
 
         candidates: list[float] = []
         if ok:
-            if resolved.anchor == "daily":
-                candidates.append(next_daily_anchor_ts(moment))
-            elif resolved.anchor == "weekly":
-                candidates.append(next_weekly_anchor_ts(moment))
-            if resolved.success_interval_minutes > 0:
-                candidates.append(
-                    moment + resolved.success_interval_minutes * 60.0
-                )
+            again = _success_next_run(resolved, moment)
+            if again is not None:
+                candidates.append(again)
         else:
             previous = self._records.get(str(task_name), {})
             earlier = previous.get("failures", 1)

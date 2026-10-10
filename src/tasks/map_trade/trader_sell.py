@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
+from src.tasks.map_trade import trade_detail
 from src.tasks.map_trade.calendar import (
     SALE_PRICE_REFRESH_HOUR,
     parse_calendar_payload,
@@ -87,6 +88,13 @@ from src.utils.image_utils import relative_roi_frame, template_match_response, t
 # 等待单个日历条目全部可售卡片 OCR 确认的总时长与轮询间隔。
 SALE_ITEM_CANDIDATES_WAIT_TIMEOUT = 8.0
 SALE_ITEM_CANDIDATES_POLL_INTERVAL = 0.5
+
+
+def _with_one_extra_digit(longer: int, shorter: int) -> bool:
+    """``longer`` reads as ``shorter`` with one digit added (40245 -> 140245)."""
+
+    a, b = str(longer), str(shorter)
+    return len(a) == len(b) + 1 and any(a[:i] + a[i + 1 :] == b for i in range(len(a)))
 
 
 class SellFlowMixin:
@@ -575,6 +583,9 @@ class SellFlowMixin:
             before_toast_id=before_toast_id,
         ):
             return None
+        trade_detail.note_sale(
+            self, entry.item, getattr(self, "_last_selected_sale_quantity", None)
+        )
         return owned, True
 
     @staticmethod
@@ -1416,6 +1427,8 @@ class SellFlowMixin:
         timeout: float = SALE_DIALOG_TIMEOUT,
     ) -> bool:
         end_at = monotonic() + max(0.0, timeout)
+        # How many this sale sells, for the run's 卖了 line (YES-BD2 #6).
+        self._last_selected_sale_quantity = None
         while True:
             text = self.vision.ocr_text(
                 self.vision.capture(),
@@ -1426,6 +1439,7 @@ class SellFlowMixin:
             if selected is not None and selected > 0:
                 if expected is None or selected == expected:
                     self._status("出售已选数量", str(selected))
+                    self._last_selected_sale_quantity = selected
                     return True
             if monotonic() >= end_at:
                 return False
@@ -1457,15 +1471,17 @@ class SellFlowMixin:
         self, entry: CalendarEntry, owned: int, available: int | None = None
     ) -> bool:
         if entry.reserve > 0:
+            if not self._owned_matches_sale_max(entry, owned, available):
+                return False
             if available is not None and owned - available >= entry.reserve:
-                # A whole group still keeps the reserve: MAX, not the slider
-                # (live 2026-10-07: 兽肉 684771, keep 10000, groups of 99999 -
-                # seven slider clicks per group, every one clamped at 99999).
+                # A whole group still keeps the reserve: MAX (pressed by the
+                # check above), not the slider (live 2026-10-07: 兽肉 684771,
+                # keep 10000, groups of 99999 - seven slider clicks per group,
+                # every one clamped at 99999).
                 self.task.log_info(
                     f"卖：{entry.item}拥有{owned}个，这组最多{available}个，按MAX后"
                     f"还保留{owned - available}个（目标至少{entry.reserve}个）。"
                 )
-                self.task.operate_click(*SALE_MAX_POINT, after_sleep=0.5)
                 return True
             return self._choose_reserved_quantity(entry, owned, available)
         if bool(self.task.config.get("出售保险", False)):
@@ -1473,6 +1489,30 @@ class SellFlowMixin:
         else:
             self.task.operate_click(*SALE_MAX_POINT, after_sleep=0.5)
         return True
+
+    def _owned_matches_sale_max(
+        self, entry: CalendarEntry, owned: int, available: int | None
+    ) -> bool:
+        """MAX selects what the slider really reaches, min(owned, group).
+
+        The kept amount is worked out from the owned count alone: a count read
+        with an extra digit every time (40245 as 140245) sold the whole stock
+        while the log said the reserve was kept (review #15).  MAX selecting
+        another count, or the owned count minus one digit, means owned was
+        misread, and nothing is sold.
+        """
+
+        most = min(owned, available) if available else owned
+        self.task.operate_click(*SALE_MAX_POINT, after_sleep=0.5)  # 不用确认：下面读回已选数量
+        selected = self._read_selected_quantity()
+        if selected == most and not _with_one_extra_digit(owned, selected):
+            return True
+        self.task.log_warning(
+            f"卖：{entry.item}按MAX选到{'?' if selected is None else selected}个，"
+            f"和认到的拥有{owned}个（这组最多{available}个）对不上，可能把拥有数量认错了，"
+            f"这一组不出售，以免卖掉要保留的{entry.reserve}个。"
+        )
+        return False
 
     def _choose_reserved_quantity(
         self, entry: CalendarEntry, owned: int, available: int | None = None

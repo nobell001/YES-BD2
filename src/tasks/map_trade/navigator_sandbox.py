@@ -53,6 +53,7 @@ from src.tasks.map_trade.navigator_constants import (
     BATTLE_RESULT_LEAVE_TEXT,
     EXIT_PICKER_BATTLE,
     EXIT_PICKER_SAFE,
+    FIRST_CARD_PAID_DIALOG_MESSAGE,
     AREA_MAP_TELEPORT_BRIGHT_MAXIMUM_SPREAD,
     AREA_MAP_TELEPORT_BRIGHT_MINIMUM_GRAY,
     AREA_MAP_TELEPORT_BRIGHT_NEUTRAL_RATIO,
@@ -65,6 +66,10 @@ from src.tasks.map_trade.navigator_constants import (
     MERCHANT_NAV_GUIDE_REFERENCE_POINT,
     MERCHANT_NAV_GUIDE_TEMPLATE,
     HUNTING_GROUND_NAV_ENTRY,
+    MERCHANT_NAV_TOAST_OCR_ROI,
+    MERCHANT_NAV_UNREACHABLE_KEYWORD,
+    MERCHANT_TRAVEL_DIALOG_KEYWORDS,
+    MERCHANT_TRAVEL_DIALOG_OCR_ROI,
     MERCHANT_NAV_GUIDE_TIMEOUT,
     MERCHANT_NAV_MENU_OCR_INTERVAL,
     MERCHANT_NAV_MENU_OCR_ROI,
@@ -147,6 +152,7 @@ from src.tasks.map_trade.navigator_constants import (
 from src.tasks.map_trade.vision import normalize_text
 from src.utils.calibration import FHD_1080
 from src.utils.field_followers import dismiss_once_per_run
+from src.utils.press_confirm import press_and_confirm
 
 
 # Field status text after a map click: '自动移动中：魔法阵' (bottom centre) and
@@ -828,12 +834,15 @@ class SandboxNavigationMixin:
                     sandbox_hits = 0
             else:
                 sandbox_hits = 0
-            if (
-                handle_intermediate
-                and last_state not in {ScreenState.LOADING, ScreenState.SANDBOX}
-                and self._handle_story_card_intermediate(frame)
-            ):
-                continue
+            if handle_intermediate and last_state not in {
+                ScreenState.LOADING,
+                ScreenState.SANDBOX,
+            }:
+                handled = self._handle_story_card_intermediate(frame)
+                if isinstance(handled, NavigationResult):
+                    return handled
+                if handled:
+                    continue
             if interval > 0:
                 self.task.sleep(interval)
         return NavigationResult(False, last_state, failure_message)
@@ -877,12 +886,12 @@ class SandboxNavigationMixin:
                 hits = 0
                 if last_state != ScreenState.LOADING and self._auto_moving(frame):
                     end_at = min(max(end_at, monotonic() + stall), walk_cap)
-                if (
-                    handle_intermediate
-                    and last_state != ScreenState.LOADING
-                    and self._handle_story_card_intermediate(frame)
-                ):
-                    continue
+                if handle_intermediate and last_state != ScreenState.LOADING:
+                    handled = self._handle_story_card_intermediate(frame)
+                    if isinstance(handled, NavigationResult):
+                        return handled
+                    if handled:
+                        continue
             if interval > 0:
                 self.task.sleep(interval)
         return NavigationResult(False, last_state, failure_message)
@@ -906,7 +915,8 @@ class SandboxNavigationMixin:
             )
             if result.success:
                 dismiss_once_per_run(self)
-            if result.success or attempt:
+            # A dialog that may spend something stops here, not retried.
+            if result.success or attempt or result.message == FIRST_CARD_PAID_DIALOG_MESSAGE:
                 return result
             remaining = max(0.0, deadline - monotonic())
             if remaining <= 0.0:
@@ -1325,14 +1335,65 @@ class SandboxNavigationMixin:
         self,
         frame: np.ndarray,
     ) -> bool:
-        """Confirm the selected navigation destination when its OCR button appears."""
+        """Confirm the selected navigation destination when its OCR button
+        appears; True only once the button went away or the walk began."""
 
         try:
-            boxes = self.vision.ocr_boxes(frame, "箱庭徒步导航传送阵确认")
+            button = self._sandbox_navigation_destination_button(frame)
         except Exception as exc:
             self._status("箱庭徒步导航传送阵确认 OCR错误", str(exc))
             return False
-        for box in boxes:
+        if button is None:
+            return False
+        label, center = button
+        near = max(8, round(frame.shape[0] * 0.01))
+
+        def look() -> str:
+            """"walk", "gone", "same" (this button still up) or "unknown"."""
+            shown = self.vision.capture()
+            if any(self._walk_flags(shown)):
+                return "walk"
+            try:
+                again = self._sandbox_navigation_destination_button(shown)
+            except (TaskDisabledException, FinishedException):
+                raise
+            except Exception:
+                return "unknown"
+            if again is None:
+                return "gone"
+            same = (
+                again[0] == label
+                and abs(again[1][0] - center[0]) <= near
+                and abs(again[1][1] - center[1]) <= near
+            )
+            return "same" if same else "unknown"
+
+        self._status("箱庭徒步导航传送阵确认", f"点击{label}中心={center}")
+        # A lost press left the dialog up while the caller waited for a walk
+        # that never came; it is pressed again only while the same button
+        # is still there.
+        return bool(
+            press_and_confirm(
+                f"导航目的地{label}",
+                lambda: self.vision.click_client(
+                    center,
+                    frame.shape,
+                    after_sleep=SANDBOX_NAVIGATION_OCR_INTERVAL,
+                ),
+                lambda: look() in ("walk", "gone"),
+                still_before=lambda: look() == "same",
+                sleep=self.task.sleep,
+                log=self.task.log_info,
+            )
+        )
+
+    def _sandbox_navigation_destination_button(
+        self,
+        frame: np.ndarray,
+    ) -> tuple[str, tuple[int, int]] | None:
+        """(label, center) of the destination dialog's 确认/生成 button."""
+
+        for box in self.vision.ocr_boxes(frame, "箱庭徒步导航传送阵确认"):
             label = normalize_text(
                 self.vision.simplify(str(getattr(box, "name", "")))
             )
@@ -1348,14 +1409,8 @@ class SandboxNavigationMixin:
             center = self._ocr_box_center(box)
             if center is None:
                 continue
-            self.vision.click_client(
-                center,
-                frame.shape,
-                after_sleep=SANDBOX_NAVIGATION_OCR_INTERVAL,
-            )
-            self._status("箱庭徒步导航传送阵确认", f"点击{label}中心={center}")
-            return True
-        return False
+            return label, center
+        return None
 
     def _walk_to_sandbox_teleport_interaction(self) -> NavigationResult:
         """Use the sandbox navigation map to walk back to a portal interaction prompt."""
@@ -2383,7 +2438,18 @@ class SandboxNavigationMixin:
             self.task.log_warning(f"跑图：导航菜单里没有{wanted}。")
             return None
         entry, point, shape = choice
-        self.vision.click_client(point, shape, after_sleep=0.8)
+        # A lost press left the menu open, and the field check below then
+        # passed on the unchanged field as if the trip had been made.
+        if not press_and_confirm(
+            f"导航菜单{entry}",
+            lambda: self.vision.click_client(point, shape, after_sleep=0.8),
+            lambda: self._nav_entry_taken(entry),
+            still_before=lambda: not self._nav_entry_taken(entry),
+            sleep=self.task.sleep,
+            log=self.task.log_info,
+        ):
+            self.task.log_warning(f"跑图：点了导航菜单的{entry}没有反应。")
+            return None
         if self._confirm_travel() == "stuck":
             return None
         arrived = self._wait_for_field_hud(
@@ -2429,6 +2495,33 @@ class SandboxNavigationMixin:
                 return None
             seen = bool(listed)
             self.task.sleep(MERCHANT_NAV_MENU_OCR_INTERVAL)
+
+    def _nav_entry_taken(self, entry: str) -> bool:
+        """After pressing ``entry`` in the ≡ menu: the menu no longer lists
+        it, or the 立即前往 dialog or the 无法移动 toast is up."""
+
+        def listed(frame) -> bool:
+            return any(
+                entry in normalize_text(self.vision.simplify(str(getattr(box, "name", ""))))
+                for box in self.vision.ocr_boxes(frame, "导航菜单", MERCHANT_NAV_MENU_OCR_ROI)
+            )
+
+        frame = self.vision.capture()
+        if not listed(frame):
+            # Gone on two frames: one OCR miss is not a trip.
+            frame = self.vision.capture()
+            if not listed(frame):
+                return True
+        title = self.vision.ocr_text(frame, "前往确认", roi=MERCHANT_TRAVEL_DIALOG_OCR_ROI)
+        if any(
+            word in normalize_text(self.vision.simplify(str(title)))
+            for word in MERCHANT_TRAVEL_DIALOG_KEYWORDS
+        ):
+            return True
+        toast = self.vision.ocr_text(frame, "导航提示", roi=MERCHANT_NAV_TOAST_OCR_ROI)
+        return MERCHANT_NAV_UNREACHABLE_KEYWORD in normalize_text(
+            self.vision.simplify(str(toast))
+        )
 
     def _field_map_header(self) -> str:
         return normalize_text(
@@ -2856,21 +2949,22 @@ class SandboxNavigationMixin:
             changed,
         )
 
-    def _wait_for_area_map_change(
+    def _area_map_page_state(
         self,
         card: CardSpec,
         previous: AreaMapContext,
-    ) -> AreaMapContext | None:
-        end_at = monotonic() + AREA_MAP_CHANGE_TIMEOUT
-        while monotonic() <= end_at:
-            current = self._capture_area_map_context(card)
-            if current.is_area_map and (
-                current.normalized_text != previous.normalized_text
-                or current.candidate_target_keys != previous.candidate_target_keys
-            ) and current.map_page_mode == previous.map_page_mode:
-                return current
-            self.task.sleep(AREA_MAP_CHANGE_INTERVAL)
-        return None
+    ) -> tuple[str, AreaMapContext]:
+        """("moved" | "same" | "unknown", the page now) against ``previous``;
+        "unknown" while no area map of the same mode reads."""
+        current = self._capture_area_map_context(card)
+        if not current.is_area_map or current.map_page_mode != previous.map_page_mode:
+            return "unknown", current
+        if (
+            current.normalized_text != previous.normalized_text
+            or current.candidate_target_keys != previous.candidate_target_keys
+        ):
+            return "moved", current
+        return "same", current
 
     def _move_area_map(
         self,
@@ -2890,12 +2984,31 @@ class SandboxNavigationMixin:
             center = (round(x * width / 1920), round(y * height / 1080))
         else:
             return None
-        self.vision.click_client(
-            center,
-            context.frame_shape,
-            after_sleep=AREA_MAP_CLICK_SETTLE_SECONDS,
+        pages: list[AreaMapContext] = []
+
+        def moved() -> bool:
+            state, current = self._area_map_page_state(card, context)
+            if state == "moved":
+                pages.append(current)
+            return state == "moved"
+
+        # One dropped press read as the end of the list and turned the seek
+        # round (or failed it): pressed once more while the page stays.
+        flipped = press_and_confirm(
+            f"区域地图{'向右' if direction == 'right' else '向左'}翻页",
+            lambda: self.vision.click_client(
+                center,
+                context.frame_shape,
+                after_sleep=AREA_MAP_CLICK_SETTLE_SECONDS,
+            ),
+            moved,
+            still_before=lambda: self._area_map_page_state(card, context)[0] == "same",
+            timeout=AREA_MAP_CHANGE_TIMEOUT,
+            poll=AREA_MAP_CHANGE_INTERVAL,
+            sleep=self.task.sleep,
+            log=lambda message: self._status("区域地图", message),
         )
-        return self._wait_for_area_map_change(card, context)
+        return pages[-1] if flipped else None
 
     def _close_area_map(self, context: AreaMapContext) -> NavigationResult:
         if not context.map_page_mode.is_teleport_map:

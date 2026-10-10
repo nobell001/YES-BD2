@@ -6,9 +6,10 @@ press a claim button located by its own OCR text inside a narrow ROI (never a
 blind fixed point: the pass page also carries a purchase button), dismiss the
 reward overlay, and return home with bounded back-button retries.
 
-Pressing a greyed-out claim button is harmless, so "nothing to claim" is
-detected by the page staying unchanged after the press instead of guessing the
-button state from colours that were never observed in the enabled state.
+A grey claim button means nothing to claim and is not pressed.  A lit one
+counts as claimed only once it reads grey or is gone (under the reward popup)
+after the press: a swallowed press leaves the page unchanged, which used to
+read as 「无新奖励」.
 """
 
 from __future__ import annotations
@@ -287,8 +288,11 @@ class ClaimPageMixin(TaskVisionMixin):
         click is repeated only while the frame from before it is still shown.
         False means nothing changed (already selected, or every click lost).
         """
+        # Compared with the frame from before the first click: a click that
+        # landed late made the retry's own "before" the new page, and the
+        # retry then read as unchanged.
+        before = self._region_thumbs(self.capture_frame(), rois)
         for attempt in range(1, attempts + 1):
-            before = self._region_thumbs(self.capture_frame(), rois)
             click()
             end_at = monotonic() + max(0.0, wait)
             while True:
@@ -447,7 +451,26 @@ class ClaimPageMixin(TaskVisionMixin):
         baseline = self._frame_brightness(frame)
         self._sleep_after_recognition()
         self.info_set("当前阶段", f"{label}：点击领取")
-        self._click_box(target, after_sleep=1.0)
+
+        def still_lit() -> bool:
+            # A swallowed press leaves the page as it was; a claim greys the
+            # button or covers it with the reward popup.
+            now = self.capture_frame()
+            boxes = self._roi_boxes(now, button.roi, f"{label}按钮")
+            found = self._box_with(boxes, button.keywords)
+            return found is not None and not claim_button_dimmed(now, found)
+
+        outcome = self.press_and_confirm(
+            label,
+            lambda: self._click_box(target, after_sleep=1.0),
+            lambda: not still_lit(),
+            still_before=still_lit,
+        )
+        if not outcome:
+            self.info_set(f"{label}结果", "按钮一直亮着，未领到")
+            self.log_info(f"{label}：按了领取，按钮一直亮着，没有领到。")
+            self._save_flow_diagnostic(f"{self.claim_log_name}_{label}_claim_unconfirmed")
+            return False
         return self._settle_after_claim(label, title_keywords, baseline)
 
     def _save_reward_picture(self, frame) -> None:

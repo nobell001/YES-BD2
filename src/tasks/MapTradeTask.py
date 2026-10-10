@@ -10,6 +10,7 @@ from qfluentwidgets import FluentIcon
 
 from src.tasks import problem_report
 from src.tasks.BaseBD2Task import BaseBD2Task
+from src.tasks.map_trade import trade_detail
 from src.tasks.map_trade.models import OPTIONAL_COOKING_RECIPES
 from src.tasks.map_trade.navigator import Navigator
 from src.tasks.map_trade.phase_ledger import ONLY_INCOMPLETE_KEY, PhaseLedger
@@ -106,19 +107,30 @@ class MapAutomationTaskBase(BaseBD2Task):
             return "阈值必须是数字。"
         return None
 
-    def _run_phases(self, navigator, phases) -> bool:
+    # A phase that only makes sense after another one worked (料理 cooks what
+    # 买 bought today): it is not run when that one failed.
+    phase_needs: dict[str, str] = {}
+
+    def _run_phases(self, navigator, phases, after_home=None) -> bool:
         completed: list[str] = []
         failed: list[str] = []
         skipped: list[str] = []
+        # Home was not reached after a failed phase: nothing more is tried.
+        stranded = False
         self.info_set("状态", f"{self.task_log_name}启动。")
         try:
-            for name, config_key, action in phases:
+            for index, (name, config_key, action) in enumerate(phases):
                 if isinstance(config_key, (tuple, list, set)):
                     enabled = any(bool(self.config.get(key, True)) for key in config_key)
                 else:
                     enabled = bool(self.config.get(config_key, True))
                 if not enabled:
                     skipped.append(name)
+                    continue
+                needed = self.phase_needs.get(name)
+                if needed in failed:
+                    skipped.append(name)
+                    self.log_info(f"{self.task_log_name}：{needed}没有成功，这次不做{name}。")
                     continue
                 self.info_set("当前阶段", name)
                 self.log_info(f"{self.task_log_name}：开始{name}。")
@@ -132,10 +144,6 @@ class MapAutomationTaskBase(BaseBD2Task):
                     if not success:
                         self._note_phase_problem("fail", f"{name}：{message}" if message else name)
                         self._save_diagnostic(f"{self.diagnostic_prefix}_{name}_failed")
-                        self.log_warning(
-                            f"{self.task_log_name}：{name}失败，停止后续阶段。"
-                        )
-                        break
                 except (TaskDisabledException, FinishedException):
                     raise
                 except Exception as exc:
@@ -143,27 +151,23 @@ class MapAutomationTaskBase(BaseBD2Task):
                     self._note_phase_problem("error", f"{name}：{exc}")
                     self.log_error(f"{self.task_log_name}子流程失败：{name}。", exc)
                     self._save_diagnostic(f"{self.diagnostic_prefix}_{name}_error")
+                if name not in failed or index + 1 == len(phases):
+                    continue
+                # Audit #14: a failed 买 or 料理 also stopped the day's 卖.
+                # From the home screen the later phases still run; they stop
+                # only when home is not reached.
+                if not self._return_home_after_phases(navigator):
+                    stranded = True
                     self.log_warning(
-                        f"{self.task_log_name}：{name}异常，停止后续阶段。"
+                        f"{self.task_log_name}：{name}失败后回不到主页，停止后续阶段。"
                     )
                     break
+                if after_home is not None:
+                    after_home()
+                self.log_warning(f"{self.task_log_name}：{name}失败，已回到主页，继续后续阶段。")
         finally:
-            self.info_set("当前阶段", "返回章节主页")
-            try:
-                returned = navigator.return_home()
-            except (TaskDisabledException, FinishedException):
-                raise
-            except Exception as exc:
-                self.log_error(f"{self.task_log_name}：返回章节主页异常。", exc)
-                self._save_diagnostic(f"{self.diagnostic_prefix}_return_home_error")
-                if not self._recover_home_after_trade():
-                    failed.append("返回章节主页")
-            else:
-                if not returned.success:
-                    self.log_warning(returned.message)
-                    self._save_diagnostic(f"{self.diagnostic_prefix}_return_home_error")
-                    if not self._recover_home_after_trade():
-                        failed.append("返回章节主页")
+            if stranded or not self._return_home_after_phases(navigator):
+                failed.append("返回章节主页")
 
         self.info_set("完成", "、".join(completed) or "-")
         self.info_set("失败", "、".join(failed) or "-")
@@ -174,6 +178,23 @@ class MapAutomationTaskBase(BaseBD2Task):
         self.info_set("状态", f"{self.task_log_name}完成。")
         self.log_completion(f"{self.task_log_name}：所有已开启流程完成。")
         return True
+
+    def _return_home_after_phases(self, navigator) -> bool:
+        """Home by the navigator, else by the generic back arrows and dialogs."""
+        self.info_set("当前阶段", "返回章节主页")
+        try:
+            returned = navigator.return_home()
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception as exc:
+            self.log_error(f"{self.task_log_name}：返回章节主页异常。", exc)
+            self._save_diagnostic(f"{self.diagnostic_prefix}_return_home_error")
+            return self._recover_home_after_trade()
+        if returned.success:
+            return True
+        self.log_warning(returned.message)
+        self._save_diagnostic(f"{self.diagnostic_prefix}_return_home_error")
+        return self._recover_home_after_trade()
 
     def _note_phase_problem(self, how: str, note: str) -> None:
         """Keep the 问题摘要 moment before going home: the step, the reason
@@ -209,6 +230,7 @@ class MapTradeTask(MapAutomationTaskBase):
     ocr_threshold_key = TRADE_OCR_THRESHOLD_KEY
     task_log_name = "跑商"
     diagnostic_prefix = "map_trade"
+    phase_needs = {"制作料理": "买"}
     status_keys = [
         "启用",
         "状态",
@@ -310,6 +332,13 @@ class MapTradeTask(MapAutomationTaskBase):
         )
     def load_config(self):
         legacy = _read_config(_config_path(self.__class__.__name__))
+        if not self._sale_day_keys:
+            # The price table could not be read this time: keep the saved 不卖
+            # choices, which ok-script would drop as unknown keys.
+            for day in range(1, 32):
+                key = sale_day_key(day)
+                if isinstance(legacy.get(key), list):
+                    self.default_config[key] = legacy[key]
         section_values = _trade_section_migration_values(legacy)
         _migrate_collection_config(legacy)
         super().load_config()
@@ -346,4 +375,7 @@ class MapTradeTask(MapAutomationTaskBase):
         phases = tuple(
             (name, name, ledger.once(name, action, skip_done=skip_done)) for name, action in steps
         )
-        return self._run_phases(navigator, phases)
+        try:
+            return self._run_phases(navigator, phases, after_home=trader.left_shop)
+        finally:
+            trade_detail.publish(self, getattr(trader, "trade_detail", None))

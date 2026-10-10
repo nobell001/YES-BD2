@@ -84,10 +84,10 @@
   "ja": "• 完全バックグラウンド実行：ゲームは独立した分身ウィンドウで動き、最小化しても続きます\n• いつも通りPCを使えます。マウスとキーボードは奪われません\n\n初回のみ設定が必要です：\n• Windows の確認が表示されたら「はい」を押してください\n• 設定が終わったら、もう一度このボタンを押してください",
   "ko": "• 완전 백그라운드 실행: 게임은 별도의 분신 창에서 실행되며, 최소화해도 계속됩니다\n• 평소처럼 PC를 사용하세요. 마우스와 키보드를 빼앗지 않습니다\n\n처음 한 번 설정이 필요합니다:\n• Windows 확인 창이 뜨면 \"예\"를 누르세요\n• 설정이 끝나면 이 버튼을 다시 누르세요"
  },
- "• 纯后台执行：游戏在独立的分身窗口里跑，缩小也照跑\n• 照常用电脑，鼠标键盘不会被抢\n\n要先改一个登录设定：\n• 分身要用密码登录，现在只允许 PIN／脸\n• 在「登录选项」关掉「只允许 Windows Hello 登录」\n• 改好后再按一次这个按钮": {
-  "en": "• Runs fully in the background: the game plays in its own clone window, and keeps going when minimized\n• Keep using your PC; your mouse and keyboard stay yours\n\nOne sign-in setting needs changing first:\n• The clone signs in with a password; this account only allows PIN/face now\n• In \"Sign-in options\", turn off \"Only allow Windows Hello sign-in\"\n• Then press this button again",
-  "ja": "• 完全バックグラウンド実行：ゲームは独立した分身ウィンドウで動き、最小化しても続きます\n• いつも通りPCを使えます。マウスとキーボードは奪われません\n\n先にサインイン設定を1つ変更してください：\n• 分身はパスワードでサインインしますが、今は PIN／顔のみ許可されています\n• 「サインイン オプション」で「Windows Hello サインインのみを許可する」をオフにします\n• 変更したら、もう一度このボタンを押してください",
-  "ko": "• 완전 백그라운드 실행: 게임은 별도의 분신 창에서 실행되며, 최소화해도 계속됩니다\n• 평소처럼 PC를 사용하세요. 마우스와 키보드를 빼앗지 않습니다\n\n먼저 로그인 설정 하나를 바꿔야 합니다:\n• 분신은 비밀번호로 로그인하는데, 지금은 PIN/얼굴만 허용됩니다\n• \"로그인 옵션\"에서 \"Windows Hello 로그인만 허용\"을 끄세요\n• 바꾼 뒤 이 버튼을 다시 누르세요"
+ "• 纯后台执行：游戏在独立的分身窗口里跑，缩小也照跑\n• 照常用电脑，鼠标键盘不会被抢\n\n要先改一个登录设定：\n• 分身要用帐户密码登录，现在只允许 Windows Hello\n• 在「登录选项」最下面的「其他设置」，关掉「仅允许对此设备上的 Microsoft 帐户使用 Windows Hello 登录」\n• 人脸和 PIN 不用关\n• 改好后再按一次这个按钮": {
+  "en": "• Runs fully in the background: the game plays in its own clone window, and keeps going when minimized\n• Keep using your PC; your mouse and keyboard stay yours\n\nOne sign-in setting must change first:\n• The clone signs in with your account password; right now this PC only allows Windows Hello\n• In \"Sign-in options\", under \"Additional settings\" at the bottom, turn off \"For improved security, only allow Windows Hello sign-in for Microsoft accounts on this device\"\n• Face and PIN can stay on\n• Then press this button again",
+  "ja": "• 完全バックグラウンド実行：ゲームは独立した分身ウィンドウで動き、最小化しても続きます\n• いつも通りPCを使えます。マウスとキーボードは奪われません\n\n先にサインイン設定を 1 つ変更してください：\n• 分身はアカウントのパスワードでサインインしますが、今このPCは Windows Hello のみ許可しています\n• 「サインイン オプション」の一番下「その他の設定」で、「セキュリティ向上のため、このデバイスでは Microsoft アカウント用に Windows Hello サインインのみを許可する」をオフにする\n• 顔認証と PIN はそのままで大丈夫です\n• 変更したら、もう一度このボタンを押す",
+  "ko": "• 완전 백그라운드 실행: 게임은 별도의 분신 창에서 실행되며, 최소화해도 계속됩니다\n• 평소처럼 PC를 사용하세요. 마우스와 키보드를 빼앗지 않습니다\n\n먼저 로그인 설정 하나를 바꿔야 합니다:\n• 분신은 계정 비밀번호로 로그인하는데, 지금 이 PC는 Windows Hello만 허용합니다\n• '로그인 옵션' 맨 아래 '추가 설정'에서 '보안 향상을 위해 이 장치에서 Microsoft 계정에 대해 Windows Hello 로그인만 허용'을 끄세요\n• 얼굴 인식과 PIN은 끄지 않아도 됩니다\n• 바꾼 뒤 이 버튼을 다시 누르세요"
  },
  "• 纯后台执行：游戏在独立的分身窗口里跑，缩小也照跑\n• 照常用电脑，鼠标键盘不会被抢\n\n按「前往」后：\n• Windows 确认请按「是」\n• 第一次要打账户密码（不是 PIN），之后会记住\n• 游戏和日常自动开始，进度在这里看": {
   "en": "• Runs fully in the background: the game plays in its own clone window, and keeps going when minimized\n• Keep using your PC; your mouse and keyboard stay yours\n\nAfter you press \"Go\":\n• Press \"Yes\" on the Windows confirmation\n• The first time, type your account password (not the PIN); it's remembered after that\n• The game and the Dailies start by themselves; follow the progress here",
@@ -674,10 +674,10 @@
   "ja": "最初に一度だけ設定が必要です：\n• Windows の確認が出たら「はい」を押す\n• 設定が終わったら、もう一度このボタンを押す",
   "ko": "처음에 한 번 설정이 필요합니다:\n• Windows 확인 창이 뜨면 ‘예’를 누르세요\n• 설정이 끝나면 이 버튼을 다시 누르세요"
  },
- "要先改一个登录设定：\n• 分身要用密码登录，现在只允许 PIN／脸\n• 在「登录选项」关掉「只允许 Windows Hello 登录」\n• 改好后再按一次这个按钮": {
-  "en": "One sign-in setting must change first:\n• The clone signs in with a password; right now only PIN/face is allowed\n• In \"Sign-in options\", turn off \"Only allow Windows Hello sign-in\"\n• Then press this button again",
-  "ja": "先にサインイン設定を 1 つ変更してください：\n• 分身はパスワードでサインインしますが、今は PIN／顔認証のみ許可されています\n• 「サインイン オプション」で「Windows Hello サインインのみを許可する」をオフにする\n• 変更したら、もう一度このボタンを押す",
-  "ko": "먼저 로그인 설정 하나를 바꿔야 합니다:\n• 분신은 비밀번호로 로그인하는데 지금은 PIN/얼굴만 허용됨\n• ‘로그인 옵션’에서 ‘Windows Hello 로그인만 허용’을 끄세요\n• 바꾼 뒤 이 버튼을 다시 누르세요"
+ "要先改一个登录设定：\n• 分身要用帐户密码登录，现在只允许 Windows Hello\n• 在「登录选项」最下面的「其他设置」，关掉「仅允许对此设备上的 Microsoft 帐户使用 Windows Hello 登录」\n• 人脸和 PIN 不用关\n• 改好后再按一次这个按钮": {
+  "en": "One sign-in setting must change first:\n• The clone signs in with your account password; right now this PC only allows Windows Hello\n• In \"Sign-in options\", under \"Additional settings\" at the bottom, turn off \"For improved security, only allow Windows Hello sign-in for Microsoft accounts on this device\"\n• Face and PIN can stay on\n• Then press this button again",
+  "ja": "先にサインイン設定を 1 つ変更してください：\n• 分身はアカウントのパスワードでサインインしますが、今このPCは Windows Hello のみ許可しています\n• 「サインイン オプション」の一番下「その他の設定」で、「セキュリティ向上のため、このデバイスでは Microsoft アカウント用に Windows Hello サインインのみを許可する」をオフにする\n• 顔認証と PIN はそのままで大丈夫です\n• 変更したら、もう一度このボタンを押す",
+  "ko": "먼저 로그인 설정 하나를 바꿔야 합니다:\n• 분신은 계정 비밀번호로 로그인하는데, 지금 이 PC는 Windows Hello만 허용합니다\n• '로그인 옵션' 맨 아래 '추가 설정'에서 '보안 향상을 위해 이 장치에서 Microsoft 계정에 대해 Windows Hello 로그인만 허용'을 끄세요\n• 얼굴 인식과 PIN은 끄지 않아도 됩니다\n• 바꾼 뒤 이 버튼을 다시 누르세요"
  },
  "按「前往」后：\n• Windows 确认请按「是」\n• 第一次要打账户密码（不是 PIN），之后会记住\n• 游戏和日常自动开始，进度在这里看": {
   "en": "After you press \"Go\":\n• Click \"Yes\" when Windows asks to confirm\n• The first time, type your account password (not the PIN); it's remembered after that\n• The game and dailies start by themselves; follow progress here",
@@ -1123,5 +1123,20 @@
   "en": "The picture's colours are far from the game's own, maybe because HDR or a graphics-card colour filter is on, so some checks may be off. Turning it off is recommended; this run goes on as usual.",
   "ja": "画面の色がゲーム本来の色と大きく違います。HDR やグラフィックカードのカラーフィルターがオンになっている可能性があり、一部の判定が不正確になるかもしれません。オフにしてから実行するのがおすすめです。今回はそのまま実行します。",
   "ko": "화면 색이 게임 원래 색과 많이 다릅니다. HDR이나 그래픽카드 색상 필터가 켜져 있을 수 있어 일부 판단이 정확하지 않을 수 있습니다. 끄고 실행하는 것을 권장합니다. 이번에는 그대로 실행합니다."
+ },
+ "卖了": {
+  "en": "Sold",
+  "ja": "売却",
+  "ko": "판매"
+ },
+ "做了": {
+  "en": "Cooked",
+  "ja": "調理",
+  "ko": "요리"
+ },
+ "5星": {
+  "en": "5★",
+  "ja": "5つ星",
+  "ko": "5성"
  }
 }

@@ -174,9 +174,12 @@ class StopWhileWaitingForLoginTest(unittest.TestCase):
     title screen and saved 自动登录游戏 off."""
 
     def _tasks(self, saved_on):
+        from src.tasks.DailyBatchTask import DailyBatchTask
         from src.tasks.trigger.AutoLoginTask import AutoLoginTask
 
-        batch = mock.Mock(_start_after_login=True)
+        batch = object.__new__(DailyBatchTask)
+        batch._start_after_login = True
+        batch.disable = mock.Mock()
         login = mock.Mock(spec=AutoLoginTask)
         login._enabled = True
         login.config = {"_enabled": saved_on}
@@ -210,6 +213,20 @@ class StopWhileWaitingForLoginTest(unittest.TestCase):
         login.disable.assert_not_called()
         self.assertTrue(login._enabled)
 
+    def test_stop_while_it_logs_in_after_a_crash_forgets_the_resume(self):
+        # Finding 75: the next start skipped what was done before the 闪退
+        # (even the next day) and kept the restart count.
+        batch, login = self._tasks(saved_on=False)
+        batch._resuming_after_crash = True
+        batch._done_before_crash = {"第一项"}
+        batch._crash_restarts = 1
+
+        actions.stop(login)
+
+        self.assertFalse(batch._resuming_after_crash)
+        self.assertEqual(set(), batch._done_before_crash)
+        self.assertEqual(0, batch._crash_restarts)
+
     def test_stop_between_login_checks_still_cancels(self):
         batch, _login = self._tasks(saved_on=False)
 
@@ -224,6 +241,102 @@ class StopWhileWaitingForLoginTest(unittest.TestCase):
             actions.stop(task)
         task.disable.assert_called_once()
         task.unpause.assert_called_once()
+
+
+class CloneControlDuringLoginWaitTest(unittest.TestCase):
+    """Finding 43: 停止 from outside while the 桌面分身 waits for the login was
+    dropped whenever nothing ran, and a single task waiting there could get
+    自动登录游戏 saved off and then start on the title screen."""
+
+    def setUp(self):
+        from src.tasks.trigger.AutoLoginTask import AutoLoginTask
+        from src.ui.shell import clone_flow
+        from src.utils import clone_desktop
+
+        self.flow = clone_flow
+        self.login = mock.Mock(spec=AutoLoginTask)
+        self.login._enabled = True  # on for this run only
+        self.login.config = {"_enabled": False}
+        self.single = mock.Mock(name="跑图路线测试", _start_after_login=False)
+        self.onetime = [self.single]
+        self.current = None
+        self.command = "stop"
+        executor = SimpleNamespace(get_task_by_class=lambda _cls: self.login)
+        patches = (
+            mock.patch.object(clone_desktop, "take_control", lambda: self.command),
+            mock.patch.object(data, "current_task", lambda: self.current),
+            mock.patch.object(data, "onetime_tasks", lambda: list(self.onetime)),
+            mock.patch.object(data, "executor", lambda: executor),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        clone_flow._waiting_job.clear()
+        clone_flow._started_job.clear()
+        self.addCleanup(clone_flow._waiting_job.clear)
+        self.addCleanup(clone_flow._started_job.clear)
+
+    def _wait(self):
+        self.flow._waiting_job.update(task=self.single, run_mode=None, until=9e12)
+
+    def test_stop_with_nothing_running_cancels_the_waiting_task(self):
+        from src.utils import clone_desktop
+
+        self._wait()
+
+        self.flow._apply_control()
+
+        self.assertEqual({}, self.flow._waiting_job)
+        self.login.disable.assert_not_called()  # it would save the setting off
+        self.assertFalse(self.login._enabled)  # this run's login stops
+        self.assertEqual({"_enabled": False}, self.login.config)
+        with (
+            mock.patch.object(data, "busy", return_value=False),
+            mock.patch.object(clone_desktop, "JOB_FILE", mock.Mock(exists=lambda: False)),
+            mock.patch.object(actions, "start") as started,
+        ):
+            self.flow._run_pending_job()
+        started.assert_not_called()
+
+    def test_stop_during_a_login_check_never_turns_auto_login_off(self):
+        self._wait()
+        self.current = self.login
+
+        self.flow._apply_control()
+
+        self.login.disable.assert_not_called()
+        self.assertEqual({"_enabled": False}, self.login.config)
+        self.assertEqual({}, self.flow._waiting_job)
+
+    def test_stop_with_nothing_running_cancels_a_waiting_batch(self):
+        batch = mock.Mock(_start_after_login=True, enabled=False)  # ok-script disabled it
+        batch.cancel_resume.side_effect = lambda: setattr(batch, "_start_after_login", False)
+        self.onetime = [batch]
+
+        self.flow._apply_control()
+
+        batch.disable.assert_called_once()
+        self.assertFalse(batch._start_after_login)
+        self.login.disable.assert_not_called()
+
+    def test_pause_with_nothing_running_is_ignored(self):
+        self._wait()
+        for current in (None, self.login):
+            for command in ("pause", "resume"):
+                with self.subTest(current=current, command=command):
+                    self.current, self.command = current, command
+                    self.flow._apply_control()
+        self.login.pause.assert_not_called()
+        self.login.unpause.assert_not_called()
+        self.assertTrue(self.flow._waiting_job)  # still waits
+
+    def test_stop_while_a_task_runs_stops_it(self):
+        self.current = self.single
+
+        self.flow._apply_control()
+
+        self.single.disable.assert_called_once()
+        self.login.disable.assert_not_called()
 
 
 class CloneRunStatusTest(unittest.TestCase):
@@ -280,7 +393,7 @@ class CloneJobLoginTest(unittest.TestCase):
     closed waited ten minutes for a login nothing could start, then ran on
     the title screen."""
 
-    def _run(self, game_running: bool):
+    def _run(self, game_running: bool, login_pending: bool = True):
         from src.ui.shell import clone_flow
         from src.utils import clone_desktop
 
@@ -293,7 +406,7 @@ class CloneJobLoginTest(unittest.TestCase):
             mock.patch.object(clone_desktop, "take_job", return_value={"task": task.name}),
             mock.patch.object(clone_flow, "_reload_settings"),
             mock.patch.object(clone_flow, "log_in_this_run"),
-            mock.patch.object(clone_flow, "_login_pending", return_value=True),
+            mock.patch.object(clone_flow, "_login_pending", return_value=login_pending),
             mock.patch.object(actions, "game_running", return_value=game_running),
             mock.patch.object(clone_flow, "_open_game_only") as opened,
             mock.patch.object(actions, "start") as started,
@@ -308,6 +421,122 @@ class CloneJobLoginTest(unittest.TestCase):
 
     def test_an_open_game_just_waits_for_the_login(self):
         self.assertEqual((0, 0, True), self._run(game_running=True))
+
+    def test_closed_game_without_a_login_still_waits_here(self):
+        # Live 4K 2026-10-10: started through ok while the game opened, the
+        # task could not be stopped from outside until it was running.
+        self.assertEqual((1, 0, True), self._run(game_running=False, login_pending=False))
+
+    def test_an_open_game_without_a_login_starts_at_once(self):
+        self.assertEqual((0, 1, False), self._run(game_running=True, login_pending=False))
+
+    def test_the_waiting_task_starts_once_the_game_is_up(self):
+        from src.ui.shell import clone_flow
+
+        task = SimpleNamespace(name="跑图路线测试")
+        clone_flow._waiting_job.update(task=task, run_mode=None, until=9e12)
+        self.addCleanup(clone_flow._waiting_job.clear)
+        self.addCleanup(clone_flow._started_job.clear)
+        for game_up, expected in ((False, 0), (True, 1)):
+            with (
+                mock.patch.object(clone_flow.data, "busy", return_value=False),
+                mock.patch.object(clone_flow, "_login_pending", return_value=False),
+                mock.patch.object(actions, "game_running", return_value=game_up),
+                mock.patch.object(clone_flow, "_get_out_of_the_way"),
+                mock.patch.object(actions, "start") as started,
+            ):
+                clone_flow._run_pending_job()
+            self.assertEqual(expected, started.call_count)
+
+
+class RearmLoginTest(unittest.TestCase):
+    """Live 4K clone 2026-10-10 14:36 (step 57): the auto-login was still
+    finished from an earlier login, so a single task handed in with the game
+    closed started on the title screen 5 s later."""
+
+    def _login(self):
+        login = mock.Mock(_finished=True)
+        login._reset_login_state.side_effect = lambda *_a: setattr(login, "_finished", False)
+        return login
+
+    def test_a_closed_game_arms_the_login_again(self):
+        login = self._login()
+        with (
+            mock.patch.object(actions, "game_running", return_value=False),
+            mock.patch.object(actions, "_login_task", return_value=login),
+        ):
+            actions.rearm_login_for_closed_game()
+        self.assertFalse(login._finished)
+
+    def test_a_running_game_keeps_the_login_done(self):
+        login = self._login()
+        with (
+            mock.patch.object(actions, "game_running", return_value=True),
+            mock.patch.object(actions, "_login_task", return_value=login),
+        ):
+            actions.rearm_login_for_closed_game()
+        login._reset_login_state.assert_not_called()
+
+    def test_a_clone_job_with_the_game_closed_waits_for_the_new_login(self):
+        from src.tasks.trigger.AutoLoginTask import AutoLoginTask
+        from src.ui.shell import clone_flow
+        from src.utils import clone_desktop
+
+        login = self._login()
+        login._enabled = True  # 自动登录游戏 on: log_in_this_run leaves it alone
+        task = SimpleNamespace(name="领取常客圣石")
+        executor = SimpleNamespace(get_task_by_class=lambda cls: login if cls is AutoLoginTask else None)
+        clone_flow._waiting_job.clear()
+        self.addCleanup(clone_flow._waiting_job.clear)
+        self.addCleanup(clone_flow._started_job.clear)
+        with (
+            mock.patch.object(clone_flow.data, "busy", return_value=False),
+            mock.patch.object(clone_flow.data, "executor", lambda: executor),
+            mock.patch.object(clone_flow.data, "task_by_name", return_value=task),
+            mock.patch.object(clone_desktop, "JOB_FILE", mock.Mock(exists=lambda: True)),
+            mock.patch.object(clone_desktop, "take_job", return_value={"task": task.name}),
+            mock.patch.object(clone_flow, "_reload_settings"),
+            mock.patch.object(clone_flow, "_open_game_only"),
+            mock.patch.object(clone_flow, "_get_out_of_the_way"),
+            mock.patch.object(actions, "_login_task", return_value=login),
+            mock.patch.object(actions, "start") as started,
+        ):
+            with mock.patch.object(actions, "game_running", return_value=False):
+                clone_flow._run_pending_job()
+            # The game process is up, the title screen still showing.
+            with mock.patch.object(actions, "game_running", return_value=True):
+                clone_flow._run_pending_job()
+        started.assert_not_called()
+        self.assertTrue(clone_flow._waiting_job)
+
+
+class CloneStopDuringStartTest(unittest.TestCase):
+    """Live 4K 2026-10-10: 停止 from outside while ok still opened the game
+    for a started single task; ok enabled the task afterwards and it ran."""
+
+    def test_a_task_enabled_after_the_stop_is_stopped(self):
+        from src.ui.shell import clone_flow
+        from src.utils import clone_desktop
+
+        task = SimpleNamespace(name="领取常客圣石", enabled=False)
+        commands = ["stop", None]
+        clone_flow._started_job.clear()
+        clone_flow._started_job.update(task=task, at=0, tries=0, seen=False)
+        self.addCleanup(clone_flow._started_job.clear)
+        self.addCleanup(clone_flow._cancelled_start.clear)
+        stopped = []
+        with (
+            mock.patch.object(clone_desktop, "take_control", lambda: commands.pop(0)),
+            mock.patch.object(data, "current_task", lambda: None),
+            mock.patch.object(data, "onetime_tasks", lambda: [task]),
+            mock.patch.object(actions, "stop", side_effect=stopped.append),
+        ):
+            clone_flow._apply_control()
+            self.assertEqual([None], stopped)  # nothing was enabled yet
+            task.enabled = True  # ok's start_controller, once the game is up
+            clone_flow._apply_control()
+        self.assertEqual([None, task], stopped)
+        self.assertEqual({}, clone_flow._cancelled_start)
 
 
 class CloneStartRetryTest(unittest.TestCase):
@@ -345,7 +574,7 @@ class CloneStartRetryTest(unittest.TestCase):
     def test_no_game_after_the_start_timeout_starts_again(self):
         retried, calls = self.check(self.flow.START_CHECK_SECONDS + 1)
         self.assertTrue(retried)
-        self.assertEqual([mock.call(self.task, None, "incomplete")], calls)
+        self.assertEqual([mock.call(self.task, None, "incomplete", by_player=True)], calls)
 
     def test_waits_while_the_start_may_still_come_up(self):
         self.assertEqual((False, []), self.check(30))
@@ -526,6 +755,80 @@ class CloneStartTest(unittest.TestCase):
         self.assertTrue(self._start())
         self.box.assert_not_called()
         self.controller.start.assert_called_once_with(self.task)
+
+    def test_a_start_by_the_player_is_never_a_resume_after_a_crash(self):
+        from src.tasks.DailyBatchTask import DailyBatchTask
+
+        self.open = False
+        batch = object.__new__(DailyBatchTask)
+        batch.name = "一键完成日常"
+        batch._enabled = batch._paused = False
+        batch._resuming_after_crash = True  # left from a resume never run
+        batch._done_before_crash = {"第一项"}
+        batch._crash_restarts = 2
+        self.task = batch
+
+        self.assertTrue(self._start())
+
+        self.assertFalse(batch._resuming_after_crash)
+        self.assertEqual(set(), batch._done_before_crash)
+        self.assertEqual(0, batch._crash_restarts)
+
+    def test_auto_run_handed_to_the_clone_says_so(self):
+        # #153 lets a press rerun a just-failed item at once; 打开就自动跑
+        # (no window) handed to an idle tool in the clone must keep the wait.
+        from src.utils import clone_desktop
+
+        self.tool = True
+        self.assertTrue(actions.start(self.task, None, "incomplete"))
+        clone_desktop.request_job.assert_called_once_with(
+            "一键完成日常", "incomplete", by_player=False
+        )
+
+    def test_the_clone_starts_an_auto_run_job_as_automatic(self):
+        from src.ui.shell import clone_flow
+        from src.utils import clone_desktop
+
+        for job, by_player in (
+            ({"task": "一键完成日常", "run_mode": "incomplete", "by_player": False}, False),
+            ({"task": "一键完成日常", "run_mode": "incomplete"}, True),
+        ):
+            with (
+                self.subTest(by_player=by_player),
+                mock.patch.dict(clone_flow._started_job, {}, clear=True),
+                mock.patch.dict(clone_flow._waiting_job, {}, clear=True),
+                mock.patch.object(clone_desktop, "JOB_FILE", mock.Mock(exists=lambda: True)),
+                mock.patch.object(clone_desktop, "take_job", return_value=job),
+                mock.patch.object(clone_flow.data, "task_by_name", return_value=self.task),
+                mock.patch.object(clone_flow, "_reload_settings"),
+                mock.patch.object(clone_flow, "log_in_this_run"),
+                mock.patch.object(clone_flow, "_login_pending", return_value=False),
+                mock.patch.object(clone_flow, "_get_out_of_the_way"),
+                mock.patch.object(actions, "start") as started,
+            ):
+                clone_flow._run_pending_job()
+                started.assert_called_once_with(self.task, None, "incomplete", by_player=by_player)
+                self.assertEqual(by_player, clone_flow._started_job["by_player"])
+
+
+class CloneJobFileTest(unittest.TestCase):
+    def test_the_job_file_marks_only_automatic_starts(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from src.utils import clone_desktop
+
+        with tempfile.TemporaryDirectory() as folder:
+            job_file = Path(folder) / "pending-run.json"
+            with (
+                mock.patch.object(clone_desktop, "DATA_DIR", Path(folder)),
+                mock.patch.object(clone_desktop, "JOB_FILE", job_file),
+            ):
+                clone_desktop.request_job("一键完成日常", "incomplete")
+                self.assertNotIn("by_player", json.loads(job_file.read_text(encoding="utf-8")))
+                clone_desktop.request_job("一键完成日常", "incomplete", by_player=False)
+                self.assertFalse(json.loads(job_file.read_text(encoding="utf-8"))["by_player"])
 
 
 class CloneFrontTest(unittest.TestCase):
@@ -828,6 +1131,29 @@ class SidebarHomeLeavesSummaryTest(unittest.TestCase):
         shell, shown, left = self.shell()
         Shell._sidebar_clicked(shell, "map")
         self.assertEqual(([], ["map"]), (left, shown))
+
+
+class SummaryNoticeTest(unittest.TestCase):
+    """A finished run's notice shows under the 结算 title (no shutdown in the clone)."""
+
+    def test_done_run_shows_its_notice(self):
+        from src.tasks import run_report
+        from src.ui.shell.home import HomePage
+
+        for notice in ("这次没有关机", ""):
+            with self.subTest(notice=notice):
+                page = mock.MagicMock()
+                page._summary = {
+                    "label": "一键完成日常",
+                    "ended": run_report.ENDED_DONE,
+                    # Real times: Windows cannot place 1970 in the local zone.
+                    "started": 1_791_000_000.0,
+                    "finished": 1_791_000_100.0,
+                    "rows": [],
+                    "notice": notice,
+                }
+                HomePage._refresh_summary(page)
+                self.assertEqual(notice, page.set_sub.call_args.args[0])
 
 
 if __name__ == "__main__":

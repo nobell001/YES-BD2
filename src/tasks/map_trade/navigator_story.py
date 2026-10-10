@@ -37,7 +37,10 @@ from src.tasks.map_trade.navigator_constants import (
     EVENT_CATEGORY_HIGHLIGHT_REGION,
     EVENT_CATEGORY_POINT,
     FIRST_CARD_CONFIRM_REGION,
+    FIRST_CARD_DIALOG_REGION,
     FIRST_CARD_INSERT_REGION,
+    FIRST_CARD_PAID_DIALOG_MESSAGE,
+    FIRST_CARD_PAID_WORDS,
     FIRST_CARD_SKIP_TEMPLATE,
     PROBE_QUICK_SWITCH_SCROLL_AMOUNT,
     PROBE_QUICK_SWITCH_SCROLL_COUNT,
@@ -155,6 +158,8 @@ STORY_BAR_STILL_DIFF = 2.0
 STORY_BAR_WHEEL_TOWARD_LARGER = 1
 STORY_BAR_WHEEL_NOTCHES = 3
 STORY_BAR_WHEEL_STEPS = 8
+# Wheels or swipes in a row that leave the bar unmoved: that end is reached.
+STORY_BAR_END_STILL_MOVES = 2
 # Badge-number row of the quick bar (the card's own number, top-left of each
 # card), below the 1..0 hotkey labels; 1080p rows.  Read at twice the 1080p
 # size with a margin: the raw strip read nothing at any resolution, this read
@@ -1606,26 +1611,40 @@ class StoryCardNavigationMixin:
             )
         )
 
-    def _wait_story_bar_still(self) -> None:
+    @staticmethod
+    def _story_bar_band(frame) -> np.ndarray | None:
+        if frame is None:
+            return None
+        height = frame.shape[0]
+        return frame[round(height * 0.80) :, :, :3].astype(np.int16)
+
+    def _wait_story_bar_still(self) -> np.ndarray | None:
         """A slid bar glides on for a moment (live 2K 2026-09-29: the badge
         moved 1845 -> 1636 between two reads and the click was refused);
-        wait until two frames of the bar agree."""
-        import numpy as np
-
+        wait until two frames of the bar agree.  Returns the bar as last
+        seen."""
         end_at = monotonic() + STORY_BAR_STILL_TIMEOUT
         self.task.sleep(0.25)
         previous = None
         while monotonic() < end_at:
-            frame = self.vision.capture()
-            height = frame.shape[0]
-            band = frame[round(height * 0.80) :, :, :3].astype(np.int16)
-            if previous is not None and previous.shape == band.shape:
+            band = self._story_bar_band(self.vision.capture())
+            if band is not None and previous is not None and previous.shape == band.shape:
                 if float(np.mean(np.abs(band - previous))) < STORY_BAR_STILL_DIFF:
-                    return
+                    return band
             previous = band
             self.task.sleep(0.15)
+        return previous
 
-    def _wheel_story_bar(self, toward_larger: bool, notches: int) -> None:
+    @staticmethod
+    def _story_bar_moved(before: np.ndarray | None, after: np.ndarray | None) -> bool:
+        """False only when the bar clearly stayed put (that end is reached)."""
+        if before is None or after is None or before.shape != after.shape:
+            return True
+        return float(np.mean(np.abs(after - before))) >= STORY_BAR_STILL_DIFF
+
+    def _wheel_story_bar(self, toward_larger: bool, notches: int) -> bool:
+        """Wheel the bar; False when it did not move (that end is reached)."""
+        before = self._story_bar_band(self.vision.capture())
         # No focus click: once the bar has moved, the old focus point (43,974)
         # sits on a card and the click entered it (live 2K 2026-09-29).
         self.task.scroll_client(
@@ -1635,7 +1654,7 @@ class StoryCardNavigationMixin:
             interval=QUICK_SWITCH_SCROLL_INTERVAL,
             after_sleep=0.0,
         )
-        self._wait_story_bar_still()
+        return self._story_bar_moved(before, self._wait_story_bar_still())
 
     def _visible_story_reads(self, frame) -> list[tuple[int, float]]:
         """(number, badge x in 1080p px) read off the badge row (one strip OCR).
@@ -1732,6 +1751,9 @@ class StoryCardNavigationMixin:
                         return found
                 looked = False
                 if nudges >= STORY_BAR_GUIDED_NUDGES:
+                    # The numbers put it here and it is not: pinned (置顶)
+                    # cards sit at the front out of number order (YES-BD2 #6).
+                    self._story_bar_out_of_order = True
                     return None
                 nudges += 1
                 # Toward the middle; at an end the bar cannot move that way,
@@ -1755,22 +1777,53 @@ class StoryCardNavigationMixin:
             previous = offset
         return None
 
-    def _scan_story_bar_by_wheel(self, target_number: int, scan_current_page, *, looked: bool = False):
+    def _story_bar_sweep_order(self, target_number: int) -> tuple[bool, bool]:
+        """Which way to sweep first (True: toward larger numbers).  Cards run
+        1..20 left to right, so by the number; but once the numbers on screen
+        missed the card it is likely pinned (置顶), and pinned cards come
+        first (YES-BD2 #6, fixture native_720_q6_visible: 6, 18, 20, 1, 2...)."""
+        if getattr(self, "_story_bar_out_of_order", False):
+            return (False, True)
+        return (True, False) if target_number >= 10 else (False, True)
+
+    def _scan_story_bar_by_wheel(
+        self,
+        target_number: int,
+        scan_current_page,
+        *,
+        looked: bool = False,
+        sweep_look=None,
+    ):
         """Wheel straight toward the card (Leo 2026-09-29 prefers the wheel,
         in the right direction: the old reset wheeled to the front instead
-        of the far end and every scan started over from card 1)."""
+        of the far end and every scan started over from card 1).
+        ``sweep_look``: the look while sweeping blind (default the full one)."""
+        self._story_bar_out_of_order = False
         found = self._scan_story_bar_guided(target_number, scan_current_page, looked=looked)
         if found is not None:
             return found
-        directions = (True, False) if target_number >= 10 else (False, True)
-        for toward_larger in directions:
+        look = sweep_look or scan_current_page
+        for toward_larger in self._story_bar_sweep_order(target_number):
+            still = 0
+            looked_here = False
             for step in range(STORY_BAR_WHEEL_STEPS):
                 self._status(
                     "卡带滚轮",
                     f"往{'大' if toward_larger else '小'}编号滚 {step + 1}/{STORY_BAR_WHEEL_STEPS}",
                 )
-                self._wheel_story_bar(toward_larger, STORY_BAR_WHEEL_NOTCHES)
-                found = scan_current_page()
+                if self._wheel_story_bar(toward_larger, STORY_BAR_WHEEL_NOTCHES):
+                    still = 0
+                    looked_here = False
+                else:
+                    # That end of the bar: the same view was looked at up to
+                    # eight more times (about a minute at 2K).
+                    still += 1
+                    if still >= STORY_BAR_END_STILL_MOVES:
+                        break
+                    if looked_here:
+                        continue
+                found = look()
+                looked_here = True
                 if found is not None:
                     return found
         return None
@@ -1788,17 +1841,28 @@ class StoryCardNavigationMixin:
         y = round(STORY_BAR_SWIPE_Y * height / 1080)
         right = round(STORY_BAR_SWIPE_RIGHT_X * width / 1920)
         left = round(STORY_BAR_SWIPE_LEFT_X * width / 1920)
-        # Cards run 1..20 left to right; about ten fit on screen.
-        directions = ("left", "right") if target_number >= 10 else ("right", "left")
-        for direction in directions:
+        # About ten cards fit on screen.
+        for toward_larger in self._story_bar_sweep_order(target_number):
+            still = 0
+            looked_here = False
             for step in range(STORY_BAR_SWIPE_STEPS):
-                self._status("卡带滑动", f"按住往{'左' if direction == 'left' else '右'}滑 {step + 1}")
-                if direction == "left":
+                self._status("卡带滑动", f"按住往{'左' if toward_larger else '右'}滑 {step + 1}")
+                before = self._story_bar_band(self.vision.capture())
+                if toward_larger:
                     swipe(right, y, left, y)
                 else:
                     swipe(left, y, right, y)
-                self._wait_story_bar_still()
+                if self._story_bar_moved(before, self._wait_story_bar_still()):
+                    still = 0
+                    looked_here = False
+                else:
+                    still += 1
+                    if still >= STORY_BAR_END_STILL_MOVES:
+                        break
+                    if looked_here:
+                        continue
                 found = scan_current_page()
+                looked_here = True
                 if found is not None:
                     return found
         return None
@@ -1819,6 +1883,19 @@ class StoryCardNavigationMixin:
             if detection is None:
                 self._status("剧情角标", f"{target_number}: {last_reason}")
                 return None
+            return seen(frame, detection)
+
+        def look_by_art() -> tuple[np.ndarray, StoryBadgeDetection] | None:
+            # The cover art alone: quick (0.1-0.4 s) and in any bar order,
+            # unlike the badge templates (1.5-9 s a look at 2K).
+            frame = self.vision.capture()
+            detection, reason = self._find_story_card_by_art(frame, target_number)
+            if detection is None:
+                self._status("剧情卡带图片", f"{target_number}: {reason}")
+                return None
+            return seen(frame, detection)
+
+        def seen(frame, detection) -> tuple[np.ndarray, StoryBadgeDetection]:
             self._status(
                 "剧情角标",
                 (
@@ -1845,10 +1922,21 @@ class StoryCardNavigationMixin:
                 )
             return found
 
+        by_art = (
+            getattr(self, "_badge_category", "story") == "story"
+            and story_card_art.has_art(target_number)
+        )
         # A card clearly off screen skips the slow full look (1.5-9 s at 2K).
         offset = self._story_bar_offset(self.vision.capture())
         target_x = None if offset is None else self._story_card_x(offset, target_number)
         looked = target_x is None or STORY_BAR_VIEW_LEFT <= target_x <= STORY_BAR_VIEW_RIGHT
+        if not looked and by_art:
+            # The count from the numbers on screen is wrong for a pinned
+            # (置顶) card: it sits at the front, out of number order, and
+            # the cards after it leave gaps (Leo 2026-10-10, YES-BD2 #6).
+            found = look_by_art()
+            if found is not None:
+                return found
         if looked:
             found = scan_current_page()
             if found is not None:
@@ -1861,7 +1949,14 @@ class StoryCardNavigationMixin:
         else:
             self._status("剧情角标", f"{target_number}: 不在画面内（x={target_x:.0f}），直接滚过去")
 
-        wheeled = self._scan_story_bar_by_wheel(target_number, scan_current_page, looked=looked)
+        wheeled = self._scan_story_bar_by_wheel(
+            target_number,
+            scan_current_page,
+            looked=looked,
+            # The badge templates only where the numbers put the card; the
+            # swipe below still looks with them everywhere.
+            sweep_look=look_by_art if by_art else None,
+        )
         if wheeled is not None:
             return wheeled
         swiped = self._scan_story_bar_by_swipe(target_number, scan_current_page)
@@ -2039,7 +2134,9 @@ class StoryCardNavigationMixin:
 
         return self._enter_located_story_card(probed.located)
 
-    def _handle_story_card_intermediate(self, frame: np.ndarray) -> bool:
+    def _handle_story_card_intermediate(self, frame: np.ndarray) -> bool | NavigationResult:
+        """True when a known prompt was handled; a failed result stops the wait."""
+
         prompt = normalize_text(
             self.vision.simplify(
                 self.vision.ocr_text(
@@ -2066,24 +2163,51 @@ class StoryCardNavigationMixin:
             self._status("导航状态", "跳过首次卡带对话")
             return True
 
-        confirmation = normalize_text(
+        boxes = self.vision.ocr_boxes(frame, "首次卡带确认", roi=FIRST_CARD_CONFIRM_REGION)
+        texts = [normalize_text(self.vision.simplify(str(getattr(b, "name", "")))) for b in boxes]
+        self._status("首次卡带确认 OCR", " ".join(texts) or "-")
+        if not any("确认" in text for text in texts):
+            return False
+        # 确认 alone proves nothing: the same frame must not show a dialog that
+        # buys or uses something up (review #11).
+        dialog = normalize_text(
             self.vision.simplify(
-                self.vision.ocr_text(
-                    frame,
-                    "首次卡带确认",
-                    roi=FIRST_CARD_CONFIRM_REGION,
-                )
+                self.vision.ocr_text(frame, "首次卡带对话", roi=FIRST_CARD_DIALOG_REGION)
             )
         )
-        if "确认" in confirmation and self.vision.click_ocr(
-            [r"确认"],
-            roi=FIRST_CARD_CONFIRM_REGION,
-            after_sleep=0.8,
-            name="首次卡带确认",
-        ):
+        paid = [
+            word
+            for word in FIRST_CARD_PAID_WORDS
+            if word in dialog or any(word in text for text in texts)
+        ]
+        if paid:
+            return self._refuse_story_card_dialog(frame, paid)
+        for box, text in zip(boxes, texts):
+            attrs = tuple(getattr(box, key, None) for key in ("x", "y", "width", "height"))
+            if text != "确认" or any(value is None for value in attrs):
+                continue
+            x, y, width, height = (float(value) for value in attrs)
+            self.vision.click_client(
+                (round(x + width / 2), round(y + height / 2)), frame.shape, after_sleep=0.8
+            )
             self._status("导航状态", "确认首次卡带对话")
             return True
         return False
+
+    def _refuse_story_card_dialog(self, frame: np.ndarray, words: list[str]) -> NavigationResult:
+        """Leave a dialog that may spend something untouched and stop."""
+
+        evidence = "-"
+        try:
+            evidence = self.task.save_frame("map_card_paid_dialog_failed", frame).name
+        except (OSError, ValueError) as exc:
+            self.task.log_warning(f"诊断截图保存失败：{exc}")
+        self.task.log_warning(
+            f"{FIRST_CARD_PAID_DIALOG_MESSAGE}：确认框里有「{'、'.join(words)}」，"
+            f"停止这一步（截图 {evidence}）。"
+        )
+        self._status("导航状态", "确认框可能花费资源，未按确认")
+        return NavigationResult(False, ScreenState.UNKNOWN, FIRST_CARD_PAID_DIALOG_MESSAGE)
 
     def ensure_card_menu(self) -> NavigationResult:
         state = self.classify()

@@ -125,15 +125,6 @@ class ListBottomTest(unittest.TestCase):
         self.assertFalse(views_match(list_view(frame), list_view(moved)))
 
 
-class LastCardTest(unittest.TestCase):
-    def test_login_event_is_the_last_card(self):
-        from src.tasks.EventRewardTask import LAST_CARD_TEXT
-        from src.utils.ocr_utils import normalize_ocr_text
-
-        self.assertIn(LAST_CARD_TEXT, normalize_ocr_text("丰饶之月 登录活动 D-5"))
-        self.assertNotIn(LAST_CARD_TEXT, normalize_ocr_text("每日登录 1/5"))
-
-
 def _box(name, x, y, w=90, h=30):
     return SimpleNamespace(name=name, x=x, y=y, width=w, height=h)
 
@@ -239,3 +230,79 @@ class SecondSweepTest(unittest.TestCase):
         task._sweep_list = lambda _skipped: steps.append("sweep") or 0
         self.assertTrue(task.run_claim())
         self.assertEqual(steps, ["open", "sweep", "home"])
+
+
+class LostScrollTest(unittest.TestCase):
+    """A scroll the game dropped left the list still, which read as the bottom
+    and ended the sweep above the badged events (press audit 10-09)."""
+
+    def _task(self, positions, badge_at, lost_scrolls=(), login_card_at=()):
+        from src.tasks.EventRewardTask import EventRewardTask
+
+        base = np.random.default_rng(5).integers(0, 255, (1080, 1920, 3), dtype=np.uint8)
+        state = {"pos": 0, "scrolls": 0, "opened": [], "logs": [], "diagnostics": []}
+        task = object.__new__(EventRewardTask)
+        task.info_set = lambda *a, **k: None
+        task.log_info = lambda message, *a, **k: state["logs"].append(message)
+        task.sleep = lambda *_a: None
+        task._save_flow_diagnostic = state["diagnostics"].append
+        task._list_to_top = lambda: state.__setitem__("pos", 0)
+        task.capture_frame = lambda: np.roll(base, 200 * state["pos"], axis=0)
+        task._list_text = lambda _frame: (
+            f"活动{state['pos']}" + (" 登录活动" if state["pos"] in login_card_at else "")
+        )
+        task._next_badge = lambda _frame, _skipped: (
+            (400, "活动C") if state["pos"] == badge_at and not state["opened"] else None
+        )
+        task._click_reference = lambda *a, **k: None
+        task._handle_page = lambda caption: state["opened"].append(caption) or True
+
+        def scroll(*_a, **_k):
+            state["scrolls"] += 1
+            if state["scrolls"] not in lost_scrolls:
+                state["pos"] = min(positions - 1, state["pos"] + 1)
+
+        task.scroll_client = scroll
+        return task, state
+
+    def test_lost_scroll_is_scrolled_again_and_reaches_lower_events(self):
+        task, state = self._task(positions=3, badge_at=2, lost_scrolls=(1,))
+        self.assertEqual(1, task._sweep_list(set()))
+        self.assertEqual(["活动C"], state["opened"])
+
+    def test_bottom_is_a_list_that_stays_still_twice(self):
+        task, state = self._task(positions=1, badge_at=None)
+        self.assertEqual(0, task._sweep_list(set()))
+        # The first scroll, then one more to confirm the bottom.
+        self.assertEqual(2, state["scrolls"])
+
+    def test_a_list_that_never_went_down_says_so(self):
+        # YES-BD2 #11: the events below the first screen kept their badge and
+        # the run said nothing about it.
+        task, state = self._task(positions=1, badge_at=None)
+        task._sweep_list(set())
+        self.assertIn("往下滚两次都没动", "\n".join(state["logs"]))
+        # Only a log line: the run goes on, so no give-up frame is kept.
+        self.assertEqual([], state["diagnostics"])
+
+    def test_the_login_event_card_does_not_end_the_list(self):
+        # Live 10-10: 登录活动 shows on the first two screens, and 登录加成 and
+        # two Pickup cards sit below it.  The sweep stopped on its second
+        # sighting, so their badges were never looked at.
+        task, state = self._task(positions=3, badge_at=2, login_card_at=(0, 1))
+        self.assertEqual(1, task._sweep_list(set()))
+        self.assertEqual(["活动C"], state["opened"])
+        self.assertEqual("活动列表：这轮往下滚动了 2 次，处理 1 个。", state["logs"][-1])
+
+    def test_a_lost_scroll_next_to_the_login_event_is_scrolled_again(self):
+        # YES-BD2 #11: the one scroll down was lost, the list still showed
+        # 登录活动, and the sweep ended there instead of scrolling again.
+        task, state = self._task(positions=3, badge_at=2, lost_scrolls=(1,), login_card_at=(0, 1))
+        self.assertEqual(1, task._sweep_list(set()))
+        self.assertEqual(["活动C"], state["opened"])
+
+    def test_the_log_says_how_far_the_list_went(self):
+        task, state = self._task(positions=3, badge_at=2, lost_scrolls=(1,))
+        task._sweep_list(set())
+        self.assertEqual("活动列表：这轮往下滚动了 2 次，处理 1 个。", state["logs"][-1])
+        self.assertEqual([], state["diagnostics"])

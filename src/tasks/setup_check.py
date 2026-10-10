@@ -8,6 +8,9 @@ reminder only, no page with steps and pictures.
 - 画面颜色: HDR or a colour filter changed the picture (colour_check).  The
   run goes on; the reminder says what to turn off.
 - 游戏画面大小 is game_size.fix_or_warn's, just before this.
+- 账号清单 (accounts_stop): a list that cannot be read cannot tell whose
+  records the run would write, so no run starts, not even an item of
+  一键日常 (认不准就不按; the tool does not guess account 1).
 
 Only a clear reading counts: a screen that is not home, or OCR that reads
 nothing, is no reminder (the run's own checks still decide, and a failed run
@@ -22,7 +25,7 @@ from ok import Logger
 from ok.task.exceptions import FinishedException, TaskDisabledException
 
 from src.tasks.run_history import NOT_STARTED_KEY
-from src.utils import colour_check, game_language
+from src.utils import accounts, colour_check, game_language
 from src.utils.home_confirmation import (
     HOME_GACHA_OCR_RELATIVE_ROI,
     HOME_LEFT_COLUMN_OCR_RELATIVE_ROI,
@@ -44,6 +47,22 @@ COLOUR_MESSAGE = (
     "建议关掉后再跑，这次照常执行。"
 )
 COLOUR_KEY = "画面颜色"
+# The popup and the log line; the shorter one under 「没有开始跑」.
+ACCOUNTS_TEXTS = {
+    accounts.BROKEN: (
+        "账号清单文件坏了，工具分不出现在是哪个账号，为免把进度记到别的账号，这次没有开始跑。"
+        "坏的文件已另存为 configs/accounts.json.corrupt。请删掉 configs 文件夹里的 "
+        "accounts.json；有其他账号的话，到账号页按原来的顺序加回来，"
+        "切到游戏里登录的账号，再按开始。",
+        "账号清单文件坏了，分不出是哪个账号。删掉 configs/accounts.json，"
+        "到账号页加回其他账号，再按开始。",
+    ),
+    accounts.BUSY: (
+        "账号清单文件暂时打不开（可能被防毒软件占用），工具分不出现在是哪个账号，"
+        "这次没有开始跑。请稍后再按开始。",
+        "账号清单文件暂时打不开，稍后再按开始。",
+    ),
+}
 # The colour reminder once in a while, not before every task of a long day.
 NOTIFY_GAP_SECONDS = 600.0
 # The gacha label is small at 1080p.
@@ -108,6 +127,20 @@ def _check_colours(task, frame, now: float) -> None:
         pass
     if check.distorted:
         _remind(task, COLOUR_MESSAGE, notify=_colour_notify(now))
+
+
+def accounts_stop(task) -> str:
+    """The notice when the account list cannot be read (nothing may start), else ""."""
+    problem = accounts.unreadable()
+    if not problem:
+        return ""
+    message, notice = ACCOUNTS_TEXTS[problem]
+    _remind(task, message)
+    try:
+        task.info_set(NOT_STARTED_KEY, notice)
+    except Exception:
+        pass
+    return notice
 
 
 def look(task, now: float | None = None) -> str:

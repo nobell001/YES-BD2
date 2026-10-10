@@ -33,6 +33,17 @@ def relaunch_command() -> list[str]:
     return [sys.executable, *sys.argv]
 
 
+def relaunch_env(environ=None) -> dict[str, str]:
+    """This tool's variables without PYAPPIFY_PID.
+
+    That launcher was closed when this copy's window first showed; its number
+    may belong to another program by now (even the game), and the new copy
+    would minimise and close it (2026-10-09 review).
+    """
+    environ = os.environ if environ is None else environ
+    return {key: value for key, value in environ.items() if key.upper() != "PYAPPIFY_PID"}
+
+
 def relaunch(app) -> bool:
     """Start the waiter, then quit; False when it could not be started."""
     if os.name != "nt":
@@ -45,6 +56,7 @@ def relaunch(app) -> bool:
         subprocess.Popen(
             [sys.executable, "-c", _WAITER, str(os.getpid()), *relaunch_command()],
             cwd=os.getcwd(),
+            env=relaunch_env(),
             creationflags=flags,
             close_fds=True,
         )

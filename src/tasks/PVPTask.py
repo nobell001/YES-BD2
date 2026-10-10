@@ -28,6 +28,7 @@ from src.utils.cartridge_quick_switch import (
     category_highlight_ratio,
 )
 from src.utils.colour_rules import switch_yellow_ratio
+from src.utils.free_switch import ensure_free_switch_on
 from src.utils.home_confirmation import (
     HOME_DIMMED_P95_THRESHOLD_DEFAULT,
     HOME_GACHA_OCR_REFERENCE_ROI,
@@ -84,16 +85,33 @@ PVP_AUTO_BATTLE_CLICK_REFERENCE = (2026, 1291)  # 2560×1440 参考
 PVP_STAGE_CLICK_REFERENCE_OFFSET = (0, -75)  # 1920×1080 参考位移
 PVP_BATTLE_START_SCREEN_POINT = (1381, 1061)  # 2560×1440 参考
 PVP_FREE_AP_SWITCH_SCREEN_POINT = (1732, 557)  # 2560×1440 参考
+PVP_FREE_AP_SWITCH_ON_RATIO = 0.05
+PVP_FREE_AP_SWITCH_SETTLE_SECONDS = 2.0
 PVP_MULTIPLIER_BUTTON_SCREEN_POINT = (1719, 465)  # 2560×1440 参考
 PVP_MULTIPLIER_40_OPTION_SCREEN_POINT = (1584, 715)  # 2560×1440 参考
 PVP_MULTIPLIER_1_OPTION_SCREEN_POINT = (980, 712)  # 2560×1440 参考
 PVP_MULTIPLIER_CONFIRM_SCREEN_POINT = (1383, 1007)  # 2560×1440 参考
+# The setting dialog's own 确认, read around the fixed point (1037, 755 at
+# 1080p); the main popup underneath has 取消 and 战斗开始 there, no 确认.
+PVP_SETTING_CONFIRM_REFERENCE_ROI = (700, 700, 600, 100)  # 1920×1080 参考
+PVP_SETTING_CONFIRM_PATTERNS = [r"^确[认定]$"]
 PVP_MAX_BATTLE_COUNT_SCREEN_POINT = (1650, 850)  # 2560×1440 参考
 PVP_AUTO_BATTLE_MENU_OCR_REFERENCE_ROI = (327, 165, 417, 156)  # 1280×720 参考
 PVP_BATTLE_ONGOING_OCR_REFERENCE_ROI = (50, 576, 203, 69)  # 1280×720 参考
 PVP_MULTIPLIER_SETTING_OCR_REFERENCE_ROI = (451, 101, 379, 184)  # 1280×720 参考
 PVP_MULTIPLIER_SETTING_VALUE_OCR_REFERENCE_ROI = (596, 372, 105, 50)  # 1280×720 参考
 PVP_RESULT_BASE_MINUTES = 20.0
+# The base covers 40 battles (30 s each), scaled by the count actually set;
+# one battle used to get only 30 s and a slow one stopped 一键日常 (audit
+# 2026-10-09).  While 正在进行 is read the battle is running, not stuck: the
+# wait goes on until it is gone for the stuck time of non-魔兽 battles, up to
+# CAP_FACTOR times the wait.
+PVP_RESULT_MIN_WAIT_SECONDS = 90.0
+PVP_BATTLE_STUCK_SECONDS = 15.0
+PVP_RESULT_WAIT_CAP_FACTOR = 2.0
+# After a timed-out wait, this many result labels read mean the result popup
+# is up but misread: its ✕ is pressed before looking for 离开.
+PVP_RESULT_PARTIAL_MATCHES = 2
 PVP_RESULT_CLOSE_AFTER_SECONDS = 1.5
 PVP_BATTLE_ONGOING_PATTERN = r"正在进行"
 # Only the cocktail/AP shortage counts; a stray 不足 anywhere on screen
@@ -136,6 +154,8 @@ PVP_COUNT_STEP_POINTS = {
     "minus": (625, 739),
 }
 PVP_COUNT_ROI = (700, 665, 530, 55)
+# How long a 场数 press may take to change the number before it is pressed again.
+PVP_COUNT_CONFIRM_SECONDS = 1.0
 PVP_START_BUTTON_ROI = (880, 780, 340, 65)
 PVP_FREE_COCKTAIL_ROI = (1560, 30, 330, 60)
 PVP_DIALOG_CANCEL_POINT = (802, 811)
@@ -290,7 +310,10 @@ class PVPTask(BaseBD2Task):
                     "「键盘WASD走到舞台」，脚本会用键盘把角色走到红色舞台正中。"
                 ),
                 "PVP OCR 阈值": "镜中之战流程 OCR 使用的最低可信度。",
-                "PVP 结算基准等待分钟": "1 倍自动战斗结算最长等待时间，实际等待为该值除以倍率。",
+                "PVP 结算基准等待分钟": (
+                    "打 40 场的结算等待时间，实际按场数折算（至少 90 秒）；"
+                    "读到「正在进行」时继续等。"
+                ),
                 "PVP 返回箱庭等待秒数": "离开结算后等待回到 PVP 箱庭的最长时间。",
                 "PVP 返回主页等待秒数": "从 PVP 箱庭返回主页后的主页确认最长时间。",
                 "主页压暗阈值": "主页左列灰度 p99 低于该值视为被公告压暗（0-255）。",
@@ -871,8 +894,7 @@ class PVPTask(BaseBD2Task):
 
         self.info_set("当前阶段", "点击战斗开始")
         self.info_set("PVP 开始战斗 OCR", "跳过前置 OCR，按固定比例点击")
-        self._click_screen_reference(*PVP_BATTLE_START_SCREEN_POINT, after_sleep=2.0)
-        return self._wait_battle_start_or_ap_shortage(multiplier)
+        return self._press_battle_start(multiplier)
 
     def _close_auto_battle_dialogs(self) -> None:
         """Press a read 取消 on up to two layers (倍率 setting, auto battle).
@@ -930,57 +952,128 @@ class PVPTask(BaseBD2Task):
         self._save_flow_diagnostic("pvp_ap_shortage_close_failed")
         return False
 
-    def _wait_battle_start_or_ap_shortage(self, multiplier: int) -> str:
-        timeout = float(self.config.get("PVP 战斗开始等待秒数", 30.0))
-        deadline = monotonic() + max(0.0, timeout)
-        while monotonic() <= deadline:
-            frame = self.capture_frame()
-            if frame is not None:
-                battle_text = self._ocr_text(
-                    frame,
-                    name="PVP 战斗中",
-                    roi=self._mf_roi(*PVP_BATTLE_ONGOING_OCR_REFERENCE_ROI),
-                )
-                if self._matches_any(battle_text, [PVP_BATTLE_ONGOING_PATTERN]):
-                    self.info_set("PVP 战斗中 OCR", battle_text)
-                    return "started"
+    def _press_battle_start(self, multiplier: int) -> str:
+        """Press 战斗开始 (spends cocktails) and confirm the battle began.
 
-                ap_text = self._ocr_text(frame, name="PVP AP不足")
-                if self._matches_any(ap_text, [PVP_AP_SHORTAGE_PATTERN]):
-                    self.info_set("PVP AP不足 OCR", ap_text)
-                    if multiplier > 1:
-                        return "ap_shortage"
-                    return "ap_depleted"
+        A swallowed press used to count as started and then wait out the
+        whole result time.  It is pressed again only while the dialog still
+        shows the same button and free count (nothing spent yet).  With
+        neither 正在进行 nor a shortage read, the dialog must be gone on two
+        looks (loading or battle screen) to count as started.
+        """
+        seen = {"state": None}
 
-            self.sleep(0.5)
+        def started():
+            seen["state"] = self._battle_start_state(multiplier)
+            return seen["state"]
 
-        self.log_warning(
-            "镜中之战：点击开始后未识别到战斗开始或 AP 不足信号，"
-            "按结算等待继续。"
+        outcome = self.press_and_confirm(
+            "镜中之战「战斗开始」",
+            lambda: self._click_screen_reference(
+                *PVP_BATTLE_START_SCREEN_POINT, after_sleep=2.0
+            ),
+            started,
+            still_before=lambda: self._start_dialog_unchanged(multiplier),
+            timeout=float(self.config.get("PVP 战斗开始等待秒数", 30.0)),
+            poll=0.5,
         )
-        return "started"
+        if outcome:
+            return seen["state"]
+        if self._start_dialog_gone():
+            self.log_warning(
+                "镜中之战：点击开始后未识别到战斗开始或 AP 不足信号，"
+                "开战前画面已关闭，按结算等待继续。"
+            )
+            return "started"
+        self.log_warning(
+            "镜中之战：按了「战斗开始」后仍停在开战前画面（或认不准），没有开打，不再按，停止。",
+            notify=True,
+        )
+        self._save_flow_diagnostic("pvp_battle_start_unconfirmed")
+        self._close_auto_battle_dialogs()
+        return "failed"
+
+    def _battle_start_state(self, multiplier: int) -> str | None:
+        """One look after 战斗开始: started / ap_shortage / ap_depleted, else None."""
+        frame = self.capture_frame()
+        if frame is None:
+            return None
+        battle_text = self._ocr_text(
+            frame,
+            name="PVP 战斗中",
+            roi=self._mf_roi(*PVP_BATTLE_ONGOING_OCR_REFERENCE_ROI),
+        )
+        if self._matches_any(battle_text, [PVP_BATTLE_ONGOING_PATTERN]):
+            self.info_set("PVP 战斗中 OCR", battle_text)
+            return "started"
+
+        ap_text = self._ocr_text(frame, name="PVP AP不足")
+        if self._matches_any(ap_text, [PVP_AP_SHORTAGE_PATTERN]):
+            self.info_set("PVP AP不足 OCR", ap_text)
+            if multiplier > 1:
+                return "ap_shortage"
+            return "ap_depleted"
+        return None
+
+    def _start_dialog_unchanged(self, multiplier: int) -> bool:
+        """Two looks still show the dialog, 战斗开始 at this cost and the free
+        count read before the press: nothing was spent, a re-press is safe."""
+        free_before = getattr(self, "_verified_free", None)
+        if free_before is None:
+            return False
+        menu_roi = self._mf_roi(*PVP_AUTO_BATTLE_MENU_OCR_REFERENCE_ROI)
+        for look in range(2):
+            if look:
+                self.sleep(0.5)
+            frame = self.capture_frame()
+            if frame is None:
+                return False
+            menu = self._ocr_text(frame, name="PVP 自动战斗菜单", roi=menu_roi)
+            free = parse_free_cocktails(
+                self._ocr_text(frame, name="PVP 免费鸡尾酒", roi=PVP_FREE_COCKTAIL_ROI)
+            )
+            if (
+                not self._matches_any(menu, [r"鲜血鸡尾酒"])
+                or self._start_cost_on(frame) != multiplier
+                or free != free_before
+            ):
+                return False
+        return True
+
+    def _start_dialog_gone(self) -> bool:
+        """Neither the dialog's 鲜血鸡尾酒 nor 战斗开始 is read on two looks."""
+        menu_roi = self._mf_roi(*PVP_AUTO_BATTLE_MENU_OCR_REFERENCE_ROI)
+        for look in range(2):
+            if look:
+                self.sleep(0.5)
+            frame = self.capture_frame()
+            if frame is None:
+                return False
+            menu = self._ocr_text(frame, name="PVP 自动战斗菜单", roi=menu_roi)
+            button = self._ocr_text(frame, name="PVP 战斗开始", roi=PVP_START_BUTTON_ROI)
+            if self._matches_any(menu, [r"鲜血鸡尾酒"]) or self._matches_any(
+                button, [r"战斗开始"]
+            ):
+                return False
+        return True
 
     def _ensure_free_ap_enabled(self) -> bool:
         self.info_set("当前阶段", "确认仅用免费鸡尾酒")
-        # BUG-20260906-01：开关点击被网络吞掉时状态不会翻转，确认失败重试点击。
-        for attempt in range(1, PVP_CLICK_VERIFY_ATTEMPTS + 1):
-            if self._free_ap_switch_on():
-                self.info_set("PVP 免费AP", "已开启")
-                return True
-
-            self._click_screen_reference(
+        # One press at most (review #28): a switch whose yellow is not
+        # recognised reads as off, and pressing again would turn it off.  A
+        # swallowed press (BUG-20260906-01) now stops this run instead.
+        if ensure_free_switch_on(
+            "镜中之战：免费AP开关",
+            self._free_ap_switch_ratio,
+            lambda: self._click_screen_reference(
                 *PVP_FREE_AP_SWITCH_SCREEN_POINT,
                 after_sleep=1.0,
-            )
-            if attempt < PVP_CLICK_VERIFY_ATTEMPTS:
-                self.log_info(
-                    f"镜中之战：免费AP开关第{attempt}/"
-                    f"{PVP_CLICK_VERIFY_ATTEMPTS}次点击后未确认开启，重试。"
-                )
-
-        # 末次点击的效果只能在循环外回读，否则"前几次被吞、末次生效"
-        # 会被误报为失败（BUG-20260912-02）。
-        if self._free_ap_switch_on():
+            ),
+            on_above=PVP_FREE_AP_SWITCH_ON_RATIO,
+            settle=PVP_FREE_AP_SWITCH_SETTLE_SECONDS,
+            sleep=self.sleep,
+            log=self.log_info,
+        ):
             self.info_set("PVP 免费AP", "已开启")
             return True
 
@@ -1009,19 +1102,22 @@ class PVPTask(BaseBD2Task):
         return False
 
     def _free_ap_switch_on(self) -> bool:
+        return self._free_ap_switch_ratio() > PVP_FREE_AP_SWITCH_ON_RATIO
+
+    def _free_ap_switch_ratio(self) -> float:
         frame = self.capture_frame()
         crop = self._crop_screen_reference(frame, FREE_AP_SWITCH_SCREEN_ROI)
         if crop.size == 0:
-            return False
+            return 0.0
         # Capture backends produce 3-channel (BGR) or 4-channel (BGRA) frames;
         # only the first three channels carry the switch colour, and any other
         # shape must fail closed instead of raising.
         if crop.ndim != 3 or crop.shape[2] < 3:
             self.log_info(f"镜中之战：免费AP开关区域帧形状异常 {crop.shape}。")
-            return False
+            return 0.0
         yellow_ratio = switch_yellow_ratio(crop)
         self.info_set("PVP 免费AP", f"开关黄色占比 {yellow_ratio:.3f}")
-        return yellow_ratio > 0.05
+        return yellow_ratio
 
     def _ensure_multiplier(self, multiplier: int) -> bool:
         self.info_set("当前阶段", "确认战斗倍率")
@@ -1103,27 +1199,93 @@ class PVPTask(BaseBD2Task):
     def _confirm_setting_multiplier(self, multiplier: int) -> bool:
         # BUG-20260906-01：确认点击被吞时设置弹窗不关、主弹窗回读不变；仅在
         # 设置弹窗仍开着时重试确认，弹窗已关则不盲重试（避免误点主弹窗）。
+        # A player's run (v0.1.17, 1920×1080 windowed, 2026-10-10) pressed
+        # three times and stopped twice with the dialog "still open".  The old
+        # check read 鲜血鸡尾酒…消耗量, and the main popup's 鲜血鸡尾酒 row
+        # sits in the same area (no frame of it yet, so inferred).  Now the
+        # read 确认 is pressed (the fixed point when unread), the dialog counts
+        # as open only by its own 设置 / 确认 / value, and a closed dialog
+        # whose main value is not read is confirmed by the cost on 战斗开始
+        # (checked again before the start in any case).
         for attempt in range(1, PVP_CLICK_VERIFY_ATTEMPTS + 1):
-            self._click_screen_reference(
-                *PVP_MULTIPLIER_CONFIRM_SCREEN_POINT,
+            if not self._click_ocr_pattern_center(
+                PVP_SETTING_CONFIRM_PATTERNS,
+                name="PVP 倍率确认",
+                roi=PVP_SETTING_CONFIRM_REFERENCE_ROI,
                 after_sleep=1.0,
-            )
+            ):
+                self._click_screen_reference(
+                    *PVP_MULTIPLIER_CONFIRM_SCREEN_POINT,
+                    after_sleep=1.0,
+                )
             if self._multiplier_matches(multiplier, timeout=4.0):
                 return True
-            if attempt >= PVP_CLICK_VERIFY_ATTEMPTS:
+            if not self._setting_dialog_open(multiplier):
+                if self._start_cost_is(multiplier):
+                    self.log_info(
+                        f"镜中之战：倍率处没读到 {multiplier}，"
+                        f"战斗开始上每场消耗是 {multiplier}，倍率已设好。"
+                    )
+                    return True
                 break
-            dialog_open, _text = self._wait_for_ocr_patterns(
-                [r"设置.*鲜血鸡尾酒.*消耗量|鲜血鸡尾酒.*消耗量"],
-                timeout=1.0,
-                name="PVP 倍率设置",
-                roi=self._mf_roi(*PVP_MULTIPLIER_SETTING_OCR_REFERENCE_ROI),
-            )
-            if not dialog_open:
+            if attempt >= PVP_CLICK_VERIFY_ATTEMPTS:
                 break
             self.log_info(f"镜中之战：倍率确认第{attempt}次点击未生效，重试。")
 
         self.info_set("PVP 倍率 OCR", "未确认")
+        self.log_info(f"镜中之战：倍率没能设成 {multiplier}，{self._multiplier_seen()}")
+        self._save_flow_diagnostic("pvp_multiplier_confirm_failed")
         return False
+
+    def _setting_dialog_open(self, multiplier: int) -> bool:
+        """The 倍率 setting dialog is still up: its title's 设置, its 确认 or its value."""
+        found, _text = self._wait_for_ocr_patterns(
+            [r"设置"],
+            timeout=1.0,
+            name="PVP 倍率设置",
+            roi=self._mf_roi(*PVP_MULTIPLIER_SETTING_OCR_REFERENCE_ROI),
+        )
+        if found:
+            return True
+        # Read text is joined: the anchored pattern is for one box only.
+        found, _text = self._wait_for_ocr_patterns(
+            [r"确[认定]"],
+            timeout=0.5,
+            name="PVP 倍率确认",
+            roi=PVP_SETTING_CONFIRM_REFERENCE_ROI,
+        )
+        return found or self._setting_multiplier_matches(multiplier)
+
+    def _start_cost_is(self, multiplier: int) -> bool:
+        """Two looks at 战斗开始 agree that one battle costs ``multiplier``."""
+
+        def cost():
+            return self._start_cost_on(self.capture_frame())
+
+        first = self._read_until(cost)
+        if first != multiplier:
+            return False
+        self.sleep(0.4)
+        return self._read_until(cost) == multiplier
+
+    def _multiplier_seen(self) -> str:
+        """What the screen showed where the multiplier is set, for the log."""
+        frame = self.capture_frame()
+        value = self._ocr_text(
+            frame, name="PVP 倍率", roi=self._mf_roi(*PVP_MULTIPLIER_OCR_REFERENCE_ROI)
+        )
+        title = self._ocr_text(
+            frame,
+            name="PVP 倍率设置",
+            roi=self._mf_roi(*PVP_MULTIPLIER_SETTING_OCR_REFERENCE_ROI),
+        )
+        button = self._ocr_text(
+            frame, name="PVP 倍率确认", roi=PVP_SETTING_CONFIRM_REFERENCE_ROI
+        )
+        return (
+            f"当时倍率处读到「{value or '-'}」，标题处「{title[:20] or '-'}」，"
+            f"确认处「{button[:12] or '-'}」。"
+        )
 
     def _setting_multiplier_value(self) -> int | None:
         frame = self.capture_frame()
@@ -1145,20 +1307,30 @@ class PVPTask(BaseBD2Task):
         With only free cocktails the game caps the count at what the free
         pool covers.  A press that leaves the count unchanged means that cap:
         stop there (live 2026-09-28: 30 presses against a cap of 2 froze the
-        screen for 15 s and the run was cancelled).
+        screen for 15 s and the run was cancelled).  A swallowed press leaves
+        it unchanged too, so the cap is taken only after one more press.
         """
         self.info_set("当前阶段", f"设置战斗次数 {count}")
         self._click_reference(*PVP_COUNT_MIN_POINT, after_sleep=0.6)
-        previous = None
         for _ in range(30):
             current = self._read_until(self._battle_count_value)
             if current is None:
                 return None
             step = adjust_step(current, count, 10)
-            if step is None or current == previous:
+            if step is None:
                 return current
-            previous = current
-            self._click_reference(*PVP_COUNT_STEP_POINTS[step], after_sleep=0.4)
+            if self.press_and_confirm(
+                "镜中之战「战斗次数」",
+                lambda: self._click_reference(*PVP_COUNT_STEP_POINTS[step], after_sleep=0.4),
+                lambda: self._battle_count_value() not in (None, current),
+                still_before=lambda: self._battle_count_value() == current,
+                timeout=PVP_COUNT_CONFIRM_SECONDS,
+            ):
+                continue
+            after = self._read_until(self._battle_count_value)
+            if after is None or after == current:
+                # Unchanged after the second press too: the free cocktails' cap.
+                return after
         return self._battle_count_value()
 
     def _select_battle_count(self, multiplier: int) -> bool:
@@ -1216,20 +1388,7 @@ class PVPTask(BaseBD2Task):
         """
 
         def per_battle():
-            frame = self.capture_frame()
-            # A lone thin "1" after the cocktail icon is lost at 2K (live
-            # 2026-09-29, 1x fallback): read the button enlarged as well.
-            texts = []
-            for scale in (1.0, 2.0):
-                text = self._ocr_text(
-                    frame, name="PVP 战斗开始", roi=PVP_START_BUTTON_ROI, ocr_scale=scale
-                )
-                texts.append(text)
-                cost = parse_start_cost(text)
-                if cost is not None:
-                    return cost
-            self.info_set("PVP 战斗开始 OCR", " | ".join(t or "-" for t in texts))
-            return None
+            return self._start_cost_on(self.capture_frame())
 
         def free_pool():
             text = self._ocr_text(
@@ -1271,7 +1430,26 @@ class PVPTask(BaseBD2Task):
         if problems:
             self.log_warning(f"镜中之战：{'；'.join(problems)}，取消本次战斗。", notify=True)
             return False
+        self._verified_battles = battles
+        # 战斗开始 is pressed again only while this count is still shown.
+        self._verified_free = free
         return True
+
+    def _start_cost_on(self, frame) -> int | None:
+        """The per-battle cost on 战斗开始 (None: unread)."""
+        # A lone thin "1" after the cocktail icon is lost at 2K (live
+        # 2026-09-29, 1x fallback): read the button enlarged as well.
+        texts = []
+        for scale in (1.0, 2.0):
+            text = self._ocr_text(
+                frame, name="PVP 战斗开始", roi=PVP_START_BUTTON_ROI, ocr_scale=scale
+            )
+            texts.append(text)
+            cost = parse_start_cost(text)
+            if cost is not None:
+                return cost
+        self.info_set("PVP 战斗开始 OCR", " | ".join(t or "-" for t in texts))
+        return None
 
     def _select_max_battle_count(self) -> None:
         self.info_set("当前阶段", "选择最大战斗次数")
@@ -1301,13 +1479,20 @@ class PVPTask(BaseBD2Task):
 
     def _wait_result_and_leave(self, multiplier: int) -> bool:
         self.info_set("当前阶段", "等待战斗结算")
-        result_timeout = self._result_wait_timeout(multiplier)
+        # The count read in the dialog before 战斗开始; else the most the
+        # multiplier allows.
+        battles = getattr(self, "_verified_battles", None) or max(
+            1, FREE_COCKTAILS_PER_DAY // max(1, int(multiplier))
+        )
+        result_timeout = self._result_wait_timeout(battles)
+        patterns = self._pvp_result_patterns(battles)
+        result_roi = self._screen_reference_roi_to_reference_roi(PVP_RESULT_SCREEN_ROI)
         result_found, result_text = self._wait_for_ocr_pattern_majority(
-            self._pvp_result_patterns(multiplier),
+            patterns,
             min_matches=4,
             timeout=result_timeout,
             name="PVP 结算",
-            roi=self._screen_reference_roi_to_reference_roi(PVP_RESULT_SCREEN_ROI),
+            roi=result_roi,
             extra_wait_patterns=[
                 (
                     PVP_BATTLE_ONGOING_PATTERN,
@@ -1315,9 +1500,12 @@ class PVPTask(BaseBD2Task):
                     "PVP 战斗中 OCR",
                 )
             ],
+            max_timeout=result_timeout * PVP_RESULT_WAIT_CAP_FACTOR,
         )
         self.info_set("PVP 结算 OCR", result_text or "-")
         if not result_found:
+            self.log_warning("镜中之战：等待战斗结算超时，尝试离开结算画面。")
+            self._leave_result_after_timeout(patterns, result_roi)
             return False
 
         self._close_result_page()
@@ -1335,16 +1523,30 @@ class PVPTask(BaseBD2Task):
             after_sleep=PVP_RESULT_CLOSE_AFTER_SECONDS,
         )
 
-    def _result_wait_timeout(self, multiplier: int) -> float:
+    def _leave_result_after_timeout(self, patterns: list[str], roi) -> None:
+        """Leave a result screen the wait did not confirm, the normal way.
+
+        Recovery cannot press the result's ✕ or 离开, so a late or misread
+        result used to stop 一键日常.  ✕ only when result labels are read
+        now, 离开 only where it is read.
+        """
+        self.info_set("当前阶段", "结算超时，尝试离开")
+        frame = self.capture_frame()
+        text = self._ocr_text(frame, name="PVP 结算", roi=roi) if frame is not None else ""
+        if self._ocr_pattern_match_count(text, patterns) >= PVP_RESULT_PARTIAL_MATCHES:
+            self._close_result_page()
+        if self._click_leave_button() and self._ensure_pvp_hub_after_leave():
+            self._return_home_from_pvp_hub()
+
+    def _result_wait_timeout(self, battles: int) -> float:
         base_minutes = float(
             self.config.get("PVP 结算基准等待分钟", PVP_RESULT_BASE_MINUTES)
         )
-        safe_multiplier = max(1, int(multiplier))
-        return base_minutes * 60.0 / safe_multiplier
+        per_battle = base_minutes * 60.0 / FREE_COCKTAILS_PER_DAY
+        return max(PVP_RESULT_MIN_WAIT_SECONDS, per_battle * max(1, int(battles)))
 
-    def _pvp_result_patterns(self, multiplier: int) -> list[str]:
-        safe_multiplier = max(1, int(multiplier))
-        completed_count = max(1, round(40 / safe_multiplier))
+    def _pvp_result_patterns(self, battles: int) -> list[str]:
+        completed_count = max(1, int(battles))
         return [
             r"反复战斗结果",
             r"胜利分",
@@ -1838,8 +2040,13 @@ class PVPTask(BaseBD2Task):
         roi: tuple[int, int, int, int] | None = None,
         interval: float = 0.5,
         extra_wait_patterns: list[tuple[str, tuple[int, int, int, int], str]] | None = None,
+        max_timeout: float | None = None,
     ) -> tuple[bool, str]:
-        end_at = monotonic() + max(0.0, timeout)
+        started = monotonic()
+        end_at = started + max(0.0, timeout)
+        # A read extra pattern is progress: it moves the end on (up to
+        # max_timeout) until it is gone for PVP_BATTLE_STUCK_SECONDS.
+        cap_at = started + max(timeout, max_timeout or 0.0)
         last_text = ""
         while monotonic() <= end_at:
             frame = self.capture_frame()
@@ -1855,6 +2062,7 @@ class PVPTask(BaseBD2Task):
                 extra_text = self._ocr_text(frame, name=info_key, roi=extra_roi)
                 if self._matches_any(extra_text, [pattern]):
                     self.info_set(info_key, extra_text)
+                    end_at = min(cap_at, max(end_at, monotonic() + PVP_BATTLE_STUCK_SECONDS))
                     break
             self.sleep(interval)
 

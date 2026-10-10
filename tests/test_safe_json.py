@@ -4,6 +4,7 @@ import unittest
 from unittest import mock
 
 from src.compat import safe_json
+from tests.helpers import held_open
 
 
 class SafeJsonTest(unittest.TestCase):
@@ -46,6 +47,49 @@ class SafeJsonTest(unittest.TestCase):
             safe_json.write_json_file(self.path, {"a": 2})
         self.assertEqual(safe_json.read_json_file(self.path), {"a": 2})
         self.assertFalse(os.path.exists(self.path + ".tmp"))
+
+
+class RecordFileTest(unittest.TestCase):
+    """The tool's own record files: swapped in whole, and a file held open a
+    moment is tried again; held longer, the caller is told and nothing is lost."""
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.path = os.path.join(self.folder.name, "record.json")
+        safe_json.write_text_atomic(self.path, "旧")
+
+    def _text(self):
+        with open(self.path, encoding="utf-8") as file:
+            return file.read()
+
+    def test_held_open_a_moment_is_still_swapped_in(self):
+        with held_open.replace_refused(self.path, 2), held_open.no_wait():
+            safe_json.write_text_atomic(self.path, "新")
+        self.assertEqual("新", self._text())
+        self.assertFalse(os.path.exists(self.path + ".tmp"))
+
+    def test_held_open_too_long_raises_and_keeps_the_old_file(self):
+        with held_open.replace_refused(self.path), held_open.no_wait():
+            with self.assertRaises(PermissionError):
+                safe_json.write_text_atomic(self.path, "新")
+        self.assertEqual("旧", self._text())
+        self.assertFalse(os.path.exists(self.path + ".tmp"))
+
+    def test_read_held_open_a_moment_is_tried_again(self):
+        with held_open.read_refused(self.path, 2), held_open.no_wait():
+            self.assertEqual("旧", safe_json.read_text_retrying(self.path))
+
+    def test_read_held_open_too_long_raises(self):
+        with held_open.read_refused(self.path), held_open.no_wait():
+            with self.assertRaises(PermissionError):
+                safe_json.read_text_retrying(self.path)
+
+    def test_missing_file_is_not_waited_for(self):
+        with mock.patch.object(safe_json.time, "sleep") as sleep:
+            with self.assertRaises(FileNotFoundError):
+                safe_json.read_text_retrying(self.path + ".missing")
+        sleep.assert_not_called()
 
 
 if __name__ == "__main__":

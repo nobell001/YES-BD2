@@ -87,6 +87,7 @@ def add(
     note: str = "",
     via: str = SINGLE,
     images: dict | None = None,
+    trade: dict | None = None,
     folder: str | None = None,
 ) -> None:
     finished = time.time() if finished is None else finished
@@ -100,6 +101,9 @@ def add(
         "via": str(via or SINGLE),
         "images": {kind: list(paths) for kind, paths in (images or {}).items() if paths},
     }
+    if trade:
+        # What a trade run sold and cooked (YES-BD2 #6).
+        entry["trade"] = trade
     with _lock:
         data = _read(folder)
         key = day_key(finished)

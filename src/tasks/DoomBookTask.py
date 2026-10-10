@@ -534,22 +534,26 @@ class DoomBookTask(_ClaimTaskBase):
 
     def _fight(self) -> bool:
         self.info_set("当前阶段", "去战斗")
+        button = None
         for _attempt in range(3):
-            boxes = self._reference_boxes(self.capture_frame(), GO_BATTLE_ROI, "去战斗")
-            button = self._box_with(boxes, (GO_BATTLE_TEXT,))
-            if button is None:
-                self.sleep(1.0)
-                continue
-            self._click_reference_box(button, after_sleep=2.0)
-            # 1.5 秒就重点会在战斗载入中重复点击；页面持续约 9 秒仍在才算点击被吞。
-            if self._wait_for(
-                lambda frame: not self._doom_page_visible(frame),
-                timeout=GO_BATTLE_LEAVE_SECONDS,
-                interval=0.5,
-            ):
+            button = self._go_battle_button(self.capture_frame())
+            if button is not None:
                 break
-        else:
-            self.log_info(f"{LABEL}：找不到或点不动「去战斗」。")
+            self.sleep(1.0)
+        if button is None:
+            self.log_info(f"{LABEL}：找不到「去战斗」。")
+            return False
+        # 1.5 秒就重点会在战斗载入中重复点击；页面持续约 9 秒仍在才算点击被吞。
+        if not self.press_and_confirm(
+            f"{LABEL}「去战斗」",
+            lambda: self._click_reference_box(button, after_sleep=2.0),
+            self._left_doom_page,
+            still_before=self._go_battle_still_shown,
+            timeout=GO_BATTLE_LEAVE_SECONDS,
+            poll=0.5,
+            retries=2,
+        ):
+            self.log_info(f"{LABEL}：点了「去战斗」没有进入战斗。")
             return False
 
         self.info_set("当前阶段", "战斗中")
@@ -587,6 +591,43 @@ class DoomBookTask(_ClaimTaskBase):
             self.sleep(0.8)
         self.log_info(f"{LABEL}：战斗结算超时。")
         return False
+
+    def _go_battle_button(self, frame):
+        return self._box_with(
+            self._reference_boxes(frame, GO_BATTLE_ROI, "去战斗"), (GO_BATTLE_TEXT,)
+        )
+
+    def _left_doom_page(self) -> bool:
+        """Neither the page title nor 去战斗 on two looks in a row.
+
+        One missed title read used to count as leaving; a swallowed click
+        then ended as 「已完成一次战斗」.
+        """
+        for look in range(2):
+            if look:
+                self.sleep(0.5)
+            frame = self.capture_frame()
+            if (
+                frame is None
+                or self._doom_page_visible(frame)
+                or self._go_battle_button(frame) is not None
+            ):
+                return False
+        return True
+
+    def _go_battle_still_shown(self) -> bool:
+        """The page and its 去战斗 on two looks: the click did nothing."""
+        for look in range(2):
+            if look:
+                self.sleep(0.5)
+            frame = self.capture_frame()
+            if (
+                frame is None
+                or not self._doom_page_visible(frame)
+                or self._go_battle_button(frame) is None
+            ):
+                return False
+        return True
 
     def _leave_result_after_failure(self) -> None:
         """Press 离开 if the result screen is up, then go home from the field."""

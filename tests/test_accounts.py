@@ -7,12 +7,15 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+from src.tasks import setup_check
 from src.tasks.map_trade import account_check
 from src.tasks.map_trade.card_status import CardActionState
 from src.tasks.map_trade.collector_constants import UNSUPPORTED_COLLECTION_CARD_NUMBERS
 from src.tasks.map_trade.models import COLLECTABLE_CARDS, SUPPRESS_ONLY_VERIFIED_CARD_IDS
 from src.tasks.map_trade.progress import UTC_PLUS_8, ProgressStore
+from src.tasks.run_history import NOT_STARTED_KEY
 from src.utils import accounts
+from tests.helpers import held_open
 
 
 class _InFolder(unittest.TestCase):
@@ -122,6 +125,69 @@ class AccountsTest(_InFolder):
         state = ProgressStore(now_provider=now).load()
         self.assertEqual(state.cards, {})
         self.assertFalse(state.depleted_today)
+
+
+class UnreadableListTest(_InFolder):
+    """2026-10-09 review: a list that cannot be read never quietly becomes
+    「只有账号1」, which would put the second account's records on the first."""
+
+    BROKEN_BYTES = '{"accounts": [{"id": "2", "na'.encode("utf-8")  # cut by a power loss
+
+    def setUp(self):
+        super().setUp()
+        self.second = accounts.add("小号", {})
+        accounts.switch(self.second.id)
+
+    def _break(self):
+        accounts.ACCOUNTS_FILE.write_bytes(self.BROKEN_BYTES)
+        accounts.reset_cache()  # the next launch
+
+    def _task(self):
+        task = SimpleNamespace(info={}, warnings=[])
+        task.info_set = task.info.__setitem__
+        task.log_warning = lambda message, notify=False: task.warnings.append(message)
+        return task
+
+    def test_broken_list_is_kept_and_stops_the_run(self):
+        self._break()
+        self.assertEqual(accounts.BROKEN, accounts.unreadable())
+        self.assertEqual(self.BROKEN_BYTES, Path("configs/accounts.json.corrupt").read_bytes())
+        task = self._task()
+        message, notice = setup_check.ACCOUNTS_TEXTS[accounts.BROKEN]
+        self.assertEqual(notice, setup_check.accounts_stop(task))
+        self.assertEqual(notice, task.info[NOT_STARTED_KEY])
+        self.assertEqual([message], task.warnings)
+
+    def test_deleting_the_broken_list_starts_over_as_account_one(self):
+        self._break()
+        self.assertEqual(accounts.BROKEN, accounts.unreadable())
+        accounts.ACCOUNTS_FILE.unlink()
+        self.assertEqual("", accounts.unreadable())
+        self.assertEqual("", setup_check.accounts_stop(self._task()))
+        self.assertEqual("1", accounts.current_id())
+
+    def test_held_open_a_moment_is_read_again(self):
+        accounts.reset_cache()
+        with held_open.read_refused(accounts.ACCOUNTS_FILE, 2), held_open.no_wait():
+            self.assertEqual(self.second.id, accounts.current_id())
+            self.assertEqual("", accounts.unreadable())
+
+    def test_held_open_too_long_stops_the_run_and_keeps_the_last_list(self):
+        self.assertEqual(self.second.id, accounts.current_id())
+        os.utime(accounts.ACCOUNTS_FILE, ns=(1, 1))  # the other tool wrote it
+        with held_open.read_refused(accounts.ACCOUNTS_FILE), held_open.no_wait():
+            self.assertEqual(self.second.id, accounts.current_id())
+            self.assertEqual(accounts.BUSY, accounts.unreadable())
+            notice = setup_check.ACCOUNTS_TEXTS[accounts.BUSY][1]
+            self.assertEqual(notice, setup_check.accounts_stop(self._task()))
+        self.assertFalse(Path("configs/accounts.json.corrupt").exists())
+        self.assertEqual("", accounts.unreadable())
+
+    def test_held_open_at_launch_is_not_taken_for_account_one(self):
+        accounts.reset_cache()
+        with held_open.read_refused(accounts.ACCOUNTS_FILE), held_open.no_wait():
+            self.assertEqual(accounts.BUSY, accounts.unreadable())
+        self.assertEqual(self.second.id, accounts.current_id())
 
 
 def _reading(absorb, suppress, region=True):

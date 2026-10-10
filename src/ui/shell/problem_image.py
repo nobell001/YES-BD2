@@ -1,8 +1,8 @@
 """The 问题摘要 as a picture or a few lines of text (Leo 2026-10-09).
 
 The picture is what the author reads first: the run, where it stopped and
-why, the game window and screen, the last log lines, and the game frame of
-that moment.  It always uses the light colours, whatever the app's look, so
+why, the game window and screen, the last log lines, a few small frames of
+the seconds before, and the game frame of that moment.  It always uses the light colours, whatever the app's look, so
 every player's picture reads the same, and Simplified Chinese, whatever the
 tool's language, since it is for the author.  The text is four short lines for
 places that take no pictures (Leo: 「不要一大串 只複製重要的」).
@@ -185,7 +185,7 @@ class _Pen:
             self.p.drawRoundedRect(rect, radius, radius)
 
 
-def _paint(pen: _Pen, record: dict, frame) -> float:
+def _paint(pen: _Pen, record: dict, frame, before=()) -> float:
     env = problem_report.env_of(record)
     inner = WIDTH - 2 * PAD
     y = PAD
@@ -256,6 +256,12 @@ def _paint(pen: _Pen, record: dict, frame) -> float:
         title = t("停下前的记录") if record.get("problem") else t("最后的记录")
         y = _card(pen, y, inner, lambda p, top: _logs(p, top, inner, title, logs))
 
+    # The seconds before, oldest first.
+    shots = [(at, image) for at, image in before if image is not None and not image.isNull()]
+    if shots:
+        at = float((record.get("problem") or {}).get("at") or record.get("finished") or 0)
+        y = _card(pen, y, inner, lambda p, top: _strip(p, top, inner, shots, at))
+
     # The game at that moment.
     if frame is not None and not frame.isNull():
         def picture(p, top):
@@ -316,6 +322,34 @@ def _logs(pen: _Pen, top: float, inner: float, title: str, logs) -> float:
     return used
 
 
+STRIP_GAP = 8
+
+
+def _strip(pen: _Pen, top: float, inner: float, shots, at: float) -> float:
+    """「停下前几秒」: the small frames in a row, each with how long before."""
+    x = PAD + CARD_PAD
+    width = inner - 2 * CARD_PAD
+    used = pen.text(x, top, width, t("停下前几秒（从早到晚）"), pen.font(14), INK3) + 8
+    count = problem_report.BEFORE_FRAMES
+    thumb = (width - STRIP_GAP * (count - 1)) / count
+    tall = max(
+        thumb * image.height() / max(1, image.width()) for _when, image in shots
+    )
+    font = pen.font(12.5)
+    label = 0.0
+    for index, (when, image) in enumerate(shots):
+        left = x + index * (thumb + STRIP_GAP)
+        shown = thumb * image.height() / max(1, image.width())
+        if pen.p is not None:
+            pen.p.drawImage(QRectF(left, top + used, thumb, shown), image)
+        seconds = max(1, round(at - float(when or at))) if at else 0
+        text = tf("{n} 秒前", n=seconds) if seconds else ""
+        label = max(label, pen.text(
+            left, top + used + tall + 4, thumb, text, font, INK3, Qt.AlignHCenter
+        ))
+    return used + tall + 4 + label
+
+
 def _family() -> str:
     app = QGuiApplication.instance()
     return app.font().family() if app is not None else ""
@@ -324,8 +358,13 @@ def _family() -> str:
 def render(record: dict) -> QImage:
     """The 问题摘要 picture of a record."""
     frame = QImage(record["frame_path"]) if record.get("frame_path") else None
+    before = [
+        (item.get("at"), QImage(item["path"]))
+        for item in record.get("before_paths") or []
+        if item.get("path")
+    ]
     family = _family()
-    height = _paint(_Pen(None, family), record, frame)
+    height = _paint(_Pen(None, family), record, frame, before)
     image = QImage(round(WIDTH * SCALE), round(height * SCALE), QImage.Format_RGB32)
     image.fill(GROUND)
     painter = QPainter(image)
@@ -333,7 +372,7 @@ def render(record: dict) -> QImage:
     painter.setRenderHint(QPainter.TextAntialiasing)
     painter.setRenderHint(QPainter.SmoothPixmapTransform)
     painter.scale(SCALE, SCALE)
-    _paint(_Pen(painter, family), record, frame)
+    _paint(_Pen(painter, family), record, frame, before)
     painter.end()
     return image
 

@@ -3,7 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.compat.launcher_env import find_install, restore_launcher_env, show_update_notice_once
+from src.compat.launcher_env import (
+    drop_stale_launcher_pid,
+    find_install,
+    restore_launcher_env,
+    show_update_notice_once,
+)
 
 
 class LauncherEnvTest(unittest.TestCase):
@@ -92,3 +97,62 @@ class UpdateNoticeOnceTest(unittest.TestCase):
             self.assertFalse(show_update_notice_once(folder, self.env("v0.1.13", "v0.1.13")))
             self.assertFalse(show_update_notice_once(folder, {}))
             self.assertFalse((Path(folder) / "configs").exists())
+
+
+class StaleLauncherPidTest(unittest.TestCase):
+    """ok-script closes the PYAPPIFY_PID program at the first window: only the
+    launcher may stay there (language-change relaunch, review 2026-10-09)."""
+
+    def make_install(self, root: Path) -> Path:
+        working = root / "data" / "apps" / "yes-bd2" / "working"
+        working.mkdir(parents=True)
+        (root / "yes-bd2.exe").write_bytes(b"")
+        return working
+
+    def test_launcher_keeps_its_pid(self):
+        with tempfile.TemporaryDirectory() as folder:
+            working = self.make_install(Path(folder))
+            environ = {"PYAPPIFY_PID": "1234"}
+            launcher = str(Path(folder) / "yes-bd2.exe")
+            self.assertFalse(drop_stale_launcher_pid(working, environ, lambda _pid: launcher))
+            self.assertEqual({"PYAPPIFY_PID": "1234"}, environ)
+
+    def test_launcher_seen_through_the_english_link(self):
+        with tempfile.TemporaryDirectory() as folder:
+            real = Path(folder) / "real"
+            real.mkdir()
+            self.make_install(real)
+            link = Path(folder) / "link"
+            link.symlink_to(real, target_is_directory=True)
+            working = link / "data" / "apps" / "yes-bd2" / "working"
+            environ = {"PYAPPIFY_PID": "1234"}
+            launcher = str(real / "yes-bd2.exe")
+            self.assertFalse(drop_stale_launcher_pid(working, environ, lambda _pid: launcher))
+            self.assertIn("PYAPPIFY_PID", environ)
+
+    def test_any_other_program_loses_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            working = self.make_install(Path(folder))
+            game = Path(folder) / "BrownDust II.exe"
+            game.write_bytes(b"")
+            for exe in (str(game), None):
+                with self.subTest(exe=exe):
+                    environ = {"PYAPPIFY_PID": "1234", "PYAPPIFY_VERSION": "1.2.3"}
+                    self.assertTrue(drop_stale_launcher_pid(working, environ, lambda _pid: exe))
+                    self.assertEqual({"PYAPPIFY_VERSION": "1.2.3"}, environ)
+
+    def test_unreadable_pid_or_no_launcher_loses_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            working = self.make_install(Path(folder))
+            environ = {"PYAPPIFY_PID": "abc"}
+            self.assertTrue(drop_stale_launcher_pid(working, environ, lambda _pid: "x"))
+            self.assertEqual({}, environ)
+            # Source checkout: there is no launcher at all.
+            environ = {"PYAPPIFY_PID": "1234"}
+            self.assertTrue(drop_stale_launcher_pid(folder, environ, lambda _pid: "x"))
+            self.assertEqual({}, environ)
+
+    def test_nothing_to_do_without_a_pid(self):
+        environ = {"PYAPPIFY_VERSION": "1.2.3"}
+        self.assertFalse(drop_stale_launcher_pid(".", environ, lambda _pid: None))
+        self.assertEqual({"PYAPPIFY_VERSION": "1.2.3"}, environ)

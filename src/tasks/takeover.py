@@ -13,9 +13,14 @@ Ignored:
 - a click that only brings the game to the front (it was behind another
   window when pressed);
 - mouse movement alone, F1-F24 (ok's Start/Stop hotkey is F9) and PrintScreen;
+  Alt+F4 does count: it closes the game, the run is not to reopen it;
 - anything on the 桌面分身 (input reaches the clone only by accident);
 - any input while the running task says the player plays along
   (``player_plays_along``, e.g. recording a 魔兽追踪者 fight).
+
+A paused run is not stopped (decision 8 of the 10-10 plan, its default: 暂停 is there so the player
+can step in); it is marked ``player_stepped_in`` and, after 继续, looks at
+the screen again before its next press (BaseBD2Task.sleep).
 """
 
 from __future__ import annotations
@@ -41,7 +46,9 @@ MOUSE_PRESS_MESSAGES = frozenset(
 )
 LLMHF_INJECTED = 0x01
 LLKHF_INJECTED = 0x10
+LLKHF_ALTDOWN = 0x20
 FUNCTION_KEYS = range(0x70, 0x88)  # VK_F1 .. VK_F24
+VK_F4 = 0x73
 # Lock and modifier keys alone never operate the game.  On the 桌面分身,
 # Remote Desktop re-sends their state as real key presses whenever its window
 # gains or loses focus (live 2026-10-03: 公会、小屋、酒馆 stopped as 「键盘」
@@ -72,11 +79,12 @@ def mouse_takeover(msg: int, flags: int, window_is_game: bool, game_in_front: bo
 
 def key_takeover(msg: int, flags: int, vk: int, game_in_front: bool) -> bool:
     """A real key press while the game has the keyboard (F-keys and state keys excepted)."""
+    # The player closing the game is no 闪退 to reopen (decision 9 of the 10-10 plan, its default).
+    closes_game = vk == VK_F4 and bool(flags & LLKHF_ALTDOWN)
     return (
         msg in (WM_KEYDOWN, WM_SYSKEYDOWN)
         and not flags & LLKHF_INJECTED
-        and vk not in FUNCTION_KEYS
-        and vk not in IGNORED_KEYS
+        and (closes_game or (vk not in FUNCTION_KEYS and vk not in IGNORED_KEYS))
         and game_in_front
     )
 
@@ -145,6 +153,9 @@ class TakeoverMonitor:
                     # The hook runs before the click is handled, so the
                     # foreground is still the window that had focus.
                     front = self._root_is_game(win32gui.GetForegroundWindow())
+                    # While paused, the click that brings the game forward
+                    # may have changed its screen too.
+                    front = front or bool(getattr(task, "paused", False))
                     if mouse_takeover(msg, data.flags, self._root_is_game(hwnd), front):
                         self._take_over(task, "鼠标")
         except Exception:
@@ -162,13 +173,20 @@ class TakeoverMonitor:
 
                     front = self._root_is_game(win32gui.GetForegroundWindow())
                     if key_takeover(msg, data.flags, data.vkCode, front):
-                        logger.info(f"takeover: real key vk=0x{data.vkCode:02X} on the game")
+                        if not getattr(task, "paused", False):
+                            logger.info(f"takeover: real key vk=0x{data.vkCode:02X} on the game")
                         self._take_over(task, "键盘")
         except Exception:
             pass
         return False
 
     def _take_over(self, task, source: str) -> None:
+        if getattr(task, "paused", False):
+            # Paused for the player to step in: no stop, a look after 继续.
+            if not getattr(task, "player_stepped_in", False):
+                logger.info(f"takeover: the player used the paused game ({source})")
+            task.player_stepped_in = True
+            return
         self._stopped_task = task
         # Off the hook thread: Windows drops a hook that answers slowly.
         threading.Thread(target=self._stop, args=(task, source), daemon=True).start()

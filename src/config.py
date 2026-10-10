@@ -77,6 +77,9 @@ def blur_area(width, height):
 config = {
     "custom_tasks": True,
     "debug": False,
+    # ok-script would kill the copy already open after 5 s, even mid-run;
+    # main.py checks with src/compat/single_instance.py instead (2026-10-09).
+    "check_mutex": False,
     "use_gui": True,
     "config_folder": "configs",
     "global_configs": [basic_options],

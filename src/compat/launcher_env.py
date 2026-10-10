@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 VERSION_ENV = "PYAPPIFY_VERSION"
+PID_ENV = "PYAPPIFY_PID"
 
 
 def find_install(script_dir: str | os.PathLike) -> tuple[Path, Path] | None:
@@ -126,6 +127,49 @@ def restore_launcher_env(
     profile = app.get("current_profile")
     if isinstance(profile, str) and profile:
         environ.setdefault("PYAPPIFY_APP_PROFILE", profile)
+    return True
+
+
+def process_exe(pid: int) -> str | None:
+    try:
+        import psutil
+
+        return psutil.Process(pid).exe()
+    except Exception:
+        return None
+
+
+def _same_file(first, second) -> bool:
+    try:
+        return os.path.samefile(first, second)
+    except (OSError, ValueError):
+        return False
+
+
+def drop_stale_launcher_pid(
+    script_dir: str | os.PathLike, environ=None, exe_of=process_exe
+) -> bool:
+    """PYAPPIFY_PID 那个程序不是本工具的启动器时把变量拿掉；True 表示拿掉了。
+
+    主视窗第一次出来时 ok-script 会把这个编号的程序缩小再强制关掉。编号
+    若是之前那次打开留下的（例如换语言重开），启动器早就关了，同一个编号
+    可能已经是游戏或别的程序（2026-10-09 检查）。
+    """
+    environ = os.environ if environ is None else environ
+    value = environ.get(PID_ENV)
+    if not value:
+        return False
+    try:
+        exe = exe_of(int(value))
+    except (TypeError, ValueError):
+        exe = None
+    launchers = [environ.get("PYAPPIFY_EXECUTABLE")]
+    install = find_install(script_dir)
+    if install is not None:
+        launchers.append(install[0])
+    if exe and any(launcher and _same_file(exe, launcher) for launcher in launchers):
+        return False
+    del environ[PID_ENV]
     return True
 
 

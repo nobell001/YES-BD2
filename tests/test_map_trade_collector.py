@@ -68,7 +68,7 @@ from tests.helpers.map_trade import _seed_action_records, _seed_battle_supplemen
 
 
 class CollectionRunTest(unittest.TestCase):
-    def test_collection_retries_the_same_first_card_then_stops(self):
+    def test_collection_retries_the_same_first_card_then_skips_it(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             progress = ProgressStore(
                 Path(temp_dir) / "progress.json",
@@ -88,12 +88,16 @@ class CollectionRunTest(unittest.TestCase):
                     NavigationResult(False, ScreenState.UNKNOWN, "failed"),
                 )
 
-            navigator = SimpleNamespace(select_collection_card=select)
+            navigator = SimpleNamespace(
+                select_collection_card=select,
+                return_home=lambda: NavigationResult(True, ScreenState.HOME),
+            )
             result = Collector(task, object(), navigator, progress).run()
 
         self.assertFalse(result.success)
-        self.assertEqual("未能进入卡带 Q_sp1", result.message)
-        self.assertEqual([("Q_sp1", False)] * 3, attempts)
+        self.assertIn("第1章", result.message)
+        self.assertEqual([("Q_sp1", False)] * 3, attempts[:3])
+        self.assertEqual("Q_sp2", attempts[3][0])
 
     def test_collector_run_converts_runtime_error_to_collection_result(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2684,7 +2688,7 @@ class GreyNeedsSearchTest(unittest.TestCase):
 class GreyAbsorbSkipsMapTest(unittest.TestCase):
     """Leo 2026-10-07: a grey 吸收 on a battle map skips 召集/压制 too."""
 
-    def test_grey_absorb_skips_summon_and_suppress(self):
+    def _grey_absorb_run(self, summon_grey: bool):
         with tempfile.TemporaryDirectory() as temp_dir:
             progress = ProgressStore(
                 Path(temp_dir) / "progress.json",
@@ -2694,28 +2698,44 @@ class GreyAbsorbSkipsMapTest(unittest.TestCase):
             collector = object.__new__(Collector)
             collector.progress = progress
             collector._status = lambda *a: None
+            collector.task = SimpleNamespace(sleep=lambda *a: None)
             prepared = []
 
             def prepare(action, **_k):
                 prepared.append(action.name)
-                if action.name == "吸收":
+                if action.name == "吸收" or (action.name == "召集" and summon_grey):
                     used = ActionIconDetection(
                         ActionIconState.USED, MatchResult(0.98, (1, 1), (5, 5)), stable=True
                     )
                     return collector._resolve_preexisting_used(
                         action, used, card_id="Q_sp12", map_role=CollectionMapRole.BATTLE_AREA_1
                     ), None
-                raise AssertionError("召集/压制 must not be looked at")
+                # A bright icon: stop here with a failure so nothing is clicked.
+                return SkillExecutionResult(False, message=f"{action.name}可按"), None
 
             collector._prepare_action = prepare
             results = collector._use_actions_pipelined(
                 BATTLE_ACTIONS, card_id="Q_sp12", map_role=CollectionMapRole.BATTLE_AREA_1
             )
-            self.assertEqual(["吸收"], prepared)
-            self.assertTrue(all(result.completed for result in results))
-            for name in ("召集", "压制"):
-                record = progress.get_action_record("Q_sp12", CollectionMapRole.BATTLE_AREA_1, name)
-                self.assertEqual(CollectionActionState.SETTLED.value, record["state"])
+            states = {
+                name: (progress.get_action_record("Q_sp12", CollectionMapRole.BATTLE_AREA_1, name) or {}).get("state")
+                for name in ("召集", "压制")
+            }
+            return prepared, results, states
+
+    def test_grey_absorb_and_grey_summon_skip_suppress(self):
+        prepared, results, states = self._grey_absorb_run(summon_grey=True)
+        self.assertEqual(["吸收", "召集"], prepared)
+        self.assertTrue(all(result.completed for result in results))
+        self.assertEqual(CollectionActionState.SETTLED.value, states["压制"])
+
+    def test_grey_absorb_with_bright_summon_goes_on(self):
+        # Splash Queen's battle map (live 4K 2026-10-09): 吸收 done by hand,
+        # 召集 and 压制 still to do.
+        prepared, results, _states = self._grey_absorb_run(summon_grey=False)
+        self.assertEqual(["吸收", "召集"], prepared)
+        self.assertFalse(results[-1].completed)
+        self.assertEqual("召集可按", results[-1].message)
 
 
 class SlotPressTest(unittest.TestCase):

@@ -29,6 +29,7 @@ from src.tasks.recovery import recover_to_home
 from src.tasks.RewardClaimTasks import _ClaimTaskBase
 from src.tasks.task_vision_mixin import REFERENCE_HEIGHT, REFERENCE_WIDTH
 from src.utils.colour_rules import switch_yellow_ratio
+from src.utils.free_switch import ensure_free_switch_on
 from src.utils.ocr_utils import keyword_match_count, normalize_ocr_text
 
 # 1920x1080 reference coordinates / ROIs.
@@ -64,7 +65,6 @@ QUICK_RESULT_ROI = (560, 300, 800, 740)
 QUICK_RESULT_DISMISS_POINT = (960, 900)
 QUICK_RESULT_TIMEOUT = 12.0
 FREE_AP_SWITCH_YELLOW_RATIO = 0.05
-FREE_AP_SWITCH_ATTEMPTS = 3
 FREE_AP_SWITCH_SETTLE_SECONDS = 2.5
 AP_SHORT_CANCEL_READS = 3
 # After a failure: longest wait for a running chain to reach its result.
@@ -174,11 +174,13 @@ class EventBattleTask(_ClaimTaskBase):
             }
         )
         self._battles_done = 0
+        self._why = ""
 
     # -- task entry ---------------------------------------------------------
 
     def run_claim(self) -> bool:
         self._battles_done = 0
+        self._why = ""
         for mode in MODES:
             if self._battle_budget() <= 0:
                 break
@@ -223,11 +225,22 @@ class EventBattleTask(_ClaimTaskBase):
             return self._claim_fail("返回主页")
         return True
 
+    def _failed(self, why: str) -> str:
+        """Keep why this step failed for the 问题摘要; returns "failed"."""
+        self._why = why
+        return "failed"
+
     def _event_fail(self, stage: str) -> bool:
         self._save_flow_diagnostic(f"{self.claim_log_name}_{stage}_failed")
         self._settle_before_recovery()
         recover_to_home(self)
-        return self._claim_fail(stage)
+        if not self._why:
+            return self._claim_fail(stage)
+        # A player's summary said only 「普通战斗失败」 (2026-10-10): say why.
+        self.info_set("当前阶段", f"{stage}失败：{self._why}")
+        self.info_set("状态", f"{self.name}：{stage}失败：{self._why}。")
+        self.log_warning(f"{self.name}：{stage}失败：{self._why}。")
+        return False
 
     def _settle_before_recovery(self) -> None:
         """Let a running chain end and leave its result screen first.
@@ -302,15 +315,17 @@ class EventBattleTask(_ClaimTaskBase):
             if self._wait_for_hub(timeout=HUB_RETRY_SECONDS):
                 return "ok"
         if not recover_to_home(self):
-            return "failed"
+            return self._failed("回不到主页，没能去点活动横幅")
         if not self._wait_for_home_confirmation("活动入口前主页确认"):
-            return "failed"
+            return self._failed("没认出主页，没去点活动横幅")
         keywords = BANNER_KEYWORDS
         for attempt in range(1, BANNER_CLICK_ATTEMPTS + 1):
             banner = self._find_stable_banner(keywords)
             if banner is None:
                 # Home confirmed yet no caption during a whole carousel cycle.
-                return "no_event" if attempt == 1 else "failed"
+                if attempt == 1:
+                    return "no_event"
+                return self._failed("点了活动横幅没进去，之后横幅也找不到了")
             self._sleep_after_recognition()
             self._click_box(banner, after_sleep=1.0)
             if self._wait_for_hub(timeout=HUB_RETRY_SECONDS):
@@ -320,8 +335,10 @@ class EventBattleTask(_ClaimTaskBase):
                 self.log_info(f"活动每日战斗：第{attempt}次点击横幅未生效，重试。")
                 continue
             # Left home (loading): give the hub its full time.
-            return "ok" if self._wait_for_hub(timeout=25.0) else "failed"
-        return "failed"
+            if self._wait_for_hub(timeout=25.0):
+                return "ok"
+            return self._failed("点了活动横幅后，活动页一直没出来")
+        return self._failed(f"活动横幅点了 {BANNER_CLICK_ATTEMPTS} 次都没进活动页")
 
     def _wait_for_hub(self, timeout: float = 20.0) -> bool:
         end_at = monotonic() + timeout
@@ -343,7 +360,7 @@ class EventBattleTask(_ClaimTaskBase):
             boxes = self._roi_boxes(self.capture_frame(), HUB_BUTTON_ROI, "活动页")
             button = self._box_with(boxes, (mode,))
             if button is None:
-                return "failed"
+                return self._failed(f"活动页里没找到「{mode}」")
             self._sleep_after_recognition()
             self._click_box(button, after_sleep=1.5)
             if self._wait_for_stage_page(mode, timeout=HUB_RETRY_SECONDS, quiet=True):
@@ -351,8 +368,10 @@ class EventBattleTask(_ClaimTaskBase):
             if self._wait_for_hub(timeout=2.0):
                 self.log_info(f"活动每日战斗：第{attempt}次点击{mode}未生效，重试。")
                 continue
-            return "ok" if self._wait_for_stage_page(mode) else "failed"
-        return "failed"
+            if self._wait_for_stage_page(mode):
+                return "ok"
+            return self._failed(f"点了「{mode}」后关卡页一直没出来")
+        return self._failed(f"「{mode}」点了 {MODE_CLICK_ATTEMPTS} 次都没进关卡页")
 
     def _wait_for_stage_page(
         self,
@@ -419,7 +438,7 @@ class EventBattleTask(_ClaimTaskBase):
         for _round in range(3):
             state = self._stable_stage_state(mode)
             if state["free_ap"] is None:
-                return "failed"
+                return self._failed("关卡页上方的活动AP没读到")
             if not state["auto"]:
                 self.log_info(f"活动每日战斗：{mode}已全部通关。")
                 return "cleared"
@@ -433,7 +452,7 @@ class EventBattleTask(_ClaimTaskBase):
                 return "no_ap"
             if not self._wait_for_stage_page(mode):
                 self._battles_done += fought
-                return "failed"
+                return self._failed(f"打完后没回到{mode}的关卡页")
             after = self._stable_stage_state(mode)
             self._battles_done += max(fought, ap_spent(state, after))
             if self._battle_budget() <= 0:
@@ -464,6 +483,7 @@ class EventBattleTask(_ClaimTaskBase):
             if not self._stage_state(mode)["auto"]:
                 break
         if not opened:
+            self._failed("按了自动战斗，选场数的窗口没出来")
             return None
         cost = self._set_dialog_count(wanted, state)
         if cost is None:
@@ -475,6 +495,7 @@ class EventBattleTask(_ClaimTaskBase):
         if started == "no_ap":
             return 0
         if started != "started":
+            self._failed("按了「战斗」后没开始打")
             return None
         return self._watch_auto_battle(cost)
 
@@ -557,6 +578,7 @@ class EventBattleTask(_ClaimTaskBase):
         free_only = bool(self.config.get("仅使用免费活动AP", True))
         free = state["free_ap"] or 0
         if free_only and not self._ensure_free_ap_switch_on():
+            self._failed("没能确认「仅使用免费活动AP」开着，所以没开打")
             return None
         self._click_reference(*DIALOG_MAX_POINT, after_sleep=0.8)
         cost = self._settled_cost(self._dialog_cost)
@@ -569,10 +591,11 @@ class EventBattleTask(_ClaimTaskBase):
         # AP read from the top bar when only free AP may be used.
         if cost is None or cost <= 0 or cost > wanted or (free_only and cost > free):
             self.log_info(f"活动每日战斗：场数校验失败（{cost}/{wanted}，免费AP {free}）。")
+            self._failed(f"场数对不上（读到 {cost}，要打 {wanted}，免费AP {free}），所以没开打")
             return None
         return cost
 
-    def _free_ap_switch_on(self, roi=FREE_AP_SWITCH_ROI) -> bool:
+    def _free_ap_switch_ratio(self, roi=FREE_AP_SWITCH_ROI) -> float:
         """The 仅使用免费活动AP switch turns yellow when on (same widget as PVP)."""
         frame = self.capture_frame()
         height, width = frame.shape[:2]
@@ -582,26 +605,26 @@ class EventBattleTask(_ClaimTaskBase):
             round(x / REFERENCE_WIDTH * width) : round((x + w) / REFERENCE_WIDTH * width),
         ]
         if crop.size == 0 or crop.ndim != 3 or crop.shape[2] < 3:
-            return False
+            return 0.0
         ratio = switch_yellow_ratio(crop)
         self.info_set("免费AP开关", f"黄色占比 {ratio:.3f}")
-        return ratio > FREE_AP_SWITCH_YELLOW_RATIO
+        return ratio
 
     def _ensure_free_ap_switch_on(
         self, point=FREE_AP_SWITCH_POINT, roi=FREE_AP_SWITCH_ROI
     ) -> bool:
-        for attempt in range(1, FREE_AP_SWITCH_ATTEMPTS + 1):
-            if self._free_ap_switch_on(roi):
-                return True
-            self.log_info(f"活动每日战斗：打开仅用免费活动AP（第{attempt}次）。")
-            self._click_reference(*point, after_sleep=0.5)
-            # Let a slow toggle animation finish before deciding to click again,
-            # otherwise a second click would turn it back off.
-            end_at = monotonic() + FREE_AP_SWITCH_SETTLE_SECONDS
-            while monotonic() <= end_at:
-                if self._free_ap_switch_on(roi):
-                    return True
-                self.sleep(0.5)
+        # One press at most: a second one would turn off a switch that was
+        # on but not recognised as on (review #28).
+        if ensure_free_switch_on(
+            "活动每日战斗：仅用免费活动AP",
+            lambda: self._free_ap_switch_ratio(roi),
+            lambda: self._click_reference(*point, after_sleep=0.5),
+            on_above=FREE_AP_SWITCH_YELLOW_RATIO,
+            settle=FREE_AP_SWITCH_SETTLE_SECONDS,
+            sleep=self.sleep,
+            log=self.log_info,
+        ):
+            return True
         self.log_info("活动每日战斗：无法确认仅用免费活动AP已开启，取消。")
         return False
 
@@ -637,6 +660,7 @@ class EventBattleTask(_ClaimTaskBase):
                 calm += 1
                 if calm >= 2:
                     if not self._leave_result_screen():
+                        self._failed("战斗结果页按「返回」一直离不开")
                         return None
                     return max(seen, planned)
             else:
@@ -645,6 +669,7 @@ class EventBattleTask(_ClaimTaskBase):
                     return max(seen, 1)
             self.sleep(1.5)
         self.log_info("活动每日战斗：自动战斗超时。")
+        self._failed("自动战斗超过时间还没打完")
         return None
 
     def _leave_result_screen(self) -> bool:
@@ -697,7 +722,7 @@ class EventBattleTask(_ClaimTaskBase):
             return opened
         state = self._stable_stage_state(CHALLENGE_MODE)
         if state["auto"] or not state["quick"]:
-            return "failed"
+            return self._failed("挑战战斗的关卡页没看到「快速战斗」")
         wanted = min(self._usable_ap(state), self._battle_budget())
         if wanted <= 0:
             return "no_ap"
@@ -705,7 +730,7 @@ class EventBattleTask(_ClaimTaskBase):
             self.log_info(f"活动每日战斗：挑战战斗选中第{state['stage']}关，不是第15关。")
             return "skipped"
         if not self._open_quick_dialog():
-            return "failed"
+            return self._failed("按了「快速战斗」，窗口没打开")
         cost = self._set_quick_count(wanted, state)
         if cost is None:
             self._click_reference(*QUICK_DIALOG_CANCEL_POINT, after_sleep=1.0)
@@ -716,13 +741,13 @@ class EventBattleTask(_ClaimTaskBase):
         start = self._box_with(boxes, ("战斗",))
         if start is None:
             self._click_reference(*QUICK_DIALOG_CANCEL_POINT, after_sleep=1.0)
-            return "failed"
+            return self._failed("快速战斗窗口里没找到「战斗」")
         self._click_box(start, after_sleep=1.0)
         result = self._wait_quick_result()
         if result == "no_ap":
             return "no_ap"
         if result != "done":
-            return "failed"
+            return self._failed("快速战斗后没看到奖励画面")
         self._battles_done += cost
         return "done"
 
@@ -760,6 +785,7 @@ class EventBattleTask(_ClaimTaskBase):
         if free_only and not self._ensure_free_ap_switch_on(
             QUICK_FREE_AP_SWITCH_POINT, QUICK_FREE_AP_SWITCH_ROI
         ):
+            self._failed("没能确认「仅使用免费活动AP」开着，所以没开打")
             return None
         self._click_reference(*QUICK_DIALOG_MAX_POINT, after_sleep=0.8)
         cost = self._settled_cost(self._quick_cost)
@@ -772,6 +798,7 @@ class EventBattleTask(_ClaimTaskBase):
             self.log_info(
                 f"活动每日战斗：快速战斗场数校验失败（{cost}/{wanted}，免费AP {free}）。"
             )
+            self._failed(f"场数对不上（读到 {cost}，要打 {wanted}，免费AP {free}），所以没开打")
             return None
         return cost
 

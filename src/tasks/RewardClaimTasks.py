@@ -279,14 +279,20 @@ class PassRewardTask(_ClaimTaskBase):
         tab_rois = tuple(
             self._pass_tab_roi(point) for point in (PASS_MISSION_TAB_POINT, PASS_REWARD_TAB_POINT)
         )
-        # The first card is already selected on entry, so "unchanged" is normal.
-        self._click_until_changed(
+        changed = self._click_until_changed(
             f"通行证 {opened}",
             lambda: self._click_box(target, after_sleep=0.2),
             (self._pass_card_roi(frame, target), PASS_CLAIM_BUTTON.roi) + tab_rois,
             attempts=2,
             wait=1.2,
         )
+        # The top card is already selected on entry, so "unchanged" is normal
+        # for the first card pressed.  Any other card that changed nothing was
+        # not opened: claiming now would claim the previous pass again.
+        if not changed and not (index == 1 and target is cards[0]):
+            self.log_info(f"通行证：点了「{opened}」画面一直没变化，没有打开，不领取。")
+            self._save_flow_diagnostic(f"{self.claim_log_name}_{opened}_card_failed")
+            return None
         # Mission experience first so the level rewards it unlocks are claimed too.
         tabs = (("任务", PASS_MISSION_TAB_POINT), ("奖励", PASS_REWARD_TAB_POINT))
         for tab_name, tab_point in tabs:

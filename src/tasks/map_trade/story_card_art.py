@@ -82,6 +82,11 @@ def _template(number: int) -> np.ndarray | None:
     return cv2.imread(str(path), cv2.IMREAD_COLOR)
 
 
+def has_art(number: int) -> bool:
+    """A picture ships for this card (cards newer than them go by badge)."""
+    return _template(number) is not None
+
+
 @lru_cache(maxsize=64)
 def _scaled_template(number: int, scale: float) -> np.ndarray | None:
     template = _template(number)

@@ -33,6 +33,13 @@ class DiskCleanupTest(unittest.TestCase):
         self.assertFalse(old_empty.exists())
         self.assertTrue(real.exists())
 
+    def test_startup_error_log_stays(self):
+        # main.py writes it when a start fails before the window; the next
+        # start must not remove it (review 2026-10-09).
+        log = self._file("logs/startup-error.log", 300, 30)
+        disk_cleanup.clean_up(self.root)
+        self.assertTrue(log.exists())
+
     def test_old_and_over_cap_failure_pictures_go(self):
         old = self._file("probe_outputs/old_failed.png", 10, 8)
         new = self._file("probe_outputs/new_failed.png", 10, 0)

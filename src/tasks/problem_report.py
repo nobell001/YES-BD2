@@ -4,7 +4,9 @@ Players only talk to Leo in comments; they cannot send files and will not
 dig for logs.  So each run (一键日常 / 一键周常 or a single task) leaves a
 small record: what ran, where it stopped and why, the game window and screen
 it ran on, the last log lines of that moment and, when something went wrong,
-the game frame of that moment.  The UI turns a record into a picture or a few
+the game frame of that moment and a few small frames of the seconds before it
+(差異化點子 8, Leo 2026-10-10 「做8」: the last frame alone often shows only
+where it ended up, not how it got there).  The UI turns a record into a picture or a few
 lines of text to paste, or a picture saved to the desktop.
 
 Records live in ``screenshots/problem_report/<game day>/``; the last
@@ -22,6 +24,7 @@ import threading
 import time
 from collections import deque
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 
 from ok import Logger
@@ -38,6 +41,14 @@ RING_SIZE = 600
 # Lines of a record (repeats folded into one).
 LOG_LINES = 6
 FRAME_WIDTH = 1920
+# The seconds before a problem: one small frame every BEFORE_GAP seconds of
+# the run, the last BEFORE_FRAMES of them saved with the problem (about 1 MB
+# a problem at most).
+BEFORE_FRAMES = 5
+BEFORE_GAP = 2.0
+BEFORE_WIDTH = 480
+# A before-frame this close to the problem is the problem's own frame.
+BEFORE_SKIP = 0.5
 # ok-script's own line for every task.info_set call.
 INFO_SET_PREFIX = "info_set "
 
@@ -64,6 +75,8 @@ _lock = threading.RLock()
 _current: dict | None = None
 _depth = threading.local()
 _root_override: str | None = None
+# (time, small frame) of the running record, oldest first.
+_before: deque = deque(maxlen=BEFORE_FRAMES)
 
 
 # ------------------------------------------------------------------ logs
@@ -97,6 +110,7 @@ def install_log_ring() -> None:
     if _ring is None:
         _ring = _Ring()
     _attach()
+    _watch_frames()
 
 
 def _attach() -> None:
@@ -264,6 +278,94 @@ def _last_frame(executor):
         return None
 
 
+_WATCH_MARKER = "_bd2_problem_report_frames"
+
+
+def _watch_frames() -> None:
+    """Every frame a task waits for also goes to note_frame (once)."""
+    try:
+        from ok.task.TaskExecutor import TaskExecutor
+    except Exception:
+        return
+    original = TaskExecutor.next_frame
+    if getattr(original, _WATCH_MARKER, False):
+        return
+
+    @wraps(original)
+    def next_frame_noted(self, *args, **kwargs):
+        frame = original(self, *args, **kwargs)
+        if frame is not None and _current is not None:
+            note_frame(frame)
+        return frame
+
+    setattr(next_frame_noted, _WATCH_MARKER, True)
+    TaskExecutor.next_frame = next_frame_noted
+
+
+def note_frame(frame, now: float | None = None) -> None:
+    """Keep a small copy of a frame of the running record, one per BEFORE_GAP."""
+    if _current is None:
+        return
+    now = time.time() if now is None else now
+    if _before and now - _before[-1][0] < BEFORE_GAP:
+        return
+    try:
+        import cv2
+
+        height, width = frame.shape[:2]
+        if width <= 0 or height <= 0:
+            return
+        if width > BEFORE_WIDTH:
+            small = cv2.resize(
+                frame, (BEFORE_WIDTH, max(1, round(height * BEFORE_WIDTH / width))),
+                interpolation=cv2.INTER_AREA,
+            )
+        else:
+            small = frame.copy()
+        if small.ndim == 3 and small.shape[2] == 4:
+            small = cv2.cvtColor(small, cv2.COLOR_BGRA2BGR)
+    except Exception:
+        return  # a copy that fails must never break the run
+    with _lock:
+        if _current is not None:
+            _before.append((now, small))
+
+
+def note_give_up(task, frame, now: float | None = None) -> None:
+    """A task gave up a step (``_save_flow_diagnostic``): keep that screen.
+
+    The problem itself is noted after the task went home, so its frame
+    showed the home page (a player's 圣石洞穴 问题摘要, 2026-10-10).  If this
+    task's run fails, the record shows this screen and the seconds before it.
+    """
+    if _current is None or frame is None:
+        return
+    now = time.time() if now is None else now
+    try:
+        import cv2
+
+        height, width = frame.shape[:2]
+        if width > FRAME_WIDTH:  # what _save_frame keeps anyway
+            kept = cv2.resize(
+                frame, (FRAME_WIDTH, round(height * FRAME_WIDTH / width)),
+                interpolation=cv2.INTER_AREA,
+            )
+        else:
+            kept = frame.copy()
+    except Exception:
+        return  # a copy that fails must never break the run
+    with _lock:
+        current = _current
+        if current is None or current.get("thread") != threading.get_ident():
+            return  # another thread's task (a trigger) is not this run
+        current["give_up"] = {
+            "at": now,
+            "task": str(getattr(task, "name", "") or ""),
+            "frame": kept,
+            "before": [(at, small) for at, small in _before if at <= now - BEFORE_SKIP],
+        }
+
+
 # ------------------------------------------------------------------ files
 
 
@@ -274,7 +376,13 @@ def set_root(path: str | None) -> None:
 
 
 def root() -> Path:
-    return Path(_root_override or get_relative_path(*ROOT))
+    if _root_override:
+        return Path(_root_override)
+    from src.utils import test_run
+
+    if test_run.active():
+        return test_run.scratch().joinpath(*ROOT)
+    return Path(get_relative_path(*ROOT))
 
 
 def _day_key(ts: float) -> str:
@@ -288,7 +396,7 @@ def _stamp(ts: float) -> str:
     return moment.strftime("%H%M%S") + f"-{int(ts * 1000) % 1000:03d}"
 
 
-def _save_frame(frame, ts: float) -> str:
+def _save_frame(frame, ts: float, suffix: str = "", quality: int = 88) -> str:
     try:
         import cv2
 
@@ -302,8 +410,8 @@ def _save_frame(frame, ts: float) -> str:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
         folder = root() / _day_key(ts)
         folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{_stamp(ts)}.jpg"
-        if cv2.imwrite(str(path), frame, [cv2.IMWRITE_JPEG_QUALITY, 88]):
+        path = folder / f"{_stamp(ts)}{suffix}.jpg"
+        if cv2.imwrite(str(path), frame, [cv2.IMWRITE_JPEG_QUALITY, quality]):
             return path.name
     except Exception as exc:
         logger.error(f"problem report frame failed: {exc}")
@@ -363,9 +471,8 @@ def _save(record: dict) -> str | None:
             Path(path).write_text(
                 json.dumps(earlier, ensure_ascii=False, indent=1), encoding="utf-8"
             )
-            frame = (record.get("problem") or {}).get("frame")
-            if frame:
-                (Path(path).parent / frame).unlink(missing_ok=True)
+            for name in _frame_files(record):
+                (Path(path).parent / name).unlink(missing_ok=True)
             with _lock:
                 _last_written["finished"] = record["finished"]
             return path
@@ -377,6 +484,14 @@ def _save(record: dict) -> str | None:
         if saved:
             _last_written.update(key=key, path=saved, finished=record["finished"])
     return saved
+
+
+def _frame_files(record: dict) -> list[str]:
+    """The image files a record's problem saved (its frame and the ones before)."""
+    problem = record.get("problem") or {}
+    names = [problem.get("frame")]
+    names += [item.get("file") for item in problem.get("before") or [] if isinstance(item, dict)]
+    return [str(name) for name in names if name]
 
 
 def is_trigger(task) -> bool:
@@ -412,9 +527,17 @@ def records(limit: int = 60) -> list[dict]:
         if record.get("label") in OLD_TRIGGER_LABELS:
             continue  # written by the first test build; not a run anyone started
         record["path"] = str(path)
-        frame = (record.get("problem") or {}).get("frame")
+        problem = record.get("problem") or {}
+        frame = problem.get("frame")
         if frame:
             record["frame_path"] = str(path.parent / frame)
+        before = [
+            {"at": item.get("at"), "path": str(path.parent / item["file"])}
+            for item in problem.get("before") or []
+            if isinstance(item, dict) and item.get("file")
+        ]
+        if before:
+            record["before_paths"] = before
         found.append(record)
     found.sort(key=lambda r: r.get("finished") or 0, reverse=True)
     return found[:limit]
@@ -461,6 +584,8 @@ class run_scope:
         if self.outer:
             _attach()
             begin(self.task)
+        elif depth() > 1:
+            _forget_give_up()  # the next task of a batch starts clean
         return self
 
     def __exit__(self, kind, error, _trace):
@@ -484,6 +609,7 @@ class run_scope:
 def begin(task) -> None:
     global _current
     with _lock:
+        _before.clear()
         _current = {
             "label": str(getattr(task, "name", "") or ""),
             "started": time.time(),
@@ -492,10 +618,22 @@ def begin(task) -> None:
         }
 
 
+def forget_give_up() -> None:
+    """The task starts over from 主页: an earlier give-up is not where it stopped."""
+    _forget_give_up()
+
+
+def _forget_give_up() -> None:
+    with _lock:
+        if _current is not None and _current.get("thread") == threading.get_ident():
+            _current.pop("give_up", None)
+
+
 def _drop() -> None:
     global _current
     with _lock:
         _current = None
+        _before.clear()
 
 
 def note_problem(task, how: str, note: str = "") -> None:
@@ -534,8 +672,11 @@ def _stage(task) -> str:
 def _capture(task, how: str, note: str, current: dict) -> dict:
     now = time.time()
     executor = getattr(task, "executor", None)
+    give_up = current.get("give_up") if how == "fail" else None
+    if give_up is not None and give_up.get("task") != str(getattr(task, "name", "") or ""):
+        give_up = None
     problem = {
-        "at": now,
+        "at": give_up["at"] if give_up is not None else now,
         "how": how,
         "task": str(getattr(task, "name", "") or ""),
         "stage": _stage(task),
@@ -543,10 +684,27 @@ def _capture(task, how: str, note: str, current: dict) -> dict:
         "env": environment(executor),
         "logs": _logs(current, now),
     }
-    frame = _last_frame(executor)
+    frame = give_up["frame"] if give_up is not None else _last_frame(executor)
     if frame is not None:
         problem["frame"] = _save_frame(frame, now)
+    if how != "stop":  # the player pressed stop: they saw it themselves
+        before = _save_before(now, give_up["before"] if give_up is not None else None)
+        if before:
+            problem["before"] = before
     return problem
+
+
+def _save_before(now: float, frames: list | None = None) -> list[dict]:
+    """The small frames of the seconds before ``now`` (or ``frames``), saved next to the record."""
+    if frames is None:
+        with _lock:
+            frames = [(at, small) for at, small in _before if at <= now - BEFORE_SKIP]
+    saved = []
+    for index, (at, small) in enumerate(frames, start=1):
+        name = _save_frame(small, now, suffix=f"-b{index}", quality=80)
+        if name:
+            saved.append({"at": at, "file": name})
+    return saved
 
 
 def _logs(current: dict, until: float) -> list[dict]:
@@ -575,6 +733,10 @@ def end(task, ended: str | None, error: str = "", ok: bool = True) -> dict | Non
     except Exception as exc:  # never let the record break a run
         logger.error(f"problem report failed: {exc}")
         return None
+    finally:
+        with _lock:
+            if _current is None:
+                _before.clear()
 
 
 def _end(task, current: dict, ended: str | None, error: str, ok: bool) -> dict:
