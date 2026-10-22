@@ -95,6 +95,23 @@ class ScreensTest(unittest.TestCase):
         self.assertIsNone(field_battle.flee_confirm_button(game_menu()))
         self.assertIs(game_menu()[1].name, field_battle.flee_button(game_menu()).name)
 
+    def test_pause_menu_is_the_battle_and_its_settings_close_is_no_button(self):
+        # bd2 session 2026-10-22: the Esc menu shows the cut-scene setting
+        # 「关闭」; recovery pressed it as a close button ten times.
+        boxes = [
+            SimpleNamespace(name="暂停", x=930, y=205, width=60, height=34),
+            SimpleNamespace(name="技能过场动画", x=840, y=480, width=140, height=28),
+            SimpleNamespace(name="1天观看1次", x=1450, y=565, width=110, height=28),
+            SimpleNamespace(name="关闭", x=1480, y=665, width=44, height=28),
+            *game_menu()[1:],
+        ]
+        self.assertTrue(field_battle.pause_menu(boxes))
+        self.assertTrue(field_battle.in_battle(boxes))
+        self.assertTrue(field_battle.in_battle(game_menu()))
+        # The run-away dialog is still its own screen, not the menu.
+        self.assertFalse(field_battle.pause_menu(game_flee_dialog()))
+        self.assertFalse(field_battle.pause_menu(_boxes("暂停", "关闭")))
+
     def test_shared_popup_closer_presses_leave(self):
         press = known_popups.pick(_boxes(*VICTORY))
         self.assertEqual("离开", press.label)

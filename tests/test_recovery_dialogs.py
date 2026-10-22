@@ -53,6 +53,13 @@ class HandleDialogTest(unittest.TestCase):
         self.assertEqual("title", recovery._handle_dialog(task, vision))
         self.assertEqual([], clicks)
 
+    def test_battle_pause_menu_is_left_as_a_battle_not_closed(self):
+        task, vision, clicks = _task(
+            ["暂停", "技能过场动画", "1天观看1次", "关闭", "逃跑", "重新挑战", "点击继续"]
+        )
+        self.assertEqual("battle", recovery._handle_dialog(task, vision))
+        self.assertEqual([], clicks)
+
     def test_info_only_confirm_needs_its_title(self):
         task, vision, clicks = _task(["获得道具", "确认"])
         self.assertEqual("dismissed", recovery._handle_dialog(task, vision))

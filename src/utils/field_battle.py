@@ -44,6 +44,12 @@ AUTO_TEXTS = ("自动战斗中", "結束自動戰鬥", "结束自动战斗", "�
 # "TURN.1", "TURN.2", "TURN1"...
 TURN_PATTERN = re.compile(r"turn\.?\d{1,2}")
 BATTLE_TEXT = "battle"
+# The battle's Esc menu: 「暂停」 over the cut-scene and volume settings, with
+# 逃跑 / 重新挑战 / 点击继续 at the bottom.  Its settings rows hold a 「关闭」
+# option that recovery took for a close button and pressed ten times (bd2
+# session 2026-10-22, 跑图 第3章): the menu is the battle, left by 逃跑.
+# (重新挑战 is left out: the run-away dialog's text says it too.)
+PAUSE_MENU_TEXTS = ("暂停", "暫停", "点击继续", "點擊繼續")
 
 
 def _names(boxes) -> list[str]:
@@ -72,7 +78,17 @@ def in_battle(boxes) -> bool:
     text = "".join(names)
     if any(normalize_ocr_text(word) in text for word in AUTO_TEXTS):
         return True
+    if pause_menu(boxes):
+        return True
     return bool(TURN_PATTERN.search(text)) and BATTLE_TEXT in text
+
+
+def pause_menu(boxes) -> bool:
+    """The battle's Esc menu (「暂停」 with its 逃跑 entry) is open."""
+    if flee_button(boxes) is None:
+        return False
+    text = "".join(_names(boxes))
+    return any(normalize_ocr_text(word) in text for word in PAUSE_MENU_TEXTS)
 
 
 def auto_on(boxes) -> bool:
