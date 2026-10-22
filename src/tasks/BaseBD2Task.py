@@ -1404,6 +1404,14 @@ class BaseBD2Task(BaseTask):
         for press in (1, 2):
             if press > 1 and home_now():
                 break
+            # A field battle over the field (a monster beside the spawn
+            # point, bd2 session 2026-10-22 跑图): P does nothing there and
+            # the battle went on under two presses.  Run away first.
+            leave = getattr(self, "leave_field_battle", None)
+            left = leave("切换卡带") if callable(leave) else "none"
+            if left not in ("none", "left"):
+                self.log_warning(f"切换卡带：撞到怪进了战斗，{left}。")
+                break
             self.log_info(f"没认出快速切换按钮，第{press}次改按快捷键 {QUICK_SWITCH_KEY}。")
             if not self.tap_key(QUICK_SWITCH_KEY, after_sleep=1.5):
                 break

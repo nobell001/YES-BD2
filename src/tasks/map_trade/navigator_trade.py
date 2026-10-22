@@ -1027,6 +1027,13 @@ class TradeNavigationMixin:
             # A 自动移动 dialog over the map hides it from classify (YES-BD2 #24).
             cancel_auto_move()
         state = self.classify()
+        if state == ScreenState.UNKNOWN:
+            # A field battle (a monster beside the spawn point) has no way
+            # home of its own: run away, then go on from the field (bd2
+            # session 2026-10-22, 循环砍价 and 跑图 stopped in one).
+            leave = getattr(self.task, "leave_field_battle", None)
+            if callable(leave) and leave("跑商返回主页") == "left":
+                state = self.classify()
         # The merchant menu can classify as SHOP (its 商店 bubble) or as
         # UNKNOWN (live 2026-09-27, a failed sell left it open).
         if state in {ScreenState.SHOP, ScreenState.UNKNOWN} and self._merchant_menu_shown():

@@ -1781,6 +1781,37 @@ class NavigatorTest(unittest.TestCase):
         self.assertEqual((enabled,), navigator._teleport_map_teleports(frame))
 
 
+class ReturnHomeFromBattleTest(unittest.TestCase):
+    """bd2 session 2026-10-22: a field battle left the trade way home with
+    「没有已确认的安全返回路径」 three times in a row."""
+
+    def _navigator(self, leave_result, states):
+        from src.tasks.map_trade.navigator import Navigator
+
+        navigator = object.__new__(Navigator)
+        fled = []
+        navigator.task = SimpleNamespace(
+            leave_field_battle=lambda label: fled.append(label) or leave_result,
+            operate_click=lambda *_a, **_k: None,
+        )
+        navigator._discount_close_dialog_shown = lambda: False
+        navigator._cancel_auto_move_dialog = lambda: None
+        navigator._merchant_menu_shown = lambda: False
+        screens = iter(states)
+        navigator.classify = lambda *_a, **_k: next(screens)
+        return navigator, fled
+
+    def test_battle_on_the_way_home_is_run_away_from(self):
+        navigator, fled = self._navigator("left", (ScreenState.UNKNOWN, ScreenState.HOME))
+        self.assertTrue(navigator._return_home_pass().success)
+        self.assertEqual(["跑商返回主页"], fled)
+
+    def test_a_known_screen_is_never_taken_for_a_battle(self):
+        navigator, fled = self._navigator("left", (ScreenState.HOME,))
+        self.assertTrue(navigator._return_home_pass().success)
+        self.assertEqual([], fled)
+
+
 class CollectionPageSeekTest(unittest.TestCase):
     """User demo 2026-09-28: the teleport map opens on the current map's
     page, which need not be the town, and the hunting ground can sit left
