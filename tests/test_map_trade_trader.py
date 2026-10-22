@@ -4412,6 +4412,63 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
             [((969, 669), frame.shape, 0.3)] * 2 + [(1045 / 1920, 697 / 1080, 0.8)], clicks
         )
 
+    def test_no_favorites_toast_skips_the_buy_without_confirming(self):
+        from src.tasks.map_trade.phase_ledger import PhaseDeferred
+        from src.tasks.map_trade.trader_constants import BUY_NO_FAVORITES_TOAST_REGION
+
+        clicks = []
+        warnings = []
+        ocr_regions = []
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+        def ocr_text(_frame, _name, relative_roi):
+            ocr_regions.append(relative_roi)
+            if relative_roi == BUY_NO_FAVORITES_TOAST_REGION:
+                return "收藏中没有加入的商品。"
+            return "100"
+
+        trader = object.__new__(Trader)
+        trader.task = SimpleNamespace(
+            operate_click=lambda *args, **_kwargs: clicks.append(args),
+            sleep=lambda *_args: None,
+            log_info=lambda *_args, **_kwargs: None,
+            log_warning=lambda message, **_kwargs: warnings.append(message),
+            info_set=lambda *_args: None,
+        )
+        trader.vision = SimpleNamespace(
+            capture=lambda: frame,
+            ocr_text=ocr_text,
+            simplify=lambda value: value,
+            click_client=lambda point, shape, after_sleep=0: clicks.append(point),
+        )
+        trader._wait_for_buy_all_favorites_state = lambda *_a: self.fail("pressed again")
+        trader._sold_out_after_buy = lambda: self.fail("confirmed at the fixed point")
+
+        result = trader.buy_all_favorites(located=((1435, 1005), frame))
+
+        self.assertIsInstance(result, PhaseDeferred)
+        self.assertTrue(result.success)
+        self.assertEqual([(1435, 1005)], clicks)
+        self.assertIn(BUY_NO_FAVORITES_TOAST_REGION, ocr_regions)
+        self.assertEqual(1, len(warnings))
+        self.assertIn("收藏中没有加入的商品", warnings[0])
+
+    def test_purchase_dialog_is_not_mistaken_for_the_no_favorites_toast(self):
+        trader = object.__new__(Trader)
+        trader.task = SimpleNamespace(
+            sleep=lambda *_args: None,
+            log_warning=lambda *_args, **_kwargs: None,
+            info_set=lambda *_args: None,
+        )
+        trader.vision = SimpleNamespace(
+            capture=lambda: np.zeros((1080, 1920, 3), dtype=np.uint8),
+            ocr_text=lambda *_args, **_kwargs: "一键购买全部收藏",
+            simplify=lambda value: value,
+        )
+
+        self.assertFalse(trader._wait_for_purchase_confirmation(timeout=0.0))
+        self.assertFalse(trader._no_favorites_seen)
+
     def test_buy_home_confirmation_requires_keyword_votes_brightness_and_ocr(self):
         announcement_signals = []
         task = SimpleNamespace(
