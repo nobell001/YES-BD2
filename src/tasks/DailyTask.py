@@ -79,6 +79,10 @@ GUILD_SUCCESS_KEYWORDS = ["签到成功", "奖励已发放至邮箱"]
 # OCR 均可读到），用于返回主页失败时判断是否仍滞留公会页。
 GUILD_PAGE_KEYWORDS = ["公告事项", "进入公会联合战", "公会商店"]
 
+# 未加入公会时公会入口打开的是加入/创建页（win4090 bd2 会话 2026-10-22 实测
+# OCR「申请列表 创建公会」）：没有可签到的公会，跳过而不是记为失败。
+GUILD_NOT_JOINED_KEYWORDS = ["申请列表", "创建公会"]
+
 # 经营管理弹窗实际文案（国服简体，BUG-20260829-011 实测转录）：
 # 餐馆营业额现状/渔笼收获情况/助手工作情况/取消/一键获得。
 BUSINESS_CLAIM_RECHECK_SECONDS = 2.5
@@ -505,7 +509,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
                 return True
             self.sleep(0.5)
 
-    def _visit_guild(self, linger: bool) -> bool:
+    def _visit_guild(self, linger: bool) -> bool | str:
         """Enter the guild page from home and come back.
 
         ``linger``: the entry was marked, so the sign-in panel is waited for
@@ -551,6 +555,13 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             load=True,
         )
         self.info_set("公会签到 OCR", text or "-")
+        if state == "not_joined":
+            self._status_set("公会判断", "未加入公会")
+            self._status_set("公会签到成功", "否")
+            self.log_info("公会签到：打开的是加入/创建公会页面（未加入公会），跳过公会签到。")
+            if not self._return_home_from_guild():
+                return self._home_after_done("公会签到")
+            return STEP_SKIPPED
         self._status_set("公会签到成功", "是" if state else "否")
         if state is None:
             self.log_info(
@@ -587,7 +598,8 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         return True
 
     def _wait_guild_page(self, timeout: float, load: bool = False) -> tuple[str | None, str]:
-        """"toast" (签到成功 shown), "page" (guild page UI) or None.
+        """"toast" (签到成功 shown), "page" (guild page UI), "not_joined" (the
+        join/create page of an account without a guild) or None.
 
         The sign-in words count only over the guild page itself: event login
         popups use the same words (player 2026-10-21, many popups on entry:
@@ -603,6 +615,8 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             text = self._ocr_text(frame, name="公会页面")
             page_hits = self._keyword_match_count(text, GUILD_PAGE_KEYWORDS)
             toast = self._keyword_match_count(text, GUILD_SUCCESS_KEYWORDS) >= 1
+            if not page_hits and self._keyword_match_count(text, GUILD_NOT_JOINED_KEYWORDS) >= 2:
+                return "not_joined", text
             if toast and page_hits >= 1:
                 return "toast", text
             if page_hits >= 2:

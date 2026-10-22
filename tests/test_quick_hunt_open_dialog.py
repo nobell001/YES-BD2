@@ -64,6 +64,23 @@ class OpenDialogTest(unittest.TestCase):
         self.assertFalse(task._quick_hunt_open_dialog("狩猎场"))
         self.assertEqual(1, len(task.clicks))
 
+    def test_lost_map_pick_is_picked_again(self):
+        # bd2 session 2026-10-22: the 暗之洞穴 pick was swallowed, the list
+        # stayed and the run waited for 快速狩猎 until it started over.
+        task = self._task(dialog=(True,))
+        picks = []
+        task._quick_hunt_reopen = lambda: picks.append(1) or True
+        task._quick_hunt_button_ready = lambda _stage: bool(picks)
+        with mock.patch.object(quick_hunt, "QUICK_HUNT_REOPEN_AFTER_SECONDS", 0.05):
+            self.assertTrue(task._quick_hunt_open_dialog("暗属性圣石"))
+        self.assertEqual([1], picks)
+        self.assertIsNone(task._quick_hunt_reopen)
+
+    def test_map_pick_that_worked_is_not_repeated(self):
+        task = self._task(dialog=(True,))
+        task._quick_hunt_reopen = lambda: self.fail("the pick worked")
+        self.assertTrue(task._quick_hunt_open_dialog("暗属性圣石"))
+
     def test_missing_button_is_not_pressed(self):
         task = self._task(button=(False,))
         self.assertFalse(task._quick_hunt_open_dialog("狩猎场"))

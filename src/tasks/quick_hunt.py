@@ -275,6 +275,8 @@ QUICK_HUNT_ADVENTURE_MAP_PATTERNS = {
 }
 
 QUICK_HUNT_CRYSTAL_POINT = (177, 449)
+# After a map pick, this long without 快速狩猎 means the pick may be lost.
+QUICK_HUNT_REOPEN_AFTER_SECONDS = 3.0
 
 # 狩猎场 heads the menu's left column (label about (175, 188) at 1080p, its
 # icon above it; hunt-route-1011.jpg).
@@ -887,14 +889,21 @@ class QuickHuntFeatureMixin:
         element = self._quick_hunt_stone_element()
         if element is None:
             return False
+        cave = [rf"{re.escape(element)}.?之?.?洞穴"]
         clicked = self._quick_hunt_click_ocr(
-            [rf"{re.escape(element)}.?之?.?洞穴"],
+            cave,
             QUICK_HUNT_STONE_LIST_ROI,
             self._quick_hunt_ui_timeout(),
             name=f"选择{element}属性洞穴",
         )
         if not clicked:
             return False
+        # bd2 会话 2026-10-22: the cave click was swallowed, the list stayed
+        # and the run waited 8 s for 快速狩猎 and started over.  Picking a
+        # cave spends nothing: the dialog opener presses it once more.
+        self._quick_hunt_reopen = lambda: self._quick_hunt_click_ocr(
+            cave, QUICK_HUNT_STONE_LIST_ROI, 1.0, name=f"再选{element}属性洞穴"
+        )
         result = self._quick_hunt_execute_current_map("MAX", f"{element}属性圣石")
         if result == "failed":
             return False
@@ -1118,12 +1127,19 @@ class QuickHuntFeatureMixin:
         """
         button = f"{stage}-快速狩猎按钮"
         self._quick_hunt_dialog_last_read = None
-        if not wait_for(
-            lambda: self._quick_hunt_button_ready(stage),
-            self._quick_hunt_ui_timeout(),
-            sleep=self.sleep,
-            poll=0.4,
-        ):
+        reopen = getattr(self, "_quick_hunt_reopen", None)
+        self._quick_hunt_reopen = None
+        ready = lambda: self._quick_hunt_button_ready(stage)  # noqa: E731
+        timeout = self._quick_hunt_ui_timeout()
+        if reopen is not None:
+            # The map was just picked: a lost pick still shows the list, so
+            # it is picked again (once) when the button is not up soon.
+            if not wait_for(ready, QUICK_HUNT_REOPEN_AFTER_SECONDS, sleep=self.sleep, poll=0.4):
+                if reopen():
+                    self.log_info(f"快速狩猎：{stage}没打开，列表还在，再点一次。")
+            else:
+                timeout = 0.0
+        if timeout and not wait_for(ready, timeout, sleep=self.sleep, poll=0.4):
             self.log_info(f"快速狩猎：未找到可点击 OCR 目标：{button}")
             return False
         outcome = self.press_and_confirm(
