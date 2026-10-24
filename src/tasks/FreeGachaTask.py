@@ -126,6 +126,15 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
             return False
         self._click_reference(*GACHA_ENTRY_REFERENCE_POINT, after_sleep=0.5)
         loading_state, gacha_found, _ = self._wait_loading_or_gacha_page("进入抽卡页")
+        # A swallowed press leaves the full home screen up with no loading:
+        # press the entry once more (bd2 session run 2026-10-22 waited 50 s
+        # on the unchanged home page and failed).
+        if loading_state == "none" and self._home_confirmation_ok(
+            self.capture_frame(), "抽抽乐入口点击后"
+        ):
+            self.log_info("白嫖抽抽乐：点了抽抽乐入口后还在主页，再点一次。")
+            self._click_reference(*GACHA_ENTRY_REFERENCE_POINT, after_sleep=0.5)  # 不用确认：the gacha page is waited for below
+            loading_state, gacha_found, _ = self._wait_loading_or_gacha_page("进入抽卡页")
         if loading_state == "stuck":
             return self._fail_run("进入抽卡页")
         if not gacha_found and not self._wait_for_gacha_page("进入抽卡页"):

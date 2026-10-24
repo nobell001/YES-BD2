@@ -135,6 +135,42 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
                 self.assertFalse(FreeGachaTask.run(task))
                 self.assertIn(("状态", expected_status), statuses)
 
+    def test_entry_press_left_on_home_is_pressed_once_more(self):
+        task = object.__new__(FreeGachaTask)
+        task.config = {"启用": True}
+        task.info_set = lambda *_args, **_kwargs: None
+        logs = []
+        task.log_info = logs.append
+        clicks = []
+        task._click_reference = lambda *_args, **_kwargs: clicks.append(1)
+        task._wait_for_home_confirmation = lambda *_args, **_kwargs: True
+        task.capture_frame = lambda: np.zeros((1080, 1920, 3), dtype=np.uint8)
+        task._home_confirmation_ok = lambda *_args, **_kwargs: True
+        waits = iter((("none", False, ""), ("stuck", False, "")))
+        task._wait_loading_or_gacha_page = lambda *_args, **_kwargs: next(waits)
+        task._fail_run = lambda *_args, **_kwargs: False
+
+        self.assertFalse(FreeGachaTask.run(task))
+        self.assertEqual(2, len(clicks))
+        self.assertIn("白嫖抽抽乐：点了抽抽乐入口后还在主页，再点一次。", logs)
+
+    def test_entry_is_not_pressed_again_once_the_home_screen_is_gone(self):
+        task = object.__new__(FreeGachaTask)
+        task.config = {"启用": True}
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_info = lambda *_args, **_kwargs: None
+        clicks = []
+        task._click_reference = lambda *_args, **_kwargs: clicks.append(1)
+        task._wait_for_home_confirmation = lambda *_args, **_kwargs: True
+        task.capture_frame = lambda: np.zeros((1080, 1920, 3), dtype=np.uint8)
+        task._home_confirmation_ok = lambda *_args, **_kwargs: False
+        task._wait_loading_or_gacha_page = lambda *_args, **_kwargs: ("none", False, "")
+        task._wait_for_gacha_page = lambda *_args, **_kwargs: False
+        task._fail_run = lambda *_args, **_kwargs: False
+
+        self.assertFalse(FreeGachaTask.run(task))
+        self.assertEqual(1, len(clicks))
+
     def test_keyword_match_count_ignores_spaces_and_case(self):
         text = "So PERFECT！ 简直是无可挑剔的 masterpiece…！"
 
