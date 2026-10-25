@@ -53,6 +53,13 @@ class HandleDialogTest(unittest.TestCase):
         self.assertEqual("title", recovery._handle_dialog(task, vision))
         self.assertEqual([], clicks)
 
+    def test_login_download_prompt_goes_to_login_not_cancelled(self):
+        task, vision, clicks = _task(
+            ["下载", "将下载游戏所需数据。", "下载容量", "185 MB", "取消", "下载"]
+        )
+        self.assertEqual("title", recovery._handle_dialog(task, vision))
+        self.assertEqual([], clicks)
+
     def test_info_only_confirm_needs_its_title(self):
         task, vision, clicks = _task(["获得道具", "确认"])
         self.assertEqual("dismissed", recovery._handle_dialog(task, vision))

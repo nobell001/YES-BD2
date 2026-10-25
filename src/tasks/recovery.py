@@ -72,11 +72,15 @@ BACK_MOVES_BEFORE_HOME_KEY = 2
 TITLE_SCREEN_TEXTS = ("touchtostart",)
 # OCR misreads like "T0UCH TO STAR" missed the title: tolerant match.
 TITLE_SCREEN_FUZZY_RATIO = 0.8
+# The login-time game-data download prompt (下载 185 MB, 取消/下载) is part of
+# login: recovery pressed its 取消 and the prompt came back (bd2 session
+# 2026-10-22, 每日跑商 started on it).  Auto-login presses 下载 instead.
+LOGIN_DOWNLOAD_TEXTS = ("下载容量", "将下载游戏所需数据")
 
 
 def _handle_dialog(task, vision: Vision) -> str:
     """Close one known dialog: "dismissed", "quit" (the game's quit dialog,
-    cancelled), "title" (title screen), "battle" (a field battle being
+    cancelled), "title" (title screen or its data download prompt), "battle" (a field battle being
     fought) or "none"."""
 
     frame = task.capture_frame()
@@ -88,6 +92,8 @@ def _handle_dialog(task, vision: Vision) -> str:
         fuzzy_substring_match(alnum, title, TITLE_SCREEN_FUZZY_RATIO)
         for title in TITLE_SCREEN_TEXTS
     ):
+        return "title"
+    if any(words in text for words in LOGIN_DOWNLOAD_TEXTS):
         return "title"
     if getattr(task, "FIELD_BATTLE_ESCAPE", False) and field_battle.in_battle(boxes):
         # Back, H and Esc do nothing in a battle; Esc even ends the auto
