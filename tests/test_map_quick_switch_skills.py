@@ -204,6 +204,33 @@ class HomeQuickSwitchKeyTest(unittest.TestCase):
         self.assertEqual(["P"], sent)
 
 
+    def test_key_fallback_runs_from_a_field_battle_before_pressing_p(self):
+        from src.tasks.BaseBD2Task import BaseBD2Task
+
+        sent = []
+        task = SimpleNamespace(
+            log_info=lambda *_a, **_k: None,
+            log_warning=lambda *_a, **_k: None,
+            tap_key=lambda key, after_sleep=0.0: sent.append(key) or True,
+            _save_flow_diagnostic=lambda _n: None,
+            leave_field_battle=lambda label: sent.append("逃跑") or "left",
+        )
+        self.assertTrue(
+            BaseBD2Task._quick_switch_by_key(
+                task, lambda: False, lambda: True, home_shown=lambda: False
+            )
+        )
+        self.assertEqual(["逃跑", "P"], sent)
+
+        sent.clear()
+        task.leave_field_battle = lambda label: "按了4次 Esc 都没看到「逃跑」"
+        self.assertFalse(
+            BaseBD2Task._quick_switch_by_key(
+                task, lambda: False, lambda: True, home_shown=lambda: False
+            )
+        )
+        self.assertEqual([], sent)
+
 def _skill_collector(script):
     """``script[icon name]``: icon states read one per look; the last repeats.
     Every press is taken (its count moves) unless the icon still reads
