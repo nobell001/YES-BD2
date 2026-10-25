@@ -489,6 +489,36 @@ class DailyTaskHelperTest(unittest.TestCase):
         # The re-presses are held longer than a normal click.
         self.assertEqual([0.15, 0.15], holds)
 
+    def test_guild_join_page_skips_the_sign_in(self):
+        # No guild: the entry opens 申请列表/创建公会 (bd2 session 2026-10-22).
+        task = object.__new__(DailyTask)
+        task.config = {"公会入口阈值": 0.78}
+        task.capture_frame = lambda: np.zeros((10, 10, 3), dtype=np.uint8)
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_info = lambda *_args, **_kwargs: None
+        task.sleep = lambda *_args, **_kwargs: None
+        task._match = lambda _frame, spec: (
+            MatchResult(0.9, (0, 0), (1, 1), pixel_score=0.9)
+            if spec is GUILD_TEMPLATE
+            else MatchResult(-1.0, (0, 0), (0, 0))
+        )
+        clicks = []
+        task._click_reference = lambda x, y, **_kwargs: clicks.append((x, y))
+        task._wait_guild_page = lambda _timeout: ("not_joined", "申请列表 创建公会")
+        task._wait_for_home_confirmation = lambda *_args, **_kwargs: True
+
+        self.assertEqual(STEP_SKIPPED, DailyTask.run_guild_sign_in(task))
+        self.assertEqual([(370, 155), (100, 50)], clicks)
+
+    def test_guild_page_reader_names_the_join_page(self):
+        task = object.__new__(DailyTask)
+        task.capture_frame = lambda: np.zeros((10, 10, 3), dtype=np.uint8)
+        task.sleep = lambda *_args, **_kwargs: None
+        task._ocr_text = lambda *_args, **_kwargs: "公会 申请列表 推荐公会 创建公会"
+        task._keyword_match_count = lambda text, words: sum(1 for w in words if w in text)
+
+        self.assertEqual("not_joined", DailyTask._wait_guild_page(task, 0.0)[0])
+
     def test_guild_entry_is_not_pressed_again_once_home_is_gone(self):
         # Loading (home gone, guild page not yet up): wait, never re-press.
         task = object.__new__(DailyTask)
