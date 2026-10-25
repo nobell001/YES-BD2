@@ -87,6 +87,7 @@ from src.tasks.map_trade.navigator_constants import (
     MERCHANT_NAV_UNREACHABLE_KEYWORD,
     MERCHANT_PROMPT_OCR_ROI,
     MERCHANT_QUICK_ARRIVAL_TIMEOUT,
+    MERCHANT_TRAVEL_CONFIRM_PRESSES,
     MERCHANT_TRAVEL_DIALOG_KEYWORDS,
     MERCHANT_TRAVEL_DIALOG_OCR_ROI,
     MINIMAP_CENTER_REFERENCE,
@@ -3496,8 +3497,14 @@ class TradeMerchantNavigationTest(unittest.TestCase):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         vision = SimpleNamespace(
             capture=lambda: frame,
+            # A list is read in turn, its last text from then on.
             ocr_text=lambda _frame, name, roi=None: (
-                self.ocr_reads.append((name, roi)) or texts.get(name, "")
+                self.ocr_reads.append((name, roi))
+                or (
+                    (texts[name].pop(0) if len(texts[name]) > 1 else texts[name][0])
+                    if isinstance(texts.get(name), list)
+                    else texts.get(name, "")
+                )
             ),
             click_ocr=lambda patterns, roi, after_sleep, name: (
                 self.ocr_clicks.append((tuple(patterns), roi, after_sleep, name))
@@ -3517,7 +3524,7 @@ class TradeMerchantNavigationTest(unittest.TestCase):
     def test_confirm_travel_presses_confirm_on_travel_dialog(self):
         for title in ("是否立即前往？", "自动移动"):
             with self.subTest(title=title):
-                navigator = self._travel_navigator({"前往确认": title})
+                navigator = self._travel_navigator({"前往确认": [title, ""]})
 
                 self.assertEqual("moving", navigator._confirm_travel())
                 self.assertIn(("前往确认", MERCHANT_TRAVEL_DIALOG_OCR_ROI), self.ocr_reads)
@@ -3526,6 +3533,21 @@ class TradeMerchantNavigationTest(unittest.TestCase):
                     self.ocr_clicks,
                 )
         self.assertEqual(("立即前往", "自动移动"), MERCHANT_TRAVEL_DIALOG_KEYWORDS)
+
+    def test_confirm_travel_presses_again_when_the_dialog_stays(self):
+        # Live 2026-10-25: a lost 确认 left 是否立即前往 up for 45 s.
+        navigator = self._travel_navigator({"前往确认": ["是否立即前往？", "是否立即前往？", ""]})
+
+        self.assertEqual("moving", navigator._confirm_travel())
+        self.assertEqual(2, len(self.ocr_clicks))
+
+    def test_confirm_travel_gives_up_on_a_dialog_that_never_goes(self):
+        navigator = self._travel_navigator({"前往确认": "是否立即前往？"})
+
+        self.assertEqual("stuck", navigator._confirm_travel())
+        confirms = [click for click in self.ocr_clicks if click[0] == ("确认",)]
+        self.assertEqual(MERCHANT_TRAVEL_CONFIRM_PRESSES, len(confirms))
+        self.assertEqual(("^取消$",), self.ocr_clicks[-1][0])
 
     def test_confirm_travel_cancels_a_dialog_it_cannot_confirm(self):
         # 确认 unreadable until the timeout: the dialog is cancelled, not left up.

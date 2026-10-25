@@ -47,6 +47,8 @@ from src.tasks.map_trade.navigator_constants import (
     MERCHANT_PROMPT_PATTERN,
     MERCHANT_QUICK_ARRIVAL_TIMEOUT,
     MERCHANT_TALK_KEY,
+    MERCHANT_TRAVEL_CONFIRM_PRESSES,
+    MERCHANT_TRAVEL_CONFIRM_RECHECK_SECONDS,
     MERCHANT_TRAVEL_DIALOG_KEYWORDS,
     MERCHANT_TRAVEL_DIALOG_OCR_ROI,
     MINIMAP_CENTER_REFERENCE,
@@ -691,6 +693,7 @@ class TradeNavigationMixin:
 
         end_at = monotonic() + MERCHANT_NAV_OUTCOME_TIMEOUT
         dialog_up = False
+        presses = 0
         while monotonic() <= end_at:
             frame = self.vision.capture()
             toast = self.vision.ocr_text(frame, "导航提示", roi=MERCHANT_NAV_TOAST_OCR_ROI)
@@ -700,14 +703,24 @@ class TradeNavigationMixin:
                 self.vision.ocr_text(frame, "前往确认", roi=MERCHANT_TRAVEL_DIALOG_OCR_ROI)
             )
             dialog_up = any(keyword in title for keyword in MERCHANT_TRAVEL_DIALOG_KEYWORDS)
-            if dialog_up:
-                if self.vision.click_ocr(
-                    [r"确认"],
-                    roi=MERCHANT_NAV_CONFIRM_OCR_ROI,
-                    after_sleep=0.8,
-                    name="前往确认按钮",
-                ):
-                    return "moving"
+            if not dialog_up and presses:
+                return "moving"
+            if dialog_up and presses >= MERCHANT_TRAVEL_CONFIRM_PRESSES:
+                break
+            if dialog_up and self.vision.click_ocr(
+                [r"确认"],
+                roi=MERCHANT_NAV_CONFIRM_OCR_ROI,
+                after_sleep=0.8,
+                name="前往确认按钮",
+            ):
+                # Live 2026-10-25 (第10章 in 埃兰旅馆): a lost 确认 left the
+                # dialog up for 45 s while the trip was awaited.  The next
+                # look checks it went; still up, it is pressed again.
+                if presses:
+                    self.task.log_info("跑图：前往确认按了没关掉，再按一次「确认」。")
+                presses += 1
+                end_at = max(end_at, monotonic() + MERCHANT_TRAVEL_CONFIRM_RECHECK_SECONDS)
+                continue
             self.task.sleep(MERCHANT_NAV_MENU_OCR_INTERVAL)
         if dialog_up:
             self.vision.click_ocr(

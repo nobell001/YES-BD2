@@ -552,6 +552,9 @@ MERCHANT_NAV_TOAST_OCR_ROI = (430, 115, 420, 100)
 MERCHANT_TRAVEL_DIALOG_KEYWORDS = ("立即前往", "自动移动")
 MERCHANT_TRAVEL_DIALOG_OCR_ROI = (400, 260, 480, 140)
 MERCHANT_NAV_OUTCOME_TIMEOUT = 4.0
+# 前往确认: the dialog must go after 确认; pressed at most this many times.
+MERCHANT_TRAVEL_CONFIRM_PRESSES = 3
+MERCHANT_TRAVEL_CONFIRM_RECHECK_SECONDS = 2.0
 # Walks may take this long while the screen moves; a still screen ends the
 # wait after STUCK_SECONDS (Leo 2026-10-14 「頂多等8秒到10秒」).
 MERCHANT_ARRIVAL_TIMEOUT = 40.0
