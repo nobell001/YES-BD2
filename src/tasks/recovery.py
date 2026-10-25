@@ -94,6 +94,10 @@ def _handle_dialog(task, vision: Vision) -> str:
         # battle (live 2K 2026-10-22, 跑图 第14章).  每周跑图 only (Leo
         # 2026-10-23): other tasks recover as before v0.2.7.
         return "battle"
+    if field_battle.pause_menu(boxes):
+        # Its settings rows hold a 「关闭」 option, not a close button: pressing
+        # it changed the player's settings (bd2 session 2026-10-22).
+        return "none"
     press = known_popups.pick(boxes, allow_cancel=True)
     if press is None:
         return "none"
