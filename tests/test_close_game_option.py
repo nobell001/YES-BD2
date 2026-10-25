@@ -109,6 +109,18 @@ class ConfirmWindowTest(unittest.TestCase):
         self.assertIsNone(self._ask({}))
 
 
+class TaskSettingsTest(unittest.TestCase):
+    """Leo 2026-10-25: players who auto-run on open never see the confirm
+    window, so the same switch is also in 任务设定, next to 关机."""
+
+    def test_switch_sits_before_shutdown(self):
+        from src.ui.shell.task_page import BATCH_OPTION_LABELS
+
+        keys = list(BATCH_OPTION_LABELS)
+        self.assertEqual(keys.index(CLOSE_GAME_KEY) + 1, keys.index("完成日常后自动关机"))
+        self.assertEqual("全部做完且没有失败后关闭游戏", BATCH_OPTION_LABELS[CLOSE_GAME_KEY])
+
+
 class CloseGameTest(unittest.TestCase):
     def test_nothing_running_counts_as_closed(self):
         with mock.patch.object(game_process, "_game_processes", return_value=[]):

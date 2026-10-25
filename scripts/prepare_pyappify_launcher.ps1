@@ -3,7 +3,7 @@
     # The version our patched launcher reports. Installed launchers replace
     # themselves only with a higher one (ok's update_pyappify), so bump this
     # whenever the launcher patches below change.
-    [string]$LauncherVersion = "1.2.10",
+    [string]$LauncherVersion = "1.2.12",
     [string]$BuildDir = "pyappify_build",
     [ValidateSet("zlib", "lzma")]
     [string]$NsisCompression = "lzma",
@@ -780,6 +780,43 @@ pub async fn update_server_reachable(git_url: &str) -> bool {
     }
 }
 
+/// YES-BD2's own relay for networks that can't reach GitHub: a Cloudflare
+/// Worker that forwards only the YES-BD2 repositories, read only.
+const UPDATE_RELAY: &str = "https://gh.yesbd2.cc.cd";
+
+static CHOSEN_GIT_URL: Lazy<Mutex<Option<(String, String)>>> = Lazy::new(|| Mutex::new(None));
+
+/// The relay address of a GitHub repository, or None for any other address.
+pub fn relay_git_url(git_url: &str) -> Option<String> {
+    git_url
+        .strip_prefix("https://github.com/")
+        .map(|rest| format!("{}/{}", UPDATE_RELAY.trim_end_matches('/'), rest))
+}
+
+/// Where to update from: GitHub when it answers, else the relay when that
+/// answers, else None. An address that answered is kept for the rest of this
+/// launcher run, so the startup check and the download use the same one.
+pub async fn reachable_git_url(git_url: &str) -> Option<String> {
+    let mut chosen = CHOSEN_GIT_URL.lock().await;
+    if let Some((asked, answer)) = chosen.as_ref() {
+        if asked == git_url {
+            return Some(answer.clone());
+        }
+    }
+    let answer = if update_server_reachable(git_url).await {
+        git_url.to_string()
+    } else {
+        let relay = relay_git_url(git_url)?;
+        if !update_server_reachable(&relay).await {
+            return None;
+        }
+        info!("GitHub did not answer; updating through the relay {}", relay);
+        relay
+    };
+    *chosen = Some((git_url.to_string(), answer.clone()));
+    Some(answer)
+}
+
 /// The tags and the installed version from the copy on disk, without asking
 /// the update server. Takes no repository lock: an update check past its time
 /// limit may still hold it while the installed version starts.
@@ -831,7 +868,7 @@ $appService = Replace-Once $appService `
     (@'
         emit_info!(app.name, "Checking for updates...");
         let git_url = app.get_current_profile_settings().git_url.clone();
-        if git::update_server_reachable(&git_url).await {
+        if git::reachable_git_url(&git_url).await.is_some() {
             // Fetches the branches and the tags; the tag list below reads them
             // from disk instead of asking GitHub again.
             let app_for_check = app.clone();
@@ -877,6 +914,19 @@ $appService = Replace-Once $appService `
      '/// How long the startup update check may take before the installed version is used.' + "`n" +
      'const UPDATE_CHECK_LIMIT: Duration = Duration::from_secs(90);') `
     "update check time limit"
+
+# Players whose network can't reach GitHub at all, with no accelerator, could
+# neither install nor update (Leo 2026-10-20: 「這種問題怎麼根除 不想讓用戶設定
+# 那些有的沒的」). GitHub stays first; when it doesn't answer, installs and
+# updates go through YES-BD2's own relay (cn-mirror/worker.js on Cloudflare),
+# which forwards only the YES-BD2 repositories and only for reading. git still
+# checks every object it downloads against its hash.
+$gitRs = Replace-Once $gitRs `
+    '    let url = profile.git_url.clone();' `
+    ("    let url = reachable_git_url(&profile.git_url)`n" +
+     "        .await`n" +
+     "        .unwrap_or_else(|| profile.git_url.clone());") `
+    "update through the relay when GitHub does not answer"
 
 # With an accelerator on (Clash and the like set the Windows proxy), the
 # browser reached GitHub but the launcher still sat on 「正在启动应用 ·

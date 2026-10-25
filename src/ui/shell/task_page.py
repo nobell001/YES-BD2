@@ -40,6 +40,9 @@ OWN_PAGE_KEYS = {
 
 BATCH_OPTION_LABELS = {
     "失败后继续": "一项失败后继续跑后面的",
+    # Leo 2026-10-25: players who auto-run on open never see the confirm
+    # window, so 关闭游戏 sits next to 关机 here too (same config key).
+    "完成日常后关闭游戏": "全部做完且没有失败后关闭游戏",
     "完成日常后自动关机": "全部做完后自动关机",
     "启用": "允许一键运行",
 }
@@ -445,8 +448,12 @@ class TaskPage(Page):
             column = vbox(self.options, (20, 16, 20, 16), 12)
             column.addWidget(Text("一键运行的设定", "h3"))
             keys = [
-                key for key in ("失败后继续", "完成日常后自动关机", "启用") if key in batch.config
+                key for key in BATCH_OPTION_LABELS if key in batch.config
             ]
-            column.addWidget(ConfigForm(batch, keys=keys, labels=BATCH_OPTION_LABELS))
+            self._options_form = ConfigForm(batch, keys=keys, labels=BATCH_OPTION_LABELS)
+            column.addWidget(self._options_form)
             self._options_built = True
+        elif not self.options.isVisible():
+            # 关闭游戏 can also change in the 一键日常 confirm window.
+            self._options_form.sync()
         self.options.setVisible(not self.options.isVisible())

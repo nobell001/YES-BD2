@@ -141,7 +141,9 @@ class BuildWorkflowTest(unittest.TestCase):
         script = (ROOT / "scripts" / "prepare_pyappify_launcher.ps1").read_text(
             encoding="utf-8"
         )
-        self.assertIn("if git::update_server_reachable(&git_url).await {", script)
+        # The check now also tries the relay (10-20), still through the same
+        # short-limit probe.
+        self.assertIn("let answer = if update_server_reachable(git_url).await {", script)
         self.assertIn("tokio::time::timeout(UPDATE_CHECK_LIMIT, check)", script)
         self.assertIn(
             "git::get_local_tags_and_current_version(repo_path).await?", script
@@ -188,6 +190,16 @@ class BuildWorkflowTest(unittest.TestCase):
         self.assertIn("match if from_env { None } else { windows_proxy_url() } {", script)
         self.assertIn('wide("ProxyEnable")', script)
         self.assertIn("fn proxy_url_from_setting(setting: &str) -> Option<String> {", script)
+
+    def test_launcher_updates_through_the_relay_when_github_is_unreachable(self):
+        # Leo 10-20: players who can't reach GitHub shouldn't have to set
+        # anything up. GitHub first, then YES-BD2's own relay.
+        script = (ROOT / "scripts" / "prepare_pyappify_launcher.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("pub async fn reachable_git_url(git_url: &str) -> Option<String> {", script)
+        self.assertIn("if git::reachable_git_url(&git_url).await.is_some() {", script)
+        self.assertIn("    let url = reachable_git_url(&profile.git_url)`n", script)
 
     def test_launcher_log_ends_in_txt(self):
         # GitHub refused the extensionless app.2026-10-10 as an attachment.

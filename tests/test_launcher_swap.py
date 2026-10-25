@@ -140,6 +140,31 @@ class SwapTest(unittest.TestCase):
         self.assertEqual(b"zip", launcher_swap.download("url", opener=opener, sleep=lambda _: None))
         self.assertEqual(2, opener.call_count)
 
+    def test_download_falls_back_to_the_relay_when_github_fails(self):
+        response = Mock()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        response.read.return_value = b"zip"
+        url = launcher_zip_url()
+        relay = launcher_swap.relay_url(url)
+        opener = Mock(side_effect=[OSError("blocked")] * launcher_swap.DOWNLOAD_TRIES + [response])
+        self.assertEqual(b"zip", launcher_swap.download(url, opener=opener, sleep=lambda _: None))
+        self.assertEqual(relay, opener.call_args.args[0])
+        self.assertEqual(
+            launcher_swap.UPDATE_RELAY + "/nobell001/YES-BD2/releases/download/v0.2.1/yes-bd2-win32.zip",
+            relay,
+        )
+
+    def test_only_github_addresses_go_through_the_relay(self):
+        self.assertIsNone(launcher_swap.relay_url("https://example.com/yes-bd2-win32.zip"))
+
+    def test_relay_matches_the_launcher(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "prepare_pyappify_launcher.ps1"
+        self.assertIn(
+            f'const UPDATE_RELAY: &str = "{launcher_swap.UPDATE_RELAY}";',
+            script.read_text(encoding="utf-8-sig"),
+        )
+
     def test_leftover_old_launchers_are_cleaned(self):
         for name in ("yes-bd2.exe.old", "yes-bd2.exe.old1700000000", "yes-bd2.exe.new"):
             Path(self.folder.name, name).touch()

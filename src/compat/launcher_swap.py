@@ -32,6 +32,11 @@ LAUNCHER_RELEASE = "v0.2.1"
 LAUNCHER_SHA256 = "f4b702d1408f52f85f75f260915f4ef6d486e4a592f72215cb49f0871c860170"
 LAUNCHER_ZIP_URL = "https://github.com/nobell001/YES-BD2/releases/download/{tag}/yes-bd2-win32.zip"
 
+# 连不上 GitHub 的网络改走 YES-BD2 自己的转送站（Cloudflare 上的
+# cn-mirror/worker.js，只转 YES-BD2 的发布下载）；下载的 exe 一样核对 sha256。
+# 要跟 scripts/prepare_pyappify_launcher.ps1 的 UPDATE_RELAY 一样。
+UPDATE_RELAY = "https://gh.yesbd2.cc.cd"
+
 DOWNLOAD_TIMEOUT = 60
 DOWNLOAD_TRIES = 3
 # 上一个换启动器的小程序还在跑（或刚死掉没清锁）时，这么久内不再开第二个。
@@ -94,16 +99,25 @@ def _take_lock(lock: str) -> bool:
     return False
 
 
+def relay_url(url: str) -> str | None:
+    """GitHub 网址在转送站上的网址；不是 GitHub 的回 None。"""
+    prefix = "https://github.com/"
+    if not url.startswith(prefix):
+        return None
+    return f"{UPDATE_RELAY.rstrip('/')}/{url[len(prefix):]}"
+
+
 def download(url: str, opener=urllib.request.urlopen, sleep=time.sleep) -> bytes:
     last_error: Exception | None = None
-    for attempt in range(DOWNLOAD_TRIES):
-        try:
-            with opener(url, timeout=DOWNLOAD_TIMEOUT) as response:
-                return response.read()
-        except Exception as exc:  # 网络断、GitHub 忙：等一下再试
-            last_error = exc
-            if attempt + 1 < DOWNLOAD_TRIES:
-                sleep(2 * (attempt + 1))
+    for source in [url] + [relay for relay in [relay_url(url)] if relay]:
+        for attempt in range(DOWNLOAD_TRIES):
+            try:
+                with opener(source, timeout=DOWNLOAD_TIMEOUT) as response:
+                    return response.read()
+            except Exception as exc:  # 网络断、GitHub 忙：等一下再试，再不行走转送站
+                last_error = exc
+                if attempt + 1 < DOWNLOAD_TRIES:
+                    sleep(2 * (attempt + 1))
     raise RuntimeError(f"download failed: {last_error}")
 
 

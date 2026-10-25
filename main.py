@@ -194,6 +194,8 @@ if __name__ == "__main__":
 
         from src.compat.launcher_env import drop_stale_launcher_pid, restore_launcher_env
 
+        # Read before the line below fills in the launcher's variables.
+        _by_launcher = scheduled_update.opened_by_launcher()
         restore_launcher_env(os.path.dirname(os.path.abspath(sys.argv[0])))
         # 主视窗出来时 ok-script 会关掉 PYAPPIFY_PID 那个程序：不是启动器就不留
         # （换语言重开时那个编号可能已经是游戏或别的程序，2026-10-09 检查）。
@@ -212,6 +214,10 @@ if __name__ == "__main__":
                 raise SystemExit(0)
         elif scheduled_update.take_pending():
             scheduled_start.launched_by_schedule = True
+        elif scheduled_update.update_on_open(_script_dir, _by_launcher):
+            # 首页「打开工具时自动开始」 also updates first (player report
+            # 2026-10-25); the launcher opens the new version, which runs.
+            raise SystemExit(0)
 
         # 更新内容每个版本只跳一次，不是每次打开都跳到「关于」（Leo, 2026-10-09）。
         from src.compat.launcher_env import show_update_notice_once

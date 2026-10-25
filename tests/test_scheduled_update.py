@@ -153,6 +153,50 @@ class UpdateTest(unittest.TestCase):
         self.assertFalse(self.hand())
         self.assertEqual([], self.windows.opened)
 
+    def open_box(self, by_launcher=False, ticked=True, clone=False):
+        scheduled_update.DAILY_CONFIG.parent.mkdir(exist_ok=True)
+        scheduled_update.DAILY_CONFIG.write_text(
+            json.dumps({scheduled_update.OPEN_BOX_KEY: ticked}), encoding="utf-8"
+        )
+        return scheduled_update.update_on_open(
+            str(self.working),
+            by_launcher,
+            clone=lambda: clone,
+            now=NOW,
+            versions=VERSIONS,
+            run=self.windows.run,
+            popen=self.windows.popen,
+            running=lambda _exe: self.launcher_open,
+        )
+
+    def test_the_home_box_updates_first_when_not_opened_by_the_launcher(self):
+        # Player report 2026-10-25: opening the tool ran 一键日常 on the old version.
+        self.assertTrue(self.open_box())
+        launcher = self.windows.opened[-1]
+        self.assertEqual(["--auto-start", "true", "--update-method", "auto"], launcher[1:])
+        self.assertIn(scheduled_update.retry_name(), self.windows.tasks)
+        # The launcher opens the new version: an ordinary open, the box runs it.
+        self.assertFalse(scheduled_update.take_pending(now=NOW, run=self.windows.run))
+        self.assertFalse(scheduled_update.PENDING_FILE.exists())
+        self.assertNotIn(scheduled_update.retry_name(), self.windows.tasks)
+
+    def test_the_home_box_failed_update_still_runs_at_the_retry(self):
+        self.open_box()
+        self.assertTrue(self.retry(NOW + timedelta(minutes=10)))
+
+    def test_the_home_box_leaves_launcher_opens_unticked_and_clone_alone(self):
+        self.assertFalse(self.open_box(by_launcher=True))  # the launcher just updated
+        self.assertFalse(self.open_box(ticked=False))
+        self.assertFalse(self.open_box(clone=True))
+        self.set_app(current_version="v0.2.10")
+        self.assertFalse(self.open_box())  # already the newest
+        self.assertEqual([], self.windows.opened)
+
+    def test_opened_by_launcher_and_box_reading(self):
+        self.assertTrue(scheduled_update.opened_by_launcher({"PYAPPIFY_VERSION": "1.2.9"}))
+        self.assertFalse(scheduled_update.opened_by_launcher({}))
+        self.assertFalse(scheduled_update.auto_run_box_on("missing.json"))
+
     def test_flags(self):
         argv = ["main.py", scheduled_start.FLAG, scheduled_update.RETRY_FLAG]
         self.assertTrue(scheduled_update.take_retry_flag(argv))
