@@ -131,6 +131,28 @@ class CookingStartReclickTest(unittest.TestCase):
             self.assertTrue(trader._wait_for_cooking_started("冰镇甜点", 6.0))
         self.assertEqual([], clicks)
 
+    def test_owned_count_up_means_done_and_no_second_press(self):
+        # Live 2026-10-25: 50 蘑菇汤 done (91 → 141) before the grey button
+        # was read; the re-press then made a 51st.
+        clock, clicks = Clock(), []
+        start = MatchResult(0.98, (1110, 975), (40, 40), pixel_score=0.96)
+        before = CookingDetailSnapshot(FRAME, start, True, 0.78, owned=91)
+        after = CookingDetailSnapshot(FRAME, start, True, 0.78, owned=141)
+        trader = self._trader(clock, clicks, iter([before, after] + [after] * 20))
+        trader._owned_before = 91
+        with patch("src.tasks.map_trade.trader_cooking.monotonic", clock):
+            self.assertTrue(trader._wait_for_cooking_started("蘑菇汤", 6.0))
+        self.assertEqual([], clicks)
+        self.assertTrue(trader._cooked_by_count("蘑菇汤"))
+        self.assertEqual("蘑菇汤×50", trader._last_cooking_result_text)
+
+    def test_owned_count_read_from_the_name_line(self):
+        from src.tasks.map_trade.trader_cooking import _owned
+
+        self.assertEqual(91, _owned("蘑菇汤 米 拥有91个食物"))
+        self.assertEqual(1410, _owned("蘑菇汤 拥有1,410个食物"))
+        self.assertIsNone(_owned("蘑菇汤"))
+
 
 class FieldMapCloseTest(unittest.TestCase):
     def test_map_still_open_is_closed_again_once(self):
