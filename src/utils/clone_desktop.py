@@ -19,6 +19,8 @@ import sys
 import time
 from pathlib import Path
 
+from src.utils.process_snapshot import pids_named
+
 REPO = Path(__file__).resolve().parents[2]
 SETUP_SCRIPT = REPO / "tools" / "clone_desktop" / "setup.ps1"
 DATA_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "bd2-auto" / "clone-desktop"
@@ -306,12 +308,7 @@ def _current_user_sid() -> str | None:
 
 def viewer_running() -> bool:
     try:
-        import psutil
-
-        return any(
-            (process.info.get("name") or "").lower() == "clonedesktop.exe"
-            for process in psutil.process_iter(["name"])
-        )
+        return bool(pids_named({"clonedesktop.exe"}))
     except Exception:
         return False
 
@@ -336,15 +333,11 @@ def _console_session() -> int | None:
 def _viewer_in_other_session(own: int) -> bool:
     """CloneDesktop.exe runs in a session other than ``own`` (the clone's parent)."""
     try:
-        import psutil
-
-        processes = list(psutil.process_iter(["pid", "name"]))
+        viewers = pids_named({"clonedesktop.exe"})
     except Exception:
         return False
-    for process in processes:
-        if (process.info.get("name") or "").lower() != "clonedesktop.exe":
-            continue
-        session = _session_of(process.info["pid"])
+    for pid in viewers:
+        session = _session_of(pid)
         if session is None or session != own:
             return True
     return False
@@ -390,15 +383,9 @@ def _in_clone_session(names: set[str]) -> bool:
     child = child_session_id()
     if child is None or in_clone():
         return False
-    try:
-        import psutil
-    except ImportError:
-        return False
-    for process in psutil.process_iter(["pid", "name"]):
-        if (process.info.get("name") or "").lower() not in names:
-            continue
+    for pid in pids_named(names):
         session = ctypes.c_ulong(0)
-        if ctypes.windll.kernel32.ProcessIdToSessionId(process.info["pid"], ctypes.byref(session)):
+        if ctypes.windll.kernel32.ProcessIdToSessionId(pid, ctypes.byref(session)):
             if session.value == child:
                 return True
     return False
@@ -428,10 +415,9 @@ def end_clone(timeout: float = 20.0) -> bool:
         import psutil
     except ImportError:
         return False
-    for process in psutil.process_iter(["name"]):
-        if (process.info.get("name") or "").lower() != "clonedesktop.exe":
-            continue
+    for pid in pids_named({"clonedesktop.exe"}):
         try:
+            process = psutil.Process(pid)
             process.terminate()
             process.wait(5)
         except psutil.NoSuchProcess:

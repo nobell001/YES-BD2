@@ -150,14 +150,12 @@ def _find_running_executable_path(exe_names: Iterable[str]) -> str:
     except Exception:
         return ""
 
-    for proc in psutil.process_iter(["name", "exe"]):
-        try:
-            name = (proc.info.get("name") or "").lower()
-            exe_path = proc.info.get("exe") or ""
-        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
-            continue
+    from src.utils.process_snapshot import pids_named
 
-        if name not in allowed_names and Path(exe_path).name.lower() not in allowed_names:
+    for pid in pids_named(allowed_names):
+        try:
+            exe_path = psutil.Process(pid).exe() or ""
+        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
             continue
         path = Path(exe_path)
         if path.is_file():

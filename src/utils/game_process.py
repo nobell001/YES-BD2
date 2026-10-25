@@ -11,6 +11,7 @@ import ctypes
 import os
 
 from src.game_path import get_game_exe_names
+from src.utils.process_snapshot import pids_named
 
 CLOSE_WAIT_SECONDS = 15.0
 
@@ -25,17 +26,16 @@ def _game_processes() -> list | None:
         session_of = ctypes.windll.kernel32.ProcessIdToSessionId
     except AttributeError:
         return None
-    names = {name.lower() for name in get_game_exe_names()}
     own = ctypes.c_ulong(0)
     session_of(os.getpid(), ctypes.byref(own))
     found = []
-    for process in psutil.process_iter(["pid", "name"]):
-        if (process.info.get("name") or "").lower() not in names:
-            continue
+    for pid in pids_named(get_game_exe_names()):
         session = ctypes.c_ulong(0)
-        if session_of(process.info["pid"], ctypes.byref(session)):
-            if session.value == own.value:
-                found.append(process)
+        if session_of(pid, ctypes.byref(session)) and session.value == own.value:
+            try:
+                found.append(psutil.Process(pid))
+            except psutil.NoSuchProcess:
+                continue
     return found
 
 

@@ -1,12 +1,11 @@
 import unittest
-from types import SimpleNamespace
 from unittest import mock
 
 from src.utils import clone_desktop
 
 
 def _process(pid, name):
-    return SimpleNamespace(info={"pid": pid, "name": name})
+    return pid, name
 
 
 class InCloneTest(unittest.TestCase):
@@ -22,7 +21,7 @@ class InCloneTest(unittest.TestCase):
                 clone_desktop, "_session_of", side_effect=lambda pid: sessions.get(pid, own)
             ),
             mock.patch.object(clone_desktop, "_console_session", return_value=console),
-            mock.patch("psutil.process_iter", return_value=processes),
+            mock.patch("src.utils.process_snapshot.process_names", return_value=processes),
         ):
             return clone_desktop.in_clone()
 
