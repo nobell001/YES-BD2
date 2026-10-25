@@ -87,6 +87,9 @@ KEY_TAP_SECONDS = 0.08
 # P on 主页 opens the 游戏卡珍藏集 instead, which H cannot leave (live 4K
 # 2026-10-11), so P is never sent while 主页 shows.
 HOME_KEY = "H"
+# Every third blank-spot click in a row (no gap over the limit) is Esc instead.
+HOME_ANNOUNCEMENT_ESC_EVERY = 3
+HOME_ANNOUNCEMENT_STREAK_GAP_SECONDS = 15.0
 RECENT_CARTRIDGE_KEY = "F"
 # The field F button that sends the "!" followers away, and how 镜中之战 / the
 # square look for them (Leo 2026-10-20 「先等5秒等這些靠過來」).
@@ -1341,7 +1344,21 @@ class BaseBD2Task(BaseTask):
         )
         if now - last_click_at < 1.0:
             return True
+        streak = getattr(self, "_home_announcement_clear_streak", 0)
+        if now - last_click_at > HOME_ANNOUNCEMENT_STREAK_GAP_SECONDS:
+            streak = 0
         self._last_home_announcement_clear_at = now
+        self._home_announcement_clear_streak = streak + 1
+        if self._home_announcement_clear_streak % HOME_ANNOUNCEMENT_ESC_EVERY == 0:
+            # Live 2026-10-24: a page opened from 主页 (通行证) dims the home
+            # behind it the same way; the blank spot does nothing there and
+            # recovery clicked it for a minute.  Esc closes such a page as
+            # well as an announcement.
+            self.log_info(
+                f"{context}：点清理位置 {streak} 次主页还是暗的，改按 Esc。"
+            )
+            self.tap_escape(after_sleep=1.0)
+            return True
 
         clear_x, clear_y = HOME_ANNOUNCEMENT_CLEAR_RELATIVE_POINT
         self.info_set(
