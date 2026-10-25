@@ -28,6 +28,8 @@ from src.tasks.map_trade.trader_constants import (
     BUY_CONFIRM_POST_CLICK_DELAY,
     BUY_CONFIRM_PRE_CLICK_DELAY,
     BUY_CONFIRM_TIMEOUT,
+    BUY_NO_FAVORITES_TOAST_KEYWORD,
+    BUY_NO_FAVORITES_TOAST_REGION,
     BUY_TO_SELL_INTERVAL,
     BUY_TO_SELL_POST_CLICK_DELAY,
     BUY_TO_SELL_PRE_CLICK_DELAY,
@@ -43,6 +45,8 @@ BUY_ALL_FAVORITES_CLICK_AFTER_SLEEP = 0.3
 
 
 class BuyFlowMixin:
+    _no_favorites_seen = False
+
     def run_buy(self) -> bool:
         stock_date = purchase_stock_date(self._current_market_time())
         self._status("购买库存日期", stock_date.isoformat())
@@ -66,7 +70,7 @@ class BuyFlowMixin:
         purchase_state = self._wait_for_buy_all_favorites_state()
         if purchase_state is None:
             completed = self._buy_all_favorites_at_fixed_point()
-            self._buy_completed_in_current_shop = completed
+            self._buy_completed_in_current_shop = completed is True
             return completed
         if purchase_state[0] is None:
             self._buy_completed_in_current_shop = True
@@ -86,7 +90,7 @@ class BuyFlowMixin:
         # took a slow 1080p PC past the 10 s stuck guard on the still page
         # (player 问题摘要 2026-10-16, two days in a row).
         completed = self.buy_all_favorites(located=purchase_state)
-        self._buy_completed_in_current_shop = completed
+        self._buy_completed_in_current_shop = completed is True
         return completed
 
     def _switch_from_completed_buy_to_sell(
@@ -146,7 +150,8 @@ class BuyFlowMixin:
         )
         return False
 
-    def buy_all_favorites(self, located=None) -> bool:
+    def buy_all_favorites(self, located=None) -> bool | PhaseDeferred:
+        self._no_favorites_seen = False
         if located is None:
             located = self._wait_for_buy_all_favorites_state()
         if located is None:
@@ -165,6 +170,8 @@ class BuyFlowMixin:
         if not self._wait_for_purchase_confirmation(
             BUY_CONFIRM_FIRST_TIMEOUT, log_timeout=False
         ):
+            if self._no_favorites_seen:
+                return self._nothing_favorited()
             # A swallowed press leaves the shop as it was: press the button
             # once more, only while it is still read and no part of the
             # dialog shows.  It only opens the confirm dialog; buying needs
@@ -185,12 +192,15 @@ class BuyFlowMixin:
                     again[0], again[1].shape, after_sleep=BUY_ALL_FAVORITES_CLICK_AFTER_SLEEP
                 )
                 confirmed = self._wait_for_purchase_confirmation(log_timeout=False)
+            if not confirmed and self._no_favorites_seen:
+                return self._nothing_favorited()
             if not confirmed:
                 return self._confirm_unread_purchase_dialog()
         return self._press_purchase_confirm()
 
-    def _buy_all_favorites_at_fixed_point(self) -> bool:
+    def _buy_all_favorites_at_fixed_point(self) -> bool | PhaseDeferred:
         """The 一键购买全部收藏 words were not read: press where it sits."""
+        self._no_favorites_seen = False
         self.task.log_info("买：读不到「一键购买全部收藏」，按它的固定位置。")
         self.task.operate_click(  # 不用确认：the dialog is waited for below
             *BUY_ALL_FAVORITES_POINT, after_sleep=BUY_ALL_FAVORITES_CLICK_AFTER_SLEEP
@@ -199,7 +209,26 @@ class BuyFlowMixin:
             BUY_CONFIRM_FIRST_TIMEOUT, log_timeout=False
         ) or self._purchase_dialog_partly_read():
             return self._press_purchase_confirm()
+        if self._no_favorites_seen:
+            return self._nothing_favorited()
         return self._confirm_unread_purchase_dialog()
+
+    def _nothing_favorited(self) -> PhaseDeferred:
+        """The game said nothing is starred: there is nothing to buy, and
+        pressing 确认 or buying again from home cannot change that.  Not
+        recorded, so the buy runs again once goods are starred."""
+        message = (
+            "游戏提示「收藏中没有加入的商品」：商店里没有收藏任何商品，"
+            "一键购买全部收藏买不到东西。请先在游戏商店里给要买的商品点星收藏，本次跳过购买。"
+        )
+        self.task.log_warning(f"买：{message}", notify=True)
+        return PhaseDeferred(message)
+
+    def _no_favorites_toast_shown(self, frame) -> bool:
+        text = normalize_text(self.vision.simplify(self.vision.ocr_text(
+            frame, "收藏为空提示", relative_roi=BUY_NO_FAVORITES_TOAST_REGION
+        )))
+        return normalize_text(self.vision.simplify(BUY_NO_FAVORITES_TOAST_KEYWORD)) in text
 
     def _confirm_unread_purchase_dialog(self) -> bool:
         """No confirm dialog was read: press 确认 where it sits, then the
@@ -380,6 +409,9 @@ class BuyFlowMixin:
             )
             if matched == len(BUY_CONFIRM_KEYWORDS):
                 return True
+            if not matched and self._no_favorites_toast_shown(frame):
+                self._no_favorites_seen = True
+                return False
             if monotonic() >= end_at:
                 break
             self.task.sleep(BUY_CONFIRM_INTERVAL)

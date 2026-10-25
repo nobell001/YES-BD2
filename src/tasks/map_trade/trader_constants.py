@@ -85,6 +85,15 @@ BUY_CONFIRM_KEYWORDS = (
     "是否购买所有加入收藏的商品",
 )
 BUY_CONFIRM_TIMEOUT = STUCK_SECONDS
+# 「一键购买全部收藏」 with nothing starred opens no dialog; the game shows
+# this toast above the goods instead (bd2 session account, 2026-10-22).
+BUY_NO_FAVORITES_TOAST_KEYWORD = "没有加入的商品"
+BUY_NO_FAVORITES_TOAST_REGION = (
+    560 / FHD_1080.width,
+    200 / FHD_1080.height,
+    1360 / FHD_1080.width,
+    280 / FHD_1080.height,
+)
 # A press that opened nothing is pressed once more after this long (a
 # player's 2026-10-16 run sat 10 s on the unchanged shop and was stopped).
 BUY_CONFIRM_FIRST_TIMEOUT = 4.0
