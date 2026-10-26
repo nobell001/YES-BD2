@@ -207,6 +207,8 @@ STAGE_MOVE_CLICK = "鼠标点击舞台"
 STAGE_MOVE_WASD = "键盘WASD走到舞台"
 STAGE_MOVE_OPTIONS = [STAGE_MOVE_CLICK, STAGE_MOVE_WASD]
 STAGE_WALK_MAX_STEPS = 14
+# The stage gone from view: the pre-battle screen may still be loading.
+PVP_STAGE_LOADING_SECONDS = 6.0
 # 自动战斗弹窗（1920×1080 参考，2026-09-26 实测）。
 PVP_MULTIPLIER_STEP_POINTS = {
     "big_plus": (1034, 534),
@@ -966,6 +968,12 @@ class PVPTask(BaseBD2Task):
             if stage is None:
                 missing += 1
                 if missing >= 3:
+                    # Stepping on it opens the pre-battle screen behind a ~3 s
+                    # 「BROWN DUST II」 loading frame (live 2026-10-23: given up
+                    # 1 s before 阵形设置 showed).
+                    if self._pre_battle_after_loading():
+                        self.info_set("PVP 舞台走位", "加载后进入战前画面")
+                        return True
                     self.log_info("镜中之战：画面中找不到红色舞台。")
                     return False
                 self.sleep(0.5)
@@ -977,6 +985,15 @@ class PVPTask(BaseBD2Task):
             if not self.hold_key(step.key, step.seconds, after_sleep=0.5):
                 return False
         return self._nudge_until_pre_battle()
+
+    def _pre_battle_after_loading(self) -> bool:
+        found, _text = self._wait_for_ocr_patterns(
+            [r"自动战斗", r"自动"],
+            timeout=PVP_STAGE_LOADING_SECONDS,
+            name="PVP 战前画面",
+            roi=PVP_AUTO_BATTLE_SCREEN_ROI,
+        )
+        return found
 
     def _nudge_until_pre_battle(self) -> bool:
         """Short taps around the centre; the stage centroid is biased when occluded."""

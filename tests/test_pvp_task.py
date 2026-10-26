@@ -2754,6 +2754,25 @@ class PVPTaskHelperTest(unittest.TestCase):
 
         self.assertEqual([(True, True, True)] * 2, operates)
 
+    def _walk_with_stage_gone(self, loaded):
+        task = object.__new__(PVPTask)
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_info = lambda *_args, **_kwargs: None
+        task.sleep = lambda _seconds: None
+        task._pre_battle_visible = lambda: False
+        task._stage_in_view = lambda: None
+        waits = []
+        task._wait_for_ocr_patterns = lambda *_args, **kwargs: waits.append(kwargs["timeout"]) or (loaded, "")
+        return PVPTask._walk_onto_stage(task), waits
+
+    def test_stage_gone_waits_for_the_pre_battle_loading(self):
+        # live 2026-10-23: the walk reached the stage, the loading frame hid it
+        # and the walk gave up 1 s before 阵形设置 showed.
+        from src.tasks.PVPTask import PVP_STAGE_LOADING_SECONDS
+
+        self.assertEqual((True, [PVP_STAGE_LOADING_SECONDS]), self._walk_with_stage_gone(True))
+        self.assertEqual((False, [PVP_STAGE_LOADING_SECONDS]), self._walk_with_stage_gone(False))
+
     def test_start_auto_battle_clicks_start_without_start_ocr_gate(self):
         task = object.__new__(PVPTask)
         task.config = {}
