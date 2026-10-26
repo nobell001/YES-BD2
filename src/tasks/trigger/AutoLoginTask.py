@@ -10,7 +10,7 @@ from qfluentwidgets import FluentIcon
 
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.map_trade.models import MatchResult, TemplateSpec
-from src.utils import game_process, maintenance_notice, scheduled_start, task_vision
+from src.utils import game_process, maintenance_notice, scheduled_start, task_vision, wait_settings
 from src.utils.calibration import FHD_1080
 from src.utils.game_day import GAME_TZ
 from src.utils.game_process import game_running
@@ -840,7 +840,9 @@ class AutoLoginTask(BaseBD2Task):
     def _login_wait_timed_out(self, now: float) -> bool:
         if self._login_clicked_at is None:
             return False
-        total_seconds = float(self.config.get("登录后主页总等待秒数", 300.0))
+        total_seconds = wait_settings.saved(wait_settings.LOGIN_HOME_WAIT)
+        if total_seconds is None:
+            total_seconds = float(self.config.get("登录后主页总等待秒数", 300.0))
         return now - self._login_clicked_at > total_seconds
 
     def _handle_login_wait_timeout(self, now: float) -> None:
@@ -854,7 +856,10 @@ class AutoLoginTask(BaseBD2Task):
             notify=timeouts == 1,
         )
         self.info_set("状态", "登录后等待主页超时")
-        if timeouts >= LOGIN_TIMEOUTS_BEFORE_GIVING_UP and self._cancel_login_gated_batches():
+        give_up = (
+            wait_settings.saved(wait_settings.LOGIN_GIVE_UP) or LOGIN_TIMEOUTS_BEFORE_GIVING_UP
+        )
+        if timeouts >= give_up and self._cancel_login_gated_batches():
             self.log_warning(
                 f"一键日常/周常失败：登录后连续 {timeouts} 次没有等到主页，已取消这次执行。"
                 "请看一下游戏画面，进到主页后再按开始。",

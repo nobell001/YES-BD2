@@ -137,6 +137,10 @@ def find_red_badges(frame, strip: tuple[int, int, int, int]) -> list[int]:
     return sorted(found)
 
 
+# What the last _claim_all did when it returned True: the pass task tries
+# other places when a badged pass was not claimed (player 2026-10-26).
+CLAIM_PRESSED, CLAIM_NO_BUTTON, CLAIM_GREY = "pressed", "no_button", "grey"
+
 # Seconds a claim button is looked for before 「跳过」.
 CLAIM_BUTTON_WAIT = 3.0 + SLOW_PC_GRACE_SECONDS
 # A button still fading in reads grey: grey counts once it stayed grey over
@@ -520,13 +524,16 @@ class ClaimPageMixin(TaskVisionMixin):
         self.info_set(f"{label}按钮 OCR", self._boxes_text(boxes) or "-")
         if target is None:
             self.log_info(f"{label}：未找到 {'/'.join(button.keywords)} 按钮，跳过。")
+            self._claim_outcome = CLAIM_NO_BUTTON
             return True
         if claim_button_dimmed(frame, target):
             # Grey = nothing to claim (Leo 2026-09-29): pressing it and then
             # proving the page settled cost ~5 s per button.
             self.info_set(f"{label}结果", "按钮未亮起，无可领取")
             self.log_info(f"{label}：按钮未亮起，无可领取，跳过。")
+            self._claim_outcome = CLAIM_GREY
             return True
+        self._claim_outcome = CLAIM_PRESSED
         baseline = self._frame_brightness(frame)
         self._sleep_after_recognition()
         self.info_set("当前阶段", f"{label}：点击领取")

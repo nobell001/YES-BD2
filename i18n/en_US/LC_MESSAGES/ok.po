@@ -3451,3 +3451,45 @@ msgstr "Farming setup"
 
 msgid "跑图前，游戏里先设好这三样（{n}/3）"
 msgstr "Set these three in the game before farming ({n}/3)"
+
+msgid "网络慢时的等待"
+msgstr "Waits on a slow network"
+
+msgid "打开游戏 {start} 秒 · 登录 {login} 秒"
+msgstr "Open game {start} s · Login {login} s"
+
+msgid "网络或电脑慢、常常等到超时的话调大。默认值已经偏保守，一般不用改。"
+msgstr "Raise these if a slow network or PC often runs into timeouts. The defaults are already generous, so most players never change them."
+
+msgid "{sub}（{low}–{high} {unit}，默认 {default}）"
+msgstr "{sub} ({low}–{high} {unit}, default {default})"
+
+msgid "秒"
+msgstr "s"
+
+msgid "次"
+msgstr "times"
+
+msgid "打开游戏最长等多久"
+msgstr "Longest wait to open the game"
+
+msgid "等游戏视窗出现、等到能截图，各自最多等这么久"
+msgstr "Waiting for the game window and for a first screenshot each take at most this long"
+
+msgid "打开游戏没好，再等几轮"
+msgstr "Extra rounds when the game is not ready"
+
+msgid "等太久时自动再等一轮，游戏开着就不会再开一次"
+msgstr "Waits another round after a timeout; a game that is already open is not opened again"
+
+msgid "登录后等主页最长多久"
+msgstr "Longest wait for Home after login"
+
+msgid "按了 TOUCH TO START 之后，最多等这么久进主页"
+msgstr "After TOUCH TO START is pressed, waits at most this long for Home"
+
+msgid "登录没进主页，重试几次"
+msgstr "Login retries before giving up"
+
+msgid "连续这么多次没进主页，就取消这次一键日常/周常"
+msgstr "After this many misses in a row, this Run All Dailies / Weeklies is cancelled"

@@ -29,7 +29,7 @@ from src.ui.shell.widgets import (
     tf,
     vbox,
 )
-from src.utils import game_sound, run_notify
+from src.utils import game_sound, run_notify, wait_settings
 
 THEME_LABELS = {"light": "淡紫", "dark": "深色", "auto": "跟随系统"}
 # Each language in its own words.  The project's texts are written in
@@ -219,6 +219,16 @@ class SettingsPage(Page):
                 control=self.mute_toggle,
             )
         )
+        game.addWidget(Separator())
+        # YES-BD2 #56 (2026-10-26): the player sets how long opening the game
+        # and logging in may take, and how often to try again.
+        self.wait_row = HubRow(
+            "clock",
+            "网络慢时的等待",
+            self._waits_text(),
+            control=Button("设定", "secondary", size="sm", on_click=self._set_waits),
+        )
+        game.addWidget(self.wait_row)
         game.addWidget(Separator())
         home_task = data.task_by_name("回到主页")
         if home_task is not None:
@@ -445,6 +455,20 @@ class SettingsPage(Page):
             if app is None or not relaunch(app):
                 self.language_row.set_sub("没办法自动重开，请自己关掉工具再打开")
 
+    def _set_waits(self) -> None:
+        from src.ui.shell import wait_settings_dialog
+
+        if wait_settings_dialog.ask(self.window()):
+            self.wait_row.set_sub(self._waits_text())
+
+    @staticmethod
+    def _waits_text() -> str:
+        return tf(
+            "打开游戏 {start} 秒 · 登录 {login} 秒",
+            start=wait_settings.get(wait_settings.START_TIMEOUT),
+            login=wait_settings.get(wait_settings.LOGIN_HOME_WAIT),
+        )
+
     def _set_login(self, on: bool) -> None:
         login = data.task_by_class_name("AutoLoginTask")
         if login is None:
@@ -461,6 +485,7 @@ class SettingsPage(Page):
         self._show_language()
         self.notify_toggle.set_checked_quietly(system_notification_on())
         self.mute_toggle.set_checked_quietly(game_sound.enabled())
+        self.wait_row.set_sub(self._waits_text())
         self.wechat_toggle.set_checked_quietly(self._wechat_on())
         self._show_wechat()
         login = data.task_by_class_name("AutoLoginTask")

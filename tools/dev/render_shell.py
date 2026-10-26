@@ -196,7 +196,7 @@ def dialogs(shell):
     from qfluentwidgets import MessageBox
 
     from src.ui.shell import accounts_ui, actions, clone_flow, data, new_setting_notice
-    from src.ui.shell import run_confirm, skill_interval_dialog
+    from src.ui.shell import run_confirm, skill_interval_dialog, wait_settings_dialog
 
     window = shell.window
     batch = data.task_by_name(data.DAILY_BATCH)
@@ -276,6 +276,10 @@ def dialogs(shell):
             ("max", lambda d: d.slider.setValue(d.slider.maximum())),
             ("min", lambda d: d.slider.setValue(d.slider.minimum())),
         ],
+        "wait-settings": [
+            ("max", lambda d: [spin.setValue(spin.maximum()) for spin in d.spins.values()]),
+            ("reset", lambda d: d._reset()),
+        ],
         "fiend-new-save": [("error", fiend_error)],
     })
 
@@ -284,6 +288,7 @@ def dialogs(shell):
         ("run-confirm", lambda: run_confirm.ask(window, batch)),
         ("run-confirm-clone", lambda: run_confirm.ask(window, batch, clone=True)),
         ("skill-interval", lambda: skill_interval_dialog.ask(window, 1.0, (0.3, 5.0), 1.0)),
+        ("wait-settings", lambda: wait_settings_dialog.ask(window)),
         ("accounts", lambda: accounts_ui.ManageDialog(window).exec()),
         ("accounts-5", five_accounts),
         ("schedule", lambda: schedule_ui.ScheduleDialog(window).exec()),

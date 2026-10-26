@@ -1663,5 +1663,75 @@
   "en": "Set these three in the game before farming ({n}/3)",
   "ja": "周回の前にゲーム内でこの3つを設定（{n}/3）",
   "ko": "파밍 전에 게임에서 이 세 가지를 설정 ({n}/3)"
+ },
+ "网络慢时的等待": {
+  "en": "Waits on a slow network",
+  "ja": "回線が遅いときの待ち時間",
+  "ko": "네트워크가 느릴 때 대기"
+ },
+ "打开游戏 {start} 秒 · 登录 {login} 秒": {
+  "en": "Open game {start} s · Login {login} s",
+  "ja": "ゲーム起動 {start} 秒 · ログイン {login} 秒",
+  "ko": "게임 실행 {start}초 · 로그인 {login}초"
+ },
+ "网络或电脑慢、常常等到超时的话调大。默认值已经偏保守，一般不用改。": {
+  "en": "Raise these if a slow network or PC often runs into timeouts. The defaults are already generous, so most players never change them.",
+  "ja": "回線やPCが遅く、よくタイムアウトする場合は大きくしてください。初期値は余裕を持たせてあるので、通常は変更不要です。",
+  "ko": "네트워크나 PC가 느려 자주 시간 초과가 나면 늘리세요. 기본값은 이미 넉넉해서 보통은 바꿀 필요가 없습니다."
+ },
+ "{sub}（{low}–{high} {unit}，默认 {default}）": {
+  "en": "{sub} ({low}–{high} {unit}, default {default})",
+  "ja": "{sub}（{low}–{high} {unit}、初期値 {default}）",
+  "ko": "{sub} ({low}–{high} {unit}, 기본 {default})"
+ },
+ "秒": {
+  "en": "s",
+  "ja": "秒",
+  "ko": "초"
+ },
+ "次": {
+  "en": "times",
+  "ja": "回",
+  "ko": "회"
+ },
+ "打开游戏最长等多久": {
+  "en": "Longest wait to open the game",
+  "ja": "ゲーム起動の最大待ち時間",
+  "ko": "게임 실행 최대 대기 시간"
+ },
+ "等游戏视窗出现、等到能截图，各自最多等这么久": {
+  "en": "Waiting for the game window and for a first screenshot each take at most this long",
+  "ja": "ゲームウィンドウの表示と画面の取得を、それぞれ最大でこの時間待ちます",
+  "ko": "게임 창이 뜨기까지, 화면을 캡처할 수 있기까지 각각 최대 이만큼 기다립니다"
+ },
+ "打开游戏没好，再等几轮": {
+  "en": "Extra rounds when the game is not ready",
+  "ja": "起動が間に合わないとき追加で待つ回数",
+  "ko": "게임이 준비되지 않으면 더 기다릴 횟수"
+ },
+ "等太久时自动再等一轮，游戏开着就不会再开一次": {
+  "en": "Waits another round after a timeout; a game that is already open is not opened again",
+  "ja": "タイムアウトしたらもう一度待ちます。ゲームが開いていれば再起動しません",
+  "ko": "시간 초과 시 한 번 더 기다리며, 게임이 이미 열려 있으면 다시 실행하지 않습니다"
+ },
+ "登录后等主页最长多久": {
+  "en": "Longest wait for Home after login",
+  "ja": "ログイン後のホーム最大待ち時間",
+  "ko": "로그인 후 메인 화면 최대 대기 시간"
+ },
+ "按了 TOUCH TO START 之后，最多等这么久进主页": {
+  "en": "After TOUCH TO START is pressed, waits at most this long for Home",
+  "ja": "TOUCH TO START を押してから、ホームに入るまで最大でこの時間待ちます",
+  "ko": "TOUCH TO START를 누른 뒤 메인 화면까지 최대 이만큼 기다립니다"
+ },
+ "登录没进主页，重试几次": {
+  "en": "Login retries before giving up",
+  "ja": "ホームに入れないときの再試行回数",
+  "ko": "메인 화면에 못 들어갈 때 재시도 횟수"
+ },
+ "连续这么多次没进主页，就取消这次一键日常/周常": {
+  "en": "After this many misses in a row, this Run All Dailies / Weeklies is cancelled",
+  "ja": "この回数続けてホームに入れなければ、今回のデイリー/ウィークリー一括実行を中止します",
+  "ko": "이 횟수만큼 연속으로 메인 화면에 못 들어가면 이번 일일/주간 일괄 실행을 취소합니다"
  }
 }

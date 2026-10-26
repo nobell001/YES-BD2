@@ -124,6 +124,11 @@ PVP_MULTIPLIER_OCR_REFERENCE_ROI = (800, 213, 65, 33)  # 1280×720 参考
 # player's PC, v0.1.21 2026-10-11: 「-」 while 40倍 showed).  It grows left,
 # up and down only, so the gear stays out (left, top, right, bottom).
 PVP_MULTIPLIER_WIDER_GROW = (40, 20, 0, 20)  # 1920×1080 参考
+# The same second look for the setting dialog's 「🍷N倍」 (a player's PC,
+# v0.2.12 2026-10-25: 1倍 showed, three reads missed it, 未能开始战斗).
+# Sideways and down only: the MIN / -5 / +5 / MAX row sits right above, and
+# a 「+5」 read without its sign would pass for 5.
+PVP_SETTING_VALUE_WIDER_GROW = (60, 0, 60, 15)  # 1920×1080 参考
 PVP_AUTO_BATTLE_CLICK_REFERENCE = (2026, 1291)  # 2560×1440 参考
 PVP_STAGE_CLICK_REFERENCE_OFFSET = (0, -75)  # 1920×1080 参考位移
 PVP_BATTLE_START_SCREEN_POINT = (1381, 1061)  # 2560×1440 参考
@@ -1417,14 +1422,23 @@ class PVPTask(BaseBD2Task):
             self._click_screen_reference(*option_point, after_sleep=0.5)
             if self._setting_multiplier_matches(option_value):
                 break
+            seen = str(getattr(self, "_multiplier_last_text", "") or "").strip()
             self.log_info(
-                f"镜中之战：倍率选项第{attempt}/{PVP_CLICK_VERIFY_ATTEMPTS}"
-                f"次点击后设置值未回读到 {option_value}"
+                f"镜中之战：按了{'MAX' if option_value == 40 else 'MIN'}后，"
+                f"倍率设置里没读到 {option_value}（读到「{seen or '没有字'}」），"
+                f"第{attempt}/{PVP_CLICK_VERIFY_ATTEMPTS}次"
                 + ("，重试。" if attempt < PVP_CLICK_VERIFY_ATTEMPTS else "。")
             )
         else:
+            # MIN / MAX only set the dialog's own value, so stepping on from
+            # it is harmless; 确认 is judged by the main popup's multiplier
+            # and the cost on 战斗开始, which must both agree (player v0.2.12
+            # 2026-10-25: 1倍 showed but was not read, the run stopped here).
             self.info_set("PVP 倍率 OCR", "未确认")
-            return False
+            self.log_info(
+                f"镜中之战：倍率设置里一直读不准数字，照 {option_value} 倍继续调到"
+                f" {multiplier} 倍，确认后再用主弹窗和战斗开始的消耗核对。"
+            )
 
         # From MIN (1) or MAX (40) the presses that reach the target are
         # known: press them, then read.  A read that is off only steps on
@@ -1738,12 +1752,28 @@ class PVPTask(BaseBD2Task):
         self._click_screen_reference(*PVP_MAX_BATTLE_COUNT_SCREEN_POINT, after_sleep=0.8)
 
     def _multiplier_matches(self, multiplier: int, timeout: float = 2.0) -> bool:
+        return self._multiplier_reads(
+            multiplier,
+            self._mf_roi(*PVP_MULTIPLIER_OCR_REFERENCE_ROI),
+            PVP_MULTIPLIER_WIDER_GROW,
+            "PVP 倍率",
+            timeout,
+        )
+
+    def _multiplier_reads(
+        self,
+        multiplier: int,
+        roi: tuple[int, int, int, int],
+        grow: tuple[int, int, int, int],
+        name: str,
+        timeout: float,
+    ) -> bool:
+        """``multiplier`` read in ``roi``, else once more with room around it."""
         patterns = [rf"^{multiplier}$", rf"^{multiplier}倍$"]
-        roi = self._mf_roi(*PVP_MULTIPLIER_OCR_REFERENCE_ROI)
         found, text = self._wait_for_ocr_patterns(
             patterns,
             timeout=timeout,
-            name="PVP 倍率",
+            name=name,
             roi=roi,
             normalize_multiplier=True,
         )
@@ -1752,8 +1782,8 @@ class PVPTask(BaseBD2Task):
                 label
                 for label, _confidence in self._ocr_entries(
                     self.capture_frame(),
-                    "PVP 倍率（放宽范围）",
-                    self._grown_roi(roi, PVP_MULTIPLIER_WIDER_GROW),
+                    f"{name}（放宽范围）",
+                    self._grown_roi(roi, grow),
                 )
             ]
             # One box at a time, as in the small box: a neighbour is its own box.
@@ -1763,6 +1793,7 @@ class PVPTask(BaseBD2Task):
             )
             if found or not text:
                 text = " ".join(labels)
+        self._multiplier_last_text = text
         self.info_set("PVP 倍率 OCR", text or "-")
         return found
 
@@ -1776,15 +1807,13 @@ class PVPTask(BaseBD2Task):
         return new_x, new_y, x + width + right - new_x, y + height + bottom - new_y
 
     def _setting_multiplier_matches(self, multiplier: int) -> bool:
-        found, text = self._wait_for_ocr_patterns(
-            [rf"^{multiplier}$", rf"^{multiplier}倍$"],
-            timeout=0.8,
-            name="PVP 倍率设置值",
-            roi=self._mf_roi(*PVP_MULTIPLIER_SETTING_VALUE_OCR_REFERENCE_ROI),
-            normalize_multiplier=True,
+        return self._multiplier_reads(
+            multiplier,
+            self._mf_roi(*PVP_MULTIPLIER_SETTING_VALUE_OCR_REFERENCE_ROI),
+            PVP_SETTING_VALUE_WIDER_GROW,
+            "PVP 倍率设置值",
+            0.8,
         )
-        self.info_set("PVP 倍率 OCR", text or "-")
-        return found
 
     def _wait_result_and_leave(self, multiplier: int) -> bool:
         self.info_set("当前阶段", "等待战斗结算")

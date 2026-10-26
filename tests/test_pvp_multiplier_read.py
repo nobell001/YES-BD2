@@ -26,6 +26,7 @@ from src.tasks.PVPTask import (
     PVP_MULTIPLIER_SETTING_VALUE_OCR_REFERENCE_ROI,
     PVP_MULTIPLIER_WIDER_GROW,
     PVP_SETTING_CONFIRM_REFERENCE_ROI,
+    PVP_SETTING_VALUE_WIDER_GROW,
     PVP_START_BUTTON_ROI,
     PVPTask,
 )
@@ -34,6 +35,7 @@ VALUE = PVPTask._mf_roi(*PVP_MULTIPLIER_OCR_REFERENCE_ROI)
 WIDER = PVPTask._grown_roi(VALUE, PVP_MULTIPLIER_WIDER_GROW)
 TITLE = PVPTask._mf_roi(*PVP_MULTIPLIER_SETTING_OCR_REFERENCE_ROI)
 SETTING_VALUE = PVPTask._mf_roi(*PVP_MULTIPLIER_SETTING_VALUE_OCR_REFERENCE_ROI)
+SETTING_WIDER = PVPTask._grown_roi(SETTING_VALUE, PVP_SETTING_VALUE_WIDER_GROW)
 CONFIRM = PVP_SETTING_CONFIRM_REFERENCE_ROI
 START = PVP_START_BUTTON_ROI
 # What the OCR read in the title area on the player's frame (main popup).
@@ -177,6 +179,77 @@ class MultiplierReadTest(unittest.TestCase):
         self.assertNotIn("main popup bar", screen.presses)
         self.assertEqual(["pvp_multiplier_confirm_failed"], task.diagnostics)
         self.assertIn("当时倍率处读到「-」", task.logs[-1])
+
+
+
+class _UnreadSettingScreen(_Screen):
+    """Player v0.2.12 2026-10-25 (1920×1080 fullscreen, 125%): after MIN the
+    dialog showed 「🍷1倍」, but its small box read nothing three times."""
+
+    def __init__(self, wider_setting=False, **kwargs):
+        super().__init__(**kwargs)
+        self.wider_setting = wider_setting
+
+    def labels(self, roi):
+        if self.dialog and roi == SETTING_VALUE:
+            return []
+        if self.dialog and roi == SETTING_WIDER:
+            return [f"{self.setting}倍"] if self.wider_setting else []
+        return super().labels(roi)
+
+    def press_screen(self, x, y):
+        from src.tasks.PVPTask import PVP_MULTIPLIER_1_OPTION_SCREEN_POINT
+
+        if (x, y) == PVP_MULTIPLIER_1_OPTION_SCREEN_POINT and self.dialog:
+            self.presses.append("MIN")
+            self.setting = 1
+            return
+        super().press_screen(x, y)
+
+
+class SettingValueReadTest(MultiplierReadTest):
+    def test_setting_value_is_read_again_with_room_around_it(self):
+        screen = _UnreadSettingScreen(main=40, wider_setting=True)
+        screen.dialog = True
+        self.assertTrue(PVPTask._setting_multiplier_matches(self._task(screen), 40))
+
+    def test_the_setting_wider_box_stays_below_the_step_row(self):
+        # MIN / -5 / +5 / MAX sit right above: a 「+5」 read without its sign
+        # would pass for 5.
+        self.assertEqual(SETTING_VALUE[1], SETTING_WIDER[1])
+        self.assertLess(SETTING_WIDER[0], SETTING_VALUE[0])
+        self.assertGreater(SETTING_WIDER[2], SETTING_VALUE[2])
+
+    def test_unread_min_still_reaches_battle_when_the_main_popup_agrees(self):
+        # The player's run stopped with 未能开始战斗 here.  Now the steps go
+        # on and 确认 is judged by the main popup and the 战斗开始 cost.
+        screen = _UnreadSettingScreen(main=40)
+        task = self._task(screen)
+        task._read_until = lambda read: read()
+        with mock.patch(
+            "src.tasks.PVPTask.steps_between", lambda _start, _target, _step: []
+        ):
+            self.assertTrue(PVPTask._ensure_multiplier(task, 1))
+        self.assertEqual(["gear", "MIN", "MIN", "MIN", "read 确认"], screen.presses)
+        self.assertEqual(1, screen.main)
+        self.assertTrue(any("读到「没有字」" in line for line in task.logs), task.logs)
+
+    def test_unread_min_does_not_start_on_a_wrong_value(self):
+        # MIN swallowed, the value stays 40: 确认 reads 40 on the main popup
+        # and the start cost, so the target 1 is never taken as set.
+        screen = _UnreadSettingScreen(main=40)
+        screen.press_screen = lambda x, y, _base=screen.press_screen: (
+            screen.presses.append("MIN lost")
+            if (x, y) == pvp_module.PVP_MULTIPLIER_1_OPTION_SCREEN_POINT and screen.dialog
+            else _base(x, y)
+        )
+        task = self._task(screen)
+        task._read_until = lambda read: read()
+        with mock.patch(
+            "src.tasks.PVPTask.steps_between", lambda _start, _target, _step: []
+        ):
+            self.assertFalse(PVPTask._ensure_multiplier(task, 1))
+        self.assertEqual(40, screen.main)
 
 
 if __name__ == "__main__":

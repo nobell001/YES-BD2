@@ -14,6 +14,7 @@ from src.compat.launcher_update_notice import install_launcher_update_notice
 from src.compat.main_window_geometry import install_main_window_geometry_debounce
 from src.compat.ocr_memory import install_ocr_memory_cap
 from src.compat.quiet_scheduled_open import install as install_quiet_scheduled_open
+from src.compat.start_watchdog import install_start_watchdog
 from src.compat.starter_guard import enable_starter_launch_guard
 from src.compat.starter_launch import enable_starter_launch_uri
 from src.compat.update_card_ui import install_update_card_ui
@@ -48,6 +49,8 @@ install_hdr_aware_capture()
 install_ocr_memory_cap()
 enable_starter_launch_uri()
 enable_starter_launch_guard()
+# The start dialog no longer sits on 「加载中」 (YES-BD2 #56).
+install_start_watchdog()
 install_main_window_geometry_debounce()
 install_launcher_update_notice()
 install_quiet_scheduled_open()
@@ -123,7 +126,7 @@ config = {
         "require_bg": True,
         "start_exe": True,
     },
-    "start_timeout": 120,
+    "start_timeout": 180,  # the player sets it: src/utils/wait_settings.py
     "window_size": {
         # First-open size (Leo's 4K PC at 175%, 10-08): the home page shows its
         # task cards 8 per row in 2 rows with no scrolling.  Smaller screens are

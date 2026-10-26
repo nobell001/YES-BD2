@@ -3475,21 +3475,32 @@ class PVPTaskHelperTest(unittest.TestCase):
         self.assertEqual(3, state["value"])
         self.assertEqual(["plus", "plus"], state["steps"])
 
-    def test_select_setting_multiplier_fails_after_retry_budget(self):
+    def test_select_setting_multiplier_goes_on_after_retry_budget(self):
+        # Player v0.2.12 2026-10-25: 1倍 showed after MIN but was never read,
+        # and the run stopped with 未能开始战斗.  MIN only sets the dialog's
+        # value: stepping goes on, and 确认 is checked against the main popup
+        # and the 战斗开始 cost (test_pvp_multiplier_confirm).
         task = object.__new__(PVPTask)
         infos = {}
+        logs = []
         task.info_set = lambda key, value: infos.__setitem__(key, value)
-        task.log_info = lambda *_args, **_kwargs: None
+        task.log_info = lambda text, **_kwargs: logs.append(text)
+        task.sleep = lambda *_args: None
         clicks = []
         task._click_screen_reference = lambda x, y, after_sleep=0.0: clicks.append((x, y))
+        task._click_reference = lambda x, y, after_sleep=0.0: clicks.append(("step", x, y))
         task._setting_multiplier_matches = lambda value: False
+        task._read_until = lambda _read: None
+        task._multiplier_last_text = "▼"
 
-        self.assertFalse(PVPTask._select_setting_multiplier(task, 1))
+        self.assertTrue(PVPTask._select_setting_multiplier(task, 1))
         self.assertEqual(
             [PVP_MULTIPLIER_1_OPTION_SCREEN_POINT] * PVP_CLICK_VERIFY_ATTEMPTS,
             clicks,
         )
         self.assertEqual("未确认", infos["PVP 倍率 OCR"])
+        # The log says what was read, not just 「未回读到」.
+        self.assertTrue(any("读到「▼」" in line for line in logs), logs)
 
     def test_confirm_setting_multiplier_retries_while_dialog_open(self):
         task = object.__new__(PVPTask)

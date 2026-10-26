@@ -8,8 +8,16 @@ from __future__ import annotations
 
 from qfluentwidgets import FluentIcon
 
+from src.tasks import run_report
 from src.tasks.BaseBD2Task import BaseBD2Task
-from src.tasks.claim_page import ClaimButton, ClaimPageMixin, find_red_badges
+from src.tasks.claim_page import (
+    CLAIM_GREY,
+    CLAIM_NO_BUTTON,
+    CLAIM_PRESSED,
+    ClaimButton,
+    ClaimPageMixin,
+    find_red_badges,
+)
 from src.tasks.task_vision_mixin import REFERENCE_HEIGHT
 from src.utils.chinese import to_simplified
 from src.utils.ocr_utils import keyword_match_count
@@ -52,6 +60,18 @@ PASS_CARD_X = 425
 PASS_CARD_HALF_SIZE = (110, 50)
 # Only the right half of the panel: the purchase button sits at (729, 765).
 PASS_CLAIM_BUTTON = ClaimButton((1150, 700, 450, 130), ("全部获得", "全部领取"))
+# Fallbacks for a badged pass whose 全部获得 was missing or grey (player
+# 2026-10-26: 角色通行证 never claimed, the task still 完成): the panel right
+# of 购买等级 (580-880), then the tabs on the panel's right edge that carry a
+# red ◆!.  Tab badge measured on the 10-13 live 1080p pass page: y 658 over
+# the 任务 tab (1593, 680).
+PASS_CLAIM_BUTTON_WIDE = ClaimButton((930, 560, 700, 300), ("全部获得", "全部领取"))
+PASS_TAB_BADGE_STRIP = (1596, 240, 44, 540)
+PASS_TAB_POINTS = ((1593, 403), (1593, 680))
+PASS_MISS_REASONS = {
+    CLAIM_NO_BUTTON: "打开后没看到「全部获得」按钮",
+    CLAIM_GREY: "「全部获得」是灰的，游戏里没有可领的",
+}
 PASS_MAX_CARDS = 6
 # A pass opened this many times and still badged is left (its badge is for
 # something 全部获得 does not claim).
@@ -173,6 +193,7 @@ class PassRewardTask(_ClaimTaskBase):
         self._pass_cards()  # the captions go to the run info
         skipped: dict[str, str] = {}
         visits: dict[str, int] = {}
+        self._pass_misses: dict[str, str] = {}
         claimed = 0
         scrolls = 0
         for _step in range(PASS_MAX_CARDS * PASS_MAX_VISITS + PASS_LIST_SCROLL_ROUNDS + 1):
@@ -191,18 +212,22 @@ class PassRewardTask(_ClaimTaskBase):
             key = caption or f"y{badge_y}"
             visits[key] = visits.get(key, 0) + 1
             if visits[key] > PASS_MAX_VISITS:
-                self.log_info(f"通行证「{key}」：点过两次全部获得红点仍在，跳过。")
-                skipped[key] = "处理两次还在"
+                skipped[key] = self._pass_misses.get(key, "点了两次「全部获得」红点还在")
+                self.log_info(f"通行证「{key}」：{skipped[key]}，跳过。")
                 continue
             if not self._claim_badged_pass(key, badge_y):
                 return self._claim_fail(f"领取{key}")
             claimed += 1
         self.info_set("通行证数量", claimed)
         if not claimed and not skipped:
-            self.log_info("通行证：左侧没有红点，没有可领的。")
+            # Said in the run report too: a pass the game shows as claimable
+            # but read without a badge is told, not a silent 完成.
+            self.log_info("通行证：左侧通行证都没有红点（没有可领的）。")
+            run_report.add_current_note("左侧通行证都没有红点，没有可领的")
         if skipped:
             left = "、".join(f"「{key}」{why}" for key, why in skipped.items())
-            self.log_info(f"通行证：这些还有红点，没领：{left}。")
+            self.log_warning(f"通行证：这些有红点但没领到：{left}。")
+            run_report.add_current_note(f"有红点但没领到：{left}")
         if not self._leave_to_home("通行证", PASS_TITLE_KEYWORDS):
             return self._claim_fail("通行证返回主页")
         return True
@@ -272,4 +297,54 @@ class PassRewardTask(_ClaimTaskBase):
             # button is grey and nothing is pressed; the badge stays and the
             # card is opened again on the next look.
             self.log_info(f"通行证「{key}」：点了画面没变化，按已打开处理。")
-        return self._claim_all(key, PASS_CLAIM_BUTTON, PASS_TITLE_KEYWORDS)
+        self._claim_outcome = None
+        if not self._claim_all(key, PASS_CLAIM_BUTTON, PASS_TITLE_KEYWORDS):
+            return False
+        return self._claim_pass_elsewhere(key)
+
+    def _claim_pass_elsewhere(self, key: str) -> bool:
+        """The badged pass's 全部获得 was missing or grey: look on the whole
+        panel, then open each red-badged tab on its right and claim there.
+        What still was not claimed is kept for the run's 没领到 line."""
+        first = getattr(self, "_claim_outcome", None)
+        if first in (None, CLAIM_PRESSED):
+            return True
+        if first == CLAIM_NO_BUTTON:
+            claimed = self._claim_pass_at(key, ((PASS_CLAIM_BUTTON_WIDE, "整块面板"),), first)
+            if claimed is not None:
+                return claimed
+        for tab in self._badged_pass_tabs(self.capture_frame()):
+            self.info_set("当前阶段", f"通行证「{key}」：打开右侧有红点的分页")
+            self._click_reference(*tab, after_sleep=1.0)  # 不用确认：分页，下面的按钮会再读
+            claimed = self._claim_pass_at(
+                key,
+                ((PASS_CLAIM_BUTTON, "右侧分页"), (PASS_CLAIM_BUTTON_WIDE, "右侧分页整块面板")),
+                first,
+            )
+            if claimed is not None:
+                return claimed
+        self._pass_misses[key] = PASS_MISS_REASONS[first]
+        return True
+
+    def _claim_pass_at(self, key: str, buttons, first: str) -> bool | None:
+        """True = claimed, False = the claim failed, None = nothing to press here."""
+        for button, where in buttons:
+            self.log_info(f"通行证「{key}」：{PASS_MISS_REASONS[first]}，改在{where}找。")
+            if not self._claim_all(f"{key}（{where}）", button, PASS_TITLE_KEYWORDS):
+                return False
+            if self._claim_outcome == CLAIM_PRESSED:
+                self._pass_misses.pop(key, None)
+                return True
+            if self._claim_outcome == CLAIM_GREY:
+                break  # found it, grey: the wider look adds nothing
+        return None
+
+    @staticmethod
+    def _badged_pass_tabs(frame) -> list[tuple[int, int]]:
+        """The tabs on the panel's right edge under a red ◆!, top first."""
+        tabs: list[tuple[int, int]] = []
+        for badge_y in find_red_badges(frame, PASS_TAB_BADGE_STRIP):
+            tab = min(PASS_TAB_POINTS, key=lambda point: abs(point[1] - badge_y))
+            if tab not in tabs:
+                tabs.append(tab)
+        return tabs
