@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+import unittest.mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -396,3 +397,67 @@ class ChoiceLayoutTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NotOwnedTest(unittest.TestCase):
+    """YES-BD2 #58: 「白雷」 on the list, not owned; pressing it opened no
+    panel and the whole task was reported failed."""
+
+    def task(self, outcomes):
+        from src.tasks.affinity import record
+        from src.tasks.AffinityTalkTask import AffinityTalkTask
+
+        task = AffinityTalkTask.__new__(AffinityTalkTask)
+        task.config = {}
+        task.info_set = lambda *a, **k: None
+        task.logs, task.whys = [], []
+        task.log_info = task.logs.append
+        task._open_list = lambda: True
+        cards = [screen.Card(name, "某人", 16, (0, 0)) for name in outcomes]
+        task._read_list = lambda: (cards, 3)
+        task._daily_talk = lambda card, allow_locked: outcomes[card.costume]
+        task._report_keys = lambda: None
+        task._go_home = lambda: True
+        task._note_why = task.whys.append
+        task._claim_fail = lambda step: False
+        self.patches = [
+            unittest.mock.patch.object(record, "load", return_value=record.TalkRecord()),
+            unittest.mock.patch.object(record, "save", return_value=True),
+        ]
+        for patch in self.patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        return task
+
+    def test_a_costume_with_no_panel_is_skipped_and_told(self):
+        from src.tasks import run_report
+
+        task = self.task({"白雷": "no_panel", "回归偶像": "talked"})
+        with unittest.mock.patch.object(run_report, "add_current_note") as note:
+            self.assertTrue(task.run_claim())
+        [[text], _] = note.call_args
+        self.assertIn("「白雷」没出现谈心面板（可能还没拥有这件服装）", text)
+        self.assertEqual(task.whys, [])
+
+    def test_no_panel_anywhere_still_fails(self):
+        task = self.task({"白雷": "no_panel", "回归偶像": "no_panel"})
+        self.assertFalse(task.run_claim())
+        self.assertIn("可能还没拥有", task.whys[0])
+
+    def test_open_card_back_on_the_list_is_no_panel(self):
+        from src.tasks.AffinityTalkTask import NO_PANEL, AffinityTalkTask
+
+        task = AffinityTalkTask.__new__(AffinityTalkTask)
+        card = screen.Card("白雷", "尤里", 1, (100, 100))
+        task._scrolled = 0
+        task._grid_cards = lambda: [card]
+        task.info_set = lambda *a, **k: None
+        task.log_info = lambda *a: None
+        task._click_reference = lambda *a, **k: None
+        task._settled_detail = lambda *a: None
+        task.capture_frame = lambda: None
+        task._list_visible = lambda frame: True
+        task._back_to_list = lambda: True
+        self.assertEqual(NO_PANEL, task._open_card(card))
+        task._back_to_list = lambda: False
+        self.assertIsNone(task._open_card(card))

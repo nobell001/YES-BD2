@@ -63,7 +63,7 @@ from src.utils.image_utils import (
     reference_roi_frame,
     stabilize_template_match,
 )
-from src.utils.ocr_utils import normalize_ocr_text
+from src.utils.ocr_utils import keyword_read, normalize_ocr_text
 from src.utils.wait_limits import STUCK_SECONDS, StillTimer, capped, is_loading_dark, load_wait, scene_at_press
 
 REFERENCE_WIDTH = FHD_1080.width
@@ -521,8 +521,10 @@ class SquareGoddessTask(BaseBD2Task):
             frame = self.capture_frame()
             text = self._ocr_text(frame, name="卡带选择页")
             last_text = text or last_text
+            normalized = self._normalize_text(text)
             match_count = sum(
-                1 for pattern in QUICK_SWITCH_PAGE_PATTERNS if self._matches_any(text, [pattern])
+                keyword_read(self._normalize_text(pattern), normalized)
+                for pattern in QUICK_SWITCH_PAGE_PATTERNS
             )
             self.info_set("卡带选择页 OCR", text or "-")
             self.info_set(

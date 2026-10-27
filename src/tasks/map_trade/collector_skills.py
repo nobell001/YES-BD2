@@ -27,6 +27,7 @@ from src.tasks.map_trade.collector_constants import (
     ACTION_ICON_DETECTION_INTERVAL,
     ACTION_USED_RECHECK_SECONDS,
     ACTION_USED_RECHECKS,
+    OTHER_SKILL_TOAST_RATIO,
     DIM_WAIT_VALID_SECONDS,
     ACTION_ICON_DETECTION_SAMPLES,
     ACTION_OCR_WINDOW_INTERVAL,
@@ -56,6 +57,8 @@ from src.tasks.map_trade.models import (
     CollectionMapRole,
     MatchResult,
 )
+from src.tasks.map_trade import skill_layout
+from src.utils.plain_text import DIAGNOSTIC_PREFIX
 from src.tasks.map_trade.vision import parse_used_limit
 
 # Used to split a count read without its slash ("7180" -> 7/80) until the
@@ -333,6 +336,7 @@ class SkillExecutionMixin:
 
         detections, opened = inspect_window()
         if opened or self._counts_prove_menu(expected_icons):
+            self._check_skill_layout()
             return True
 
         states = ", ".join(
@@ -388,6 +392,7 @@ class SkillExecutionMixin:
             detections, opened = inspect_window()
             if opened or self._counts_prove_menu(expected_icons):
                 self._collection_skill_group = group
+                self._check_skill_layout()
                 return True
         states = ", ".join(
             f"{icon.name}={value.state.value}"
@@ -395,6 +400,30 @@ class SkillExecutionMixin:
         )
         self.task.log_warning(f"地图采集：三个技能组都没有找到采集技能：{states}。")
         return False
+
+    def _check_skill_layout(self) -> None:
+        """Once a run: the collection skills sit in their fixed slots.
+
+        A player's bar (2026-10-26) held 召集/吸收/压制/探查 in slots 1-4:
+        every card pressed slot 1 for 探查, got 召集's 「无可召集的战场怪物」
+        and failed one by one.  Two frames must show the same wrong slots;
+        an unclear read leaves the check for the next menu.  Only a formal
+        run (Collector.run) asks for it; helpers called alone skip it.
+        """
+        if getattr(self, "_skill_layout_checked", True):
+            return
+        reads = []
+        for attempt in range(2):
+            layout = skill_layout.read_layout(self.action_icons, self.vision.capture())
+            if not skill_layout.conclusive(layout):
+                return
+            reads.append(layout)
+            if attempt == 0:
+                self.task.sleep(ACTION_ICON_DETECTION_INTERVAL)
+        wrong = skill_layout.wrong_slots(reads[0])
+        if wrong and wrong == skill_layout.wrong_slots(reads[1]):
+            raise skill_layout.SkillLayoutWrong(skill_layout.message(wrong))
+        self._skill_layout_checked = True
 
     def _counts_prove_menu(self, expected_icons: tuple[ActionIconSpec, ...]) -> bool:
         """The skill group shows when every expected slot reads "used/limit".
@@ -686,11 +715,7 @@ class SkillExecutionMixin:
             self._wait_after_feedback_match(search_action, feedback)
         elif not self._search_started_without_feedback():
             return SkillExecutionResult(
-                False,
-                message=(
-                    "探查点击后未确认执行反馈："
-                    f"ratio={feedback.ratio:.3f}, text={feedback.text or '-'}"
-                ),
+                False, message=self._not_started_message(search_action, feedback)
             )
         end_at = monotonic() + SEARCH_COUNTDOWN_TIMEOUT
         last_text = ""
@@ -712,10 +737,72 @@ class SkillExecutionMixin:
             if SEARCH_COUNTDOWN_PATTERN.fullmatch(countdown):
                 return SearchCountdownSession(countdown_roi, int(countdown))
             self.task.sleep(SEARCH_COUNTDOWN_INTERVAL)
+        self._diagnose(f"探查倒计时没读到：last_ocr={last_text or '-'}")
         return SkillExecutionResult(
             False,
-            message=f"探查点击后未确认倒计时：last_ocr={last_text or '-'}",
+            message="按了探查，游戏显示探查开始，但技能图标上一直没出现倒计时数字",
         )
+
+    def _diagnose(self, text: str) -> None:
+        """Raw numbers for the log file; the player's summary skips them."""
+        try:
+            self.task.log_info(f"{DIAGNOSTIC_PREFIX}地图采集：{text}")
+        except AttributeError:  # tasks in tests without a log
+            pass
+
+    def _other_skill_toast(self, action: SkillAction, text: str) -> tuple[str, str] | None:
+        """(skill, its phrase) when the toast is another collection skill's."""
+        best = (0.0, "", "")
+        for name in ACTION_SUCCESS_FEEDBACK:
+            if name == action.name:
+                continue
+            phrases = (*ACTION_SUCCESS_FEEDBACK[name], *ACTION_FAILURE_FEEDBACK.get(name, ()))
+            for phrase in phrases:
+                ratio = self._feedback_character_ratio(text, phrase)
+                if ratio > best[0]:
+                    best = (ratio, name, phrase)
+        return best[1:] if best[0] >= OTHER_SKILL_TOAST_RATIO else None
+
+    def _not_started_message(self, action: SkillAction, feedback) -> str:
+        """Why a press did not start ``action``, in player words."""
+        self._diagnose(
+            f"{action.name}没有开始：ratio={feedback.ratio:.3f}, text={feedback.text or '-'}"
+        )
+        toast = re.sub(r"\s+", "", str(feedback.text or ""))
+        other = self._other_skill_toast(action, toast) if toast else None
+        if other is not None:
+            return (
+                f"按了{action.name}的位置，游戏却显示{other[0]}的提示「{other[1]}」："
+                f"技能栏可能放错位置了，跑图要把右下角第 1→4 格放成：{skill_layout.LAYOUT_TEXT}"
+            )
+        if toast:
+            return (
+                f"按了{action.name}，游戏没有显示{action.name}开始，"
+                f"画面上的提示是「{toast[:20]}」"
+            )
+        return f"按了{action.name}，游戏没有显示{action.name}开始，也没出现倒计时"
+
+    def _unproven_press_message(self, action, before, after, feedback, detection, post) -> str:
+        """「按了吸收，次数没变……」: what was seen after the press, in player words."""
+        after_text = f"{after[0]}/{after[1]}" if after is not None else "没读到"
+        self._diagnose(
+            f"{action.name}执行证据不一致：count={before[0]}/{before[1]}->{after_text}, "
+            f"icon={detection.state.value}->{post.state.value}, "
+            f"feedback={feedback.outcome or 'unknown'}, text={feedback.text or '-'}"
+        )
+        if after is None:
+            seen = f"按之后没读到次数（之前 {before[0]}/{before[1]}）"
+        elif tuple(after[:2]) == tuple(before[:2]):
+            seen = f"次数没变（还是 {after_text}）"
+        else:
+            seen = f"次数 {before[0]}/{before[1]} → {after_text}"
+        if feedback.outcome == "success":
+            said = "游戏有显示成功的提示"
+        elif feedback.outcome == "failure":
+            said = f"游戏显示「{feedback.keyword or feedback.text}」"
+        else:
+            said = "游戏也没有显示提示"
+        return f"按了{action.name}，{seen}，{said}，不能确定有没有按到"
 
     def _search_started_without_feedback(self) -> bool:
         """The short toast can be missed on a slow PC while 探查 did start:
@@ -847,8 +934,9 @@ class SkillExecutionMixin:
             if SEARCH_COUNTDOWN_PATTERN.fullmatch(countdown):
                 return True
             self.task.sleep(SEARCH_COUNTDOWN_INTERVAL)
+        self._diagnose(f"战斗区域1探查倒计时没读到：last_ocr={last_text or '-'}")
         self.task.log_warning(
-            f"地图采集：进入战斗区域1后未持续识别到探查倒计时，last_ocr={last_text or '-'}。"
+            "地图采集：进入战斗区域1后，探查图标上的倒计时数字不见了（探查可能已经结束）。"
         )
         return False
 
@@ -1653,13 +1741,8 @@ class SkillExecutionMixin:
         return SkillExecutionResult(
             False,
             (after[0] >= after[1]) if after is not None else False,
-            (
-                f"{action.name}执行证据不一致："
-                f"count={before[0]}/{before[1]}->"
-                f"{(f'{after[0]}/{after[1]}' if after is not None else '待对账')}, "
-                f"icon={detection.state.value}->{post_detection.state.value}, "
-                f"feedback={feedback.outcome or 'unknown'}, "
-                f"text={feedback.text or '-'}"
+            self._unproven_press_message(
+                action, before, after, feedback, detection, post_detection
             ),
             # Pressed again only when every sign says the game never got the
             # press: icon still bright, no toast, and the count read steadily

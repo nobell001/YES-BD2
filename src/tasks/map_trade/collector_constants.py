@@ -103,6 +103,9 @@ ACTION_FAILURE_FEEDBACK = {
     "召集": ("无可召集的战场怪物",),
     "压制": ("没有可制伏的怪物",),
 }
+# A toast this close to another skill's phrase says that skill was pressed
+# (skills in the wrong slots, a player 2026-10-26).
+OTHER_SKILL_TOAST_RATIO = 0.8
 # The words that make a failure toast one: 无 / 没有.
 ACTION_FAILURE_MARKERS = ("无", "没")
 

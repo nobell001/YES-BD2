@@ -9,6 +9,19 @@ def normalize_ocr_text(value: object, *, alnum_only: bool = False) -> str:
     return "".join(lowered.split())
 
 
+# OCR cuts the last character of a long label at the edge of its box: the quick
+# bar's 「活动游戏卡」 read 「活动游戏」 on a 1080p window and the open page was
+# never confirmed (问题摘要 2026-10-27, 每周跑图 Q_sp13).
+CUT_LABEL_MIN_CHARS = 4
+
+
+def keyword_read(keyword: str, normalized_text: str) -> bool:
+    """``keyword`` in already-normalized OCR text, a long one also with its last character cut."""
+    if keyword in normalized_text:
+        return True
+    return len(keyword) >= CUT_LABEL_MIN_CHARS and keyword[:-1] in normalized_text
+
+
 def fuzzy_substring_match(
     normalized_text: str,
     normalized_keyword: str,

@@ -127,6 +127,7 @@ from src.utils.home_confirmation import (
     home_left_column_hits,
     home_left_column_brightness,
 )
+from src.utils.ocr_utils import keyword_read
 from src.utils.wait_limits import LOADING_MAX_SECONDS, STUCK_SECONDS, is_loading_dark, load_wait, scene_at_press
 
 __all__ = [
@@ -824,7 +825,7 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
                 relative_roi=relative_roi,
             )
         normalized = normalize_text(self.vision.simplify(text))
-        matched = sum(value in normalized for value in required)
+        matched = sum(keyword_read(value, normalized) for value in required)
         self._status(f"{name} OCR命中", f"{matched}/{len(required)}")
         return matched == len(required), text
 

@@ -405,6 +405,20 @@ class SquareGoddessEntryTest(unittest.TestCase):
         )
         self.assertEqual(2, sleeps.count(1.0))
 
+    def test_quick_switch_page_label_with_its_last_character_cut(self):
+        # 问题摘要 2026-10-27: the open bar read 「活动游戏」 for 活动游戏卡.
+        task = object.__new__(SquareGoddessTask)
+        task.config = {"卡带选择页确认等待秒数": 0.0}
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_info = lambda *_args, **_kwargs: None
+        task.capture_frame = lambda: np.zeros((1080, 1920, 3), dtype=np.uint8)
+        task._ocr_text = lambda *_args, **_kwargs: (
+            "最近 店长游戏卡 剧情游戏卡 角色游戏卡 战斗玩法游戏卡带 生活玩法游戏卡带 "
+            "活动游戏 查看战场奖励 123"
+        )
+        task.sleep = lambda seconds: None
+        self.assertTrue(SquareGoddessTask._wait_for_quick_switch_page(task))
+
     def test_life_gameplay_category_requires_ocr_and_visual_highlight(self):
         task = object.__new__(SquareGoddessTask)
         task.config = {"玩法类别高亮确认秒数": 0.0}

@@ -137,6 +137,22 @@ class RecordTest(unittest.TestCase):
             [line["text"] for line in record["problem"]["logs"]],
         )
 
+    def test_raw_numbers_and_dumps_stay_out(self):
+        # A player 2026-10-26: 「ratio=0.167, text=…」 and a dozen dumped dicts
+        # in the summary, and nobody could see the skills were misplaced.
+        task = Task(stage="地图采集 探查没有开始（ratio=0.167, text=无可召集的战场怪物）")
+        with problem_report.run_scope(task) as scope:
+            self.log.info("MapCollectionTask:诊断：技能识别失败证据（最近1条） {'card': 'x'}")
+            self.log.warning("MapCollectionTask:地图采集：技能栏未确认：search=absent。")
+            problem_report.note_problem(task, "fail", "第 12 章：count=3/21->3/21, icon=used")
+            scope.result = False
+        [record] = self.saved()
+        self.assertEqual(
+            ["地图采集：技能栏未确认"], [line["text"] for line in record["problem"]["logs"]]
+        )
+        self.assertEqual("地图采集 探查没有开始", record["problem"]["stage"])
+        self.assertEqual("第 12 章", record["problem"]["note"])
+
     def test_a_stuck_trade_phase_says_why_and_the_next_phase_runs(self):
         from src.tasks.map_trade.models import NavigationResult, ScreenState
         from src.tasks.MapTradeTask import MapAutomationTaskBase

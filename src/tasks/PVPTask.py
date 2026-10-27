@@ -64,7 +64,7 @@ from src.utils.image_utils import (
     reference_roi_frame,
     stabilize_template_match,
 )
-from src.utils.ocr_utils import normalize_ocr_text
+from src.utils.ocr_utils import keyword_read, normalize_ocr_text
 from src.utils.pvp_dialog import (
     MULTIPLIER_RANGE,
     adjust_step,
@@ -729,7 +729,11 @@ class PVPTask(BaseBD2Task):
             frame = self.capture_frame()
             text = self._ocr_text(frame, name="卡带选择页")
             last_text = text or last_text
-            match_count = self._ocr_pattern_match_count(text, list(QUICK_SWITCH_PAGE_PATTERNS))
+            normalized = self._normalize_text(text)
+            match_count = sum(
+                keyword_read(self._normalize_text(pattern), normalized)
+                for pattern in QUICK_SWITCH_PAGE_PATTERNS
+            )
             self.info_set("卡带选择页 OCR", text or "-")
             self.info_set(
                 "卡带选择页 OCR 命中",

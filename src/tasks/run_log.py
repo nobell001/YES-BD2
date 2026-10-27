@@ -18,6 +18,7 @@ from ok.util.file import get_relative_path, read_json_file, write_json_file
 
 from src.utils import accounts
 from src.utils.game_day import DAILY_REFRESH_HOUR, GAME_TZ
+from src.utils.plain_text import plain
 
 logger = Logger.get_logger(__name__)
 
@@ -97,7 +98,7 @@ def add(
         "started": started,
         "finished": finished,
         "duration": max(0.0, finished - started) if started else None,
-        "note": str(note or ""),
+        "note": plain(str(note or "")),
         "via": str(via or SINGLE),
         "images": {kind: list(paths) for kind, paths in (images or {}).items() if paths},
     }

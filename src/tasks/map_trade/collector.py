@@ -33,7 +33,9 @@ from src.tasks.map_trade.models import (
 from src.tasks.map_trade.navigator import Navigator
 from src.tasks.map_trade.progress import ProgressStore
 from src.tasks.map_trade.skill_group_keeper import SkillGroupKeeper, stopping
+from src.tasks.map_trade.skill_layout import SkillLayoutWrong
 from src.tasks.map_trade.vision import Vision
+from src.utils.plain_text import DIAGNOSTIC_PREFIX
 from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS, wait_for
 
 # "卡带单步重试次数"未配置时的默认值。
@@ -111,8 +113,13 @@ class Collector(SkillExecutionMixin):
         # card_id -> why a card was skipped (player report 2026-10-17: the
         # summary said only 「这次跳过」 and the stage left over from before).
         self._skip_reasons: dict[str, str] = {}
+        # The skill bar is read once a run (a player may have moved skills).
+        self._skill_layout_checked = False
         try:
             return self._with_skipped_cards(self._run_collection())
+        except SkillLayoutWrong as exc:
+            self.task.log_warning(f"地图采集：{exc}")
+            return CollectionResult(False, message=str(exc))
         except RuntimeError as exc:
             self.task.log_error("地图采集流程异常", exc)
             return CollectionResult(
@@ -855,9 +862,9 @@ class Collector(SkillExecutionMixin):
         }
         self._skill_failure_evidence.append(evidence)
         try:
-            self.task.log_warning(
-                f"地图采集：技能识别失败证据（最近{len(self._skill_failure_evidence)}条）"
-                f" {evidence}"
+            self.task.log_info(
+                f"{DIAGNOSTIC_PREFIX}地图采集：技能识别失败证据"
+                f"（最近{len(self._skill_failure_evidence)}条） {evidence}"
             )
         except AttributeError:
             pass

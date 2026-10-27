@@ -64,6 +64,7 @@ from src.tasks.map_trade.progress import (
     UTC_PLUS_8,
     ProgressStore,
 )
+from src.utils.plain_text import DIAGNOSTIC_PREFIX
 from tests.helpers.map_trade import _seed_action_records, _seed_battle_supplements
 
 
@@ -760,10 +761,12 @@ class CollectorSkillTest(unittest.TestCase):
 
     def test_skill_failure_evidence_is_bounded_and_replayable(self):
         warnings = []
+        infos = []
         collector = Collector(
             SimpleNamespace(
                 config={},
                 log_warning=warnings.append,
+                log_info=infos.append,
                 info_set=lambda *_args: None,
             ),
             SimpleNamespace(),
@@ -789,7 +792,11 @@ class CollectorSkillTest(unittest.TestCase):
         self.assertEqual("Q_sp6", evidence[0]["card"])
         self.assertEqual("战斗区域1", evidence[-1]["phase"])
         self.assertEqual(0.6387, evidence[-1]["observations"]["召集"]["zncc"])
-        self.assertEqual(SKILL_FAILURE_EVIDENCE_LIMIT + 5, len(warnings))
+        # The raw evidence goes to the log file only, never the player's
+        # summary (a player 2026-10-26 got a dozen dumped dicts there).
+        self.assertEqual(SKILL_FAILURE_EVIDENCE_LIMIT + 5, len(infos))
+        self.assertTrue(all(line.startswith(DIAGNOSTIC_PREFIX) for line in infos))
+        self.assertEqual([], warnings)
 
     def test_action_icon_detection_retries_a_transient_miss(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)

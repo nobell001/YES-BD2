@@ -32,6 +32,7 @@ from ok.util.file import get_relative_path
 
 from src.utils import image_io
 from src.utils.game_day import GAME_TZ
+from src.utils.plain_text import DIAGNOSTIC_PREFIX, plain
 
 logger = Logger.get_logger(__name__)
 
@@ -101,7 +102,7 @@ class _Ring(logging.Handler):
         # ok-script logs every info_set as a line; a run going home after a
         # failure wrote enough of them that the summary kept only those and
         # lost the failure itself (YES-BD2 issue #5, 2026-10-09).
-        if _clean(message).startswith(INFO_SET_PREFIX):
+        if _clean(message).startswith((INFO_SET_PREFIX, DIAGNOSTIC_PREFIX)):
             return
         self.lines.append((record.created, record.levelno, record.thread, message))
 
@@ -184,7 +185,7 @@ def recent_lines(since: float | None, thread: int | None = None) -> list[tuple[f
             continue
         if thread is not None and ident != thread:
             continue
-        text = scrub(_clean(message))
+        text = plain(scrub(_clean(message)))
         if text:
             found.append((at, level, text))
     return found
@@ -762,7 +763,7 @@ def _stage(task) -> str:
         if text and text != "-":
             if name and text.startswith(name):
                 text = text[len(name):].lstrip("：: ")
-            return text.rstrip("。.")[:60]
+            return plain(text).rstrip("。.")[:60]
     return ""
 
 
@@ -782,7 +783,7 @@ def _capture(task, how: str, note: str, current: dict) -> dict:
         "how": how,
         "task": name,
         "stage": _stage(task),
-        "note": scrub(note)[:NOTE_CHARS],
+        "note": plain(scrub(note))[:NOTE_CHARS],
         "env": environment(executor),
         "logs": (give_up or {}).get("logs") or _logs(current, now),
     }
@@ -872,13 +873,13 @@ def _end(task, current: dict, ended: str | None, error: str, ok: bool) -> dict:
             if row is not None and ended in PROBLEM_ENDS:
                 record["problem"] = _capture(task, "fail", "", current)
                 record["problem"]["task"] = str(row.get("name") or "")
-                record["problem"]["note"] = str(row.get("note") or "")
+                record["problem"]["note"] = plain(str(row.get("note") or ""))
         elif rows:
             row = next(
                 (r for r in rows if r.get("name") == record["problem"].get("task")), None
             )
             if row is not None and row.get("note") and not record["problem"].get("note"):
-                record["problem"]["note"] = str(row["note"])
+                record["problem"]["note"] = plain(str(row["note"]))
     if ended is None:
         ended = DONE if ok else FAILED
     record["ended"] = ended
