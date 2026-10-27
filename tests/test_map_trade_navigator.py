@@ -2214,8 +2214,16 @@ class AreaMapTeleportIconTest(unittest.TestCase):
         self.assertIsNotNone(picked)
         self.assertEqual((300, 500), picked.position)
 
-    def test_a_lone_strong_icon_still_needs_its_margin(self):
-        self.assertIsNone(self._pick([0.93, 0.88]))
+    def test_a_strong_frame_wins_without_a_lead(self):
+        # 第13章 华特波尔镇 on snow (1080p 2026-10-27): 0.915 against 0.868
+        # failed the old 0.06 lead on both runs.
+        picked = self._pick([0.915, 0.868])
+        self.assertIsNotNone(picked)
+        self.assertEqual((300, 500), picked.position)
+
+    def test_round_icons_below_the_floor_are_not_a_circle(self):
+        # Inn and NPC icons share the frame: 0.856 / 0.838 on 科库托斯研究设施.
+        self.assertIsNone(self._pick([0.867, 0.856, 0.838]))
 
 
 class WalkExitRetryTest(unittest.TestCase):

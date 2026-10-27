@@ -91,6 +91,42 @@ class HuntingGroundMapTest(unittest.TestCase):
         self.assertEqual([True], closed)
 
 
+class AreaMapTeleportGlyphTest(unittest.TestCase):
+    """The circle is told from the inn and NPC icons by the glyph inside
+    their shared round frame, not by how far its frame score leads."""
+
+    def _navigator(self, path):
+        frame = cv2.imread(str(path))
+        self.assertIsNotNone(frame)
+        if frame.shape[1] != 1920:
+            frame = cv2.resize(frame, (1920, 1080))
+        statuses = []
+        task = SimpleNamespace(config={}, info_set=lambda *_a: None)
+        navigator = Navigator(task, Vision(task))
+        navigator._status = lambda *args: statuses.append(args)
+        return navigator, frame, statuses
+
+    def test_the_circle_glyph_is_far_from_the_portrait_beside_it(self):
+        # 华特波尔雪山: the circle at ~(380, 445), a portrait icon at ~(690, 431).
+        navigator, frame, _ = self._navigator(FIXTURES / "snow_large_map_player_fhd.jpg")
+
+        teleport = navigator._sandbox_navigation_teleport(frame)
+
+        self.assertIsNotNone(teleport)
+        x, y = teleport.center
+        self.assertLess(abs(x - 380), 20)
+        self.assertLess(abs(y - 445), 20)
+        self.assertGreaterEqual(navigator._teleport_glyph_score(frame, teleport), 0.85)
+
+    def test_a_map_of_round_icons_without_a_circle_gives_none(self):
+        # The square's area map: shop and NPC icons up to 0.867, no circle.
+        navigator, frame, _ = self._navigator(
+            FIXTURES.parent.parent / "square/square_area_map_2k.jpg"
+        )
+
+        self.assertIsNone(navigator._sandbox_navigation_teleport(frame))
+
+
 class NavMenuWithMapOpenTest(unittest.TestCase):
     def test_fixed_place_is_not_pressed_on_an_open_area_map(self):
         clicks = []

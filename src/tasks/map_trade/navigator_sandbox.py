@@ -4,6 +4,7 @@ import re
 from dataclasses import replace
 from time import monotonic
 
+import cv2
 import numpy as np
 from ok.task.exceptions import FinishedException, TaskDisabledException
 
@@ -99,8 +100,9 @@ from src.tasks.map_trade.navigator_constants import (
     SANDBOX_MAP_EVIDENCE_MIN_SCORE,
     SANDBOX_MAP_EVIDENCE_MIN_ZNCC,
     SANDBOX_MAP_SETTLE_SECONDS,
+    SANDBOX_MAP_TELEPORT_GLYPH_RADIUS,
+    SANDBOX_MAP_TELEPORT_MIN_GLYPH,
     SANDBOX_MAP_TELEPORT_MIN_PIXEL,
-    SANDBOX_MAP_TELEPORT_PIXEL_MARGIN,
     SANDBOX_MAP_TELEPORT_TEMPLATE,
     SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
     SANDBOX_NAVIGATION_MAP_TIMEOUT,
@@ -1244,7 +1246,7 @@ class SandboxNavigationMixin:
             candidates = ()
         # The masked template scores ~0.90 on any plain stretch of the map
         # (60 passes on 施塔因之塔第6层 at 2K, 2026-09-29) and "exactly one"
-        # never held; the real icon's pixel similarity is 0.94, the rest <=0.62.
+        # never held; the pixel similarity ranks them, the glyph decides.
         passed = sorted(
             (
                 result
@@ -1254,23 +1256,62 @@ class SandboxNavigationMixin:
             key=lambda result: result.pixel_score,
             reverse=True,
         )
+        glyphs = [self._teleport_glyph_score(frame, result) for result in passed[:8]]
         best = passed[0].pixel_score if passed else -1.0
         second = passed[1].pixel_score if len(passed) > 1 else -1.0
         self._status(
             "箱庭徒步导航传送阵",
-            f"candidates={len(passed)}, pixel best={best:.3f} second={second:.3f}",
+            f"candidates={len(passed)}, pixel best={best:.3f} second={second:.3f}, "
+            "glyph="
+            + ",".join(f"{glyph:.2f}" for glyph in glyphs[:3]),
         )
         if not passed:
             return None
-        if len(passed) == 1:
-            return passed[0]
-        if best >= SANDBOX_MAP_TELEPORT_MIN_PIXEL and best - second >= SANDBOX_MAP_TELEPORT_PIXEL_MARGIN:
-            return passed[0]
-        if second >= SANDBOX_MAP_TELEPORT_MIN_PIXEL:
-            # Two real circles on one map (角色卡3 上流社会派对会场 at 4K,
-            # 2026-10-04: both 0.957): either one opens the teleport map.
+        # Two real circles on one map (角色卡3 上流社会派对会场 at 4K,
+        # 2026-10-04: both 0.957): either one opens the teleport map.
+        for result, glyph in zip(passed, glyphs):
+            if glyph >= SANDBOX_MAP_TELEPORT_MIN_GLYPH:
+                return result
+        if best >= SANDBOX_MAP_TELEPORT_MIN_PIXEL:
+            self._status("箱庭徒步导航传送阵", "图案被盖住，按边框分数选最高的")
             return passed[0]
         return None
+
+    def _teleport_glyph_score(self, frame: np.ndarray, result: MatchResult) -> float:
+        """How well the glyph inside a candidate's round frame matches the
+        circle's: zero-mean correlation over the inner disc, best of a few
+        pixels' shift (the peak can sit a pixel or two off).  -1 when it
+        cannot be measured."""
+
+        try:
+            template, _mask = self.vision._load(SANDBOX_MAP_TELEPORT_TEMPLATE)
+        except Exception:
+            return -1.0
+        size = template.shape[0]
+        yy, xx = np.mgrid[:size, :size]
+        centre = (size - 1) / 2
+        inner = np.hypot(xx - centre, yy - centre) < size * SANDBOX_MAP_TELEPORT_GLYPH_RADIUS
+        want = template[inner].astype(np.float32)
+        want -= want.mean()
+        gray = frame if frame.ndim == 2 else cv2.cvtColor(frame[..., :3], cv2.COLOR_BGR2GRAY)
+        width, height = result.size
+        x, y = result.position
+        best = -1.0
+        for dy in (-2, -1, 0, 1, 2):
+            for dx in (-2, -1, 0, 1, 2):
+                top, left = y + dy, x + dx
+                if top < 0 or left < 0:
+                    continue
+                crop = gray[top : top + height, left : left + width]
+                if crop.shape[:2] != (height, width):
+                    continue
+                got = cv2.resize(crop, (size, size), interpolation=cv2.INTER_AREA)
+                got = got[inner].astype(np.float32)
+                got -= got.mean()
+                norm = float(np.sqrt((got * got).sum() * (want * want).sum()))
+                if norm > 0:
+                    best = max(best, float((got * want).sum()) / norm)
+        return best
 
     def _walk_text(self, frame: np.ndarray) -> str:
         """The field's walk banner area ("自动移动中" / "已完成自动移动", a

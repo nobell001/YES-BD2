@@ -876,9 +876,18 @@ SANDBOX_CONFIRM_ACTION_TEMPLATES = (
 # icons share its round frame and scored 0.856 / 0.838 (2026-09-30): a high
 # floor and a smaller lead keep those out without missing the real one.
 # Live 1080p 2026-10-20 (ch14 from the town): the circle 0.929 against 0.863,
-# a lead of 0.066, and the map change failed twice at 0.07.
+# a lead of 0.066, and the map change failed twice at 0.07.  Live 1080p
+# 2026-10-27 (第13章 华特波尔镇, snow): 0.915 against 0.868, a lead of 0.047,
+# and the chapter failed on both runs at 0.06.
+# The lead is gone: every map asked for a new margin.  These icons share one
+# round frame, so the frame score only says "a round icon"; the glyph inside
+# it says which.  The circle's glyph correlates 0.94-0.95 with the template's,
+# other round icons and plain map 0.45 at most (snow, hunting ground and
+# square fixtures).  A circle whose glyph the player marker covers still
+# outscores every other round icon on its frame (never above 0.87 so far).
 SANDBOX_MAP_TELEPORT_MIN_PIXEL = 0.90
-SANDBOX_MAP_TELEPORT_PIXEL_MARGIN = 0.06
+SANDBOX_MAP_TELEPORT_GLYPH_RADIUS = 12.5 / 40  # of the icon width
+SANDBOX_MAP_TELEPORT_MIN_GLYPH = 0.70
 SANDBOX_MAP_TELEPORT_TEMPLATE = TemplateSpec(
     "箱庭地图传送阵模板",
     "image/green/SandboxNviTpCircleMapGE.png",
