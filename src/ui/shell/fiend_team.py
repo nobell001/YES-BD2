@@ -196,7 +196,7 @@ class CharacterTile(QAbstractButton):
             painter.save()
             font = QFont(painter.font())
             font.setPixelSize(12)
-            font.setBold(True)
+            theme.strong(font, digits=True)
             painter.setFont(font)
             painter.setPen(QColor("white"))
             painter.drawText(rect, Qt.AlignCenter, f"TEAM{self.taken}")

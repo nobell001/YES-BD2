@@ -18,6 +18,7 @@ from PySide6.QtCore import QPointF, QRectF, QStandardPaths, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QGuiApplication, QImage, QPainter, QPen
 
 from src.tasks import problem_report
+from src.ui.shell import theme
 
 ICON_FILE = Path(__file__).resolve().parents[3] / "icons" / "icon.png"
 SUPPORTED = ((1920, 1080), (2560, 1440), (3840, 2160))
@@ -159,17 +160,20 @@ def file_name(record: dict) -> str:
 class _Pen:
     """Lays out and paints top to bottom; run once to measure, once to paint."""
 
-    def __init__(self, painter: QPainter | None, family: str):
+    def __init__(self, painter: QPainter | None, family: list[str]):
         self.p = painter
         self.family = family
         self.y = 0.0
 
     def font(self, size: float, bold: bool = False, mono: bool = False) -> QFont:
-        font = QFont(self.family)
+        font = QFont()
+        font.setFamilies(self.family)
         if mono:
             font.setStyleHint(QFont.Monospace)
         font.setPixelSize(round(size))
-        font.setWeight(QFont.Weight.DemiBold if bold else QFont.Weight.Medium)
+        font.setWeight(QFont.Weight.Normal)
+        if bold:
+            theme.strong(font)
         return font
 
     def text_height(self, text: str, font: QFont, width: float) -> float:
@@ -357,9 +361,11 @@ def _strip(pen: _Pen, top: float, inner: float, shots, at: float) -> float:
     return used + tall + 4 + label
 
 
-def _family() -> str:
+def _family() -> list[str]:
+    """The app's whole font stack: Chinese falls through Segoe UI to the
+    Windows Chinese font, as everywhere else in the window."""
     app = QGuiApplication.instance()
-    return app.font().family() if app is not None else ""
+    return app.font().families() if app is not None else []
 
 
 def render(record: dict) -> QImage:

@@ -238,9 +238,26 @@ def seg_item_radius(height: float) -> float:
 
 
 def body_weight() -> QFont.Weight:
-    """Weight of plain (not bold) text: Medium in both looks, Regular read
-    too thin (Leo, 2026-10-05)."""
-    return QFont.Weight.Medium
+    """Weight of plain (not bold) text: Regular.  Medium was picked for Noto
+    (2026-10-05); the Windows UI fonts have no Medium, and Regular is how
+    they are drawn evenly (2026-10-27)."""
+    return QFont.Weight.Normal
+
+
+# Chinese below this size is never bold: the strokes of a dense character
+# (the three bars of 精) have no pixel between them and run together
+# (Leo 2026-10-27, 「不行就不要粗體」).  MaaEnd uses no bold at all.
+BOLD_MIN_PX = 20
+
+
+def strong(font: QFont, digits: bool = False) -> QFont:
+    """``font`` bold where bold stays readable: from BOLD_MIN_PX up, or at
+    any size for text that is only digits / Latin letters (``digits``)."""
+    size = font.pixelSize()
+    if size <= 0:
+        size = round(font.pointSizeF() * 96 / 72)
+    font.setBold(digits or size >= BOLD_MIN_PX)
+    return font
 
 
 def body_font(base: QFont) -> QFont:
@@ -350,8 +367,8 @@ def style_sheet() -> str:
     button, button_lg, button_sm = (16, 19, 14) if pill else (shape("button"),) * 3
     seg, seg_item = (16, 13) if pill else (shape("button"), 4)
     side_bg = "transparent" if shape("side_inset") else t["side"]
-    # Plain text uses Medium in both looks; Regular read too thin (Leo, 2026-10-05).
-    body_weight = " font-weight: 500;"
+    # Plain text is Regular, see body_weight().
+    body_weight = " font-weight: 400;"
     secondary = (
         f"background: {t['inset']}; color: {t['ink']}; border: none;"
         if pill
@@ -363,23 +380,23 @@ QAbstractScrollArea[shell="true"] {{ background: {t["bg"]}; border: none; }}
 QWidget#shellSide {{ background: {side_bg}; border-right: 1px solid {t["side_line"]}; }}
 QLabel {{ color: {t["ink"]}; background: transparent;{body_weight} }}
 QLabel[role="h1"] {{ font-size: 23px; font-weight: 700; }}
-QLabel[role="h2"] {{ font-size: 15px; font-weight: 700; }}
-QLabel[role="h3"] {{ font-size: 14px; font-weight: 700; }}
+QLabel[role="h2"] {{ font-size: 15px; }}
+QLabel[role="h3"] {{ font-size: 14px; }}
 QLabel[role="sub"] {{ color: {t["ink2"]}; font-size: 13px; }}
 QLabel[role="muted"] {{ color: {t["ink3"]}; font-size: 12px; }}
 QLabel[role="eyebrow"] {{ color: {t["ink3"]}; font-size: 12px; }}
 QLabel[role="guide"] {{ font-size: 16px; }}
 QLabel[role="guide_note"] {{ color: {t["ink2"]}; font-size: 15px; }}
-QLabel[role="card_title"] {{ font-size: 17px; font-weight: 700; }}
+QLabel[role="card_title"] {{ font-size: 17px; }}
 QLabel[role="card_desc"] {{ color: {t["ink2"]}; font-size: 13px; }}
-QLabel[role="pill"][tone="must"] {{ color: {t["badge_must_ink"]}; background: {t["badge_must"]}; border-color: {t["badge_must"]}; font-weight: 700; }}
+QLabel[role="pill"][tone="must"] {{ color: {t["badge_must_ink"]}; background: {t["badge_must"]}; border-color: {t["badge_must"]}; }}
 QLabel[role="big"] {{ font-size: 26px; font-weight: 700; }}
 QLabel[role="huge"] {{ font-size: 30px; font-weight: 700; }}
 QLabel[role="big"][tone="ok"] {{ color: {t["ok"]}; }}
 QLabel[role="big"][tone="bad"] {{ color: {t["bad"]}; }}
 QLabel[role="big"][tone="warn"] {{ color: {t["warn"]}; }}
 QLabel[role="big"][tone="run"] {{ color: {t["run"]}; }}
-QLabel[role="ok"] {{ color: {t["ok"]}; font-weight: 700; }}
+QLabel[role="ok"] {{ color: {t["ok"]}; }}
 QLabel[role="bad"] {{ color: {t["bad"]}; }}
 QLabel[role="warn"] {{ color: {t["warn"]}; }}
 QLabel[role="pill"] {{ color: {t["ink2"]}; background: {t["pill"]}; border: 1px solid {t["pill_line"]};
@@ -389,7 +406,7 @@ QLabel[role="pill"][tone="run"] {{ color: {t["pill_run_ink"]}; background: {t["p
 QLabel[role="pill"][tone="warn"] {{ color: {t["warn"]}; background: {t["warn_soft"]}; border-color: {t["warn_soft"]}; }}
 QLabel[role="pill"][tone="bad"] {{ color: {t["bad"]}; background: {t["bad_soft"]}; border-color: {t["bad_soft"]}; }}
 QLabel[role="tag"] {{ color: {t["tag_ink"]}; background: {t["tag"]}; border-radius: 3px;
-    padding: 0px 5px; font-size: 11px; font-weight: 700; }}
+    padding: 0px 5px; font-size: 11px; }}
 
 QFrame[card="true"] {{ background: transparent; border: none; }}
 QFrame[box="true"] {{ background: {t["box"]}; border: 1px solid {t["box_line"]}; border-radius: {inset}px; }}
@@ -400,7 +417,7 @@ QFrame[sep="true"] {{ background: {t["line"]}; border: none; max-height: 1px; mi
 
 QPushButton {{ font-size: 13px; border-radius: {button}px; min-height: 32px; max-height: 32px;
     padding: 0px 14px; }}
-QPushButton[kind="primary"] {{ background: {t["primary"]}; color: {t["on_primary"]}; border: none; font-weight: 700; }}
+QPushButton[kind="primary"] {{ background: {t["primary"]}; color: {t["on_primary"]}; border: none; }}
 QPushButton[kind="primary"]:hover {{ background: {t["primary_hover"]}; }}
 QPushButton[kind="primary"]:disabled {{ background: {t["line2"]}; color: {t["ink3"]}; }}
 QPushButton[kind="secondary"] {{ {secondary} }}
@@ -410,7 +427,7 @@ QPushButton[kind="ghost"] {{ background: {t["accent_soft"] if pill else "transpa
     border: 1px solid {"transparent" if pill else t["ghost_line"]}; }}
 QPushButton[kind="ghost"]:hover {{ background: {rgba("ink", 0.06)}; }}
 QPushButton[kind="ghost"]:disabled {{ color: {t["ink3"]}; }}
-QPushButton[kind="danger"] {{ background: {t["card"]}; color: {t["bad"]}; border: 1px solid {t["line2"]}; font-weight: 700; }}
+QPushButton[kind="danger"] {{ background: {t["card"]}; color: {t["bad"]}; border: 1px solid {t["line2"]}; }}
 QPushButton[kind="danger"]:hover {{ background: {t["bad_soft"]}; }}
 QPushButton[kind="icon"] {{ background: transparent; border: 1px solid {t["line2"]}; padding: 0px;
     min-width: 32px; max-width: 32px; }}
@@ -429,7 +446,7 @@ QFrame[segmented="true"] {{ background: {t["inset"]}; border: 1px solid {rgba("i
 QPushButton[seg="true"] {{ background: transparent; color: {t["ink2"]}; border: none; border-radius: {seg_item}px;
     min-height: 26px; max-height: 999px; padding: 0px 12px; font-size: 12px; }}
 QPushButton[seg="true"]:hover {{ color: {t["ink"]}; }}
-QPushButton[seg="true"]:checked {{ background: transparent; color: {t["ink"]}; font-weight: 700;
+QPushButton[seg="true"]:checked {{ background: transparent; color: {t["ink"]};
     border: 1px solid transparent; }}
 QPushButton[seg="true"][segAccent="true"]:checked {{ color: {t["on_accent"]}; }}
 

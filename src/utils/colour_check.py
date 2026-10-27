@@ -162,5 +162,5 @@ def distorted_colour_warning(check: ColourCheck) -> str:
     return (
         f"画面颜色和游戏原本的颜色差很多（偏差 {check.distance:.0f}，正常 ≤ {COLOUR_DISTANCE_MAX:.0f}）："
         "可能开着 RTX HDR、自动 HDR、显卡的鲜艳度/滤镜或色彩调整。颜色相关的判断可能出错，"
-        "爛装分解这次只判断不分解；建议关闭后再跑。"
+        "烂装分解这次只判断不分解；建议关闭后再跑。"
     )

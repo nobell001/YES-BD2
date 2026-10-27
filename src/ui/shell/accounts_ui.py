@@ -103,7 +103,8 @@ class Avatar(QWidget):
             letter = self._account.name[:1] or self._account.id
             font = QFont(self.font())
             font.setPixelSize(max(10, round(side * 0.44)))
-            font.setBold(True)
+            # The first letter of the account name, which may be Chinese.
+            theme.strong(font)
             painter.setFont(font)
             painter.setPen(theme.color("on_primary"))
             painter.drawText(rect, Qt.AlignCenter, letter.upper())

@@ -6,6 +6,10 @@ catalog.  With the app set to Traditional Chinese, any text the catalogs
 do not translate is converted with OpenCC's Taiwan profile (s2twp: 设置 ->
 設定, 鼠标 -> 滑鼠).  Stored settings keep their Simplified keys; only the
 display changes (user, 2026-09-27).
+
+With the app set to Simplified Chinese, untranslated text goes through
+OpenCC's t2s the same way, so a Traditional character typed into a source
+text (爛装) never reaches a Simplified screen (YES-BD2 #57, 2026-10-27).
 """
 
 from __future__ import annotations
@@ -13,19 +17,24 @@ from __future__ import annotations
 from functools import lru_cache
 
 TRADITIONAL_LOCALES = frozenset({"zh_TW", "zh_HK", "zh_MO"})
+SIMPLIFIED_LOCALES = frozenset({"zh_CN", "zh_SG"})
 
 
 def is_traditional(locale_name: str) -> bool:
     return str(locale_name).replace("-", "_") in TRADITIONAL_LOCALES
 
 
-@lru_cache(maxsize=1)
-def _converter():
+def is_simplified(locale_name: str) -> bool:
+    return str(locale_name).replace("-", "_") in SIMPLIFIED_LOCALES
+
+
+@lru_cache(maxsize=2)
+def _converter(profile: str = "s2twp"):
     try:
         import opencc
     except ImportError:  # pragma: no cover - opencc is a project dependency
         return None
-    return opencc.OpenCC("s2twp")
+    return opencc.OpenCC(profile)
 
 
 # Taiwan words OpenCC's s2twp gets wrong (GitHub issue #4's 账号 came out as
@@ -44,6 +53,12 @@ def to_traditional(text: str) -> str:
     return converted
 
 
+@lru_cache(maxsize=4096)
+def to_simplified(text: str) -> str:
+    converter = _converter("t2s")
+    return text if converter is None else converter.convert(text)
+
+
 def _locale_name(app) -> str:
     locale = getattr(app, "locale", None)
     name = getattr(locale, "name", None)
@@ -54,12 +69,16 @@ def _locale_name(app) -> str:
 
 
 def wrap_tr(original):
-    """A ``tr`` that converts untranslated text on a Traditional locale."""
+    """A ``tr`` that converts untranslated text on a Chinese locale."""
 
     def tr(self, key, *args, **kwargs):
         result = original(self, key, *args, **kwargs)
-        if isinstance(key, str) and key and result == key and is_traditional(_locale_name(self)):
-            return to_traditional(key)
+        if isinstance(key, str) and key and result == key:
+            locale_name = _locale_name(self)
+            if is_traditional(locale_name):
+                return to_traditional(key)
+            if is_simplified(locale_name):
+                return to_simplified(key)
         return result
 
     tr._bd2_traditional = True

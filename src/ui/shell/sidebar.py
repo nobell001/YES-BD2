@@ -5,8 +5,19 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QEasingCurve, QRectF, QSize, Qt, QTimer, QVariantAnimation, Signal
-from PySide6.QtGui import QFont, QFontMetrics, QPainter, QPen, QPixmap
+from PySide6.QtCore import (
+    QElapsedTimer,
+    QEasingCurve,
+    QEvent,
+    QObject,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    QVariantAnimation,
+    Signal,
+)
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QAbstractButton, QFrame, QWidget
 
 from src.ui.shell import clone_flow, data, icons, theme
@@ -15,12 +26,104 @@ from src.ui.shell.widgets import Bar, Spinner, StateIcon, Text, draw_fitted, hbo
 
 ICON_FILE = Path(__file__).resolve().parents[3] / "icons" / "icon.png"
 SIDE_WIDTH = 204
+# The selected shade slides from row to row and lands with a light bounce,
+# hugging the row's icon and words (Leo 2026-10-27, his reference video:
+# 「宽度也跟着文字长度调整」「落下时带一点轻微回弹」).
+SLIDE_MS = 320
+# How far past the target the landing overshoots (ease-out-back; 1.70 is the
+# usual "back" curve, this is about half of its overshoot).
+SLIDE_BOUNCE = 1.2
+# Room after the words inside the shade.
+PILL_TAIL = 14
+# A frame never moves the pill on by more than this: a page that takes a
+# moment to draw the first time pauses the slide instead of making it jump
+# (Leo 2026-10-27 「感覺會卡頓」: a time-based animation skipped the frames the
+# page switch held up).
+SLIDE_MAX_STEP_MS = 20
+SLIDE_FRAME_MS = 8
+
+
+def _mix(a: QColor, b: QColor, amount: float) -> QColor:
+    """``a`` turning into ``b`` as ``amount`` goes from 0 to 1."""
+    if amount <= 0:
+        return a
+    if amount >= 1:
+        return b
+    return QColor.fromRgbF(
+        a.redF() + (b.redF() - a.redF()) * amount,
+        a.greenF() + (b.greenF() - a.greenF()) * amount,
+        a.blueF() + (b.blueF() - a.blueF()) * amount,
+        a.alphaF() + (b.alphaF() - a.alphaF()) * amount,
+    )
+
+
+def _between(a: QRectF, b: QRectF, amount: float) -> QRectF:
+    return QRectF(
+        a.x() + (b.x() - a.x()) * amount,
+        a.y() + (b.y() - a.y()) * amount,
+        a.width() + (b.width() - a.width()) * amount,
+        a.height() + (b.height() - a.height()) * amount,
+    )
+
+
+class _Slide(QObject):
+    """0 -> 1 over ``SLIDE_MS``, frame by frame, ending in a light bounce
+    (a little past 1, then back).
+
+    Off screen it jumps to 1, so the column always opens settled.
+    """
+
+    def __init__(self, owner: QWidget, on_change: Callable[[], None]):
+        super().__init__(owner)
+        self._owner = owner
+        self._on_change = on_change
+        self._progress = 1.0
+        self.value = 1.0
+        self._clock = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setTimerType(Qt.PreciseTimer)
+        self._timer.setInterval(SLIDE_FRAME_MS)
+        self._timer.timeout.connect(self._tick)
+
+    def running(self) -> bool:
+        return self._timer.isActive()
+
+    def start(self) -> None:
+        if not self._owner.isVisible():
+            self.finish()
+            return
+        self._progress = 0.0
+        self.value = 0.0
+        self._clock.start()
+        self._timer.start()
+        self._on_change()
+
+    def finish(self) -> None:
+        self._timer.stop()
+        self._progress = 1.0
+        self.value = 1.0
+        self._on_change()
+
+    def stop(self) -> None:
+        self._timer.stop()
+
+    def _tick(self) -> None:
+        step = min(self._clock.restart(), SLIDE_MAX_STEP_MS)
+        self._progress = min(1.0, self._progress + step / SLIDE_MS)
+        rest = self._progress - 1.0
+        self.value = 1.0 + (SLIDE_BOUNCE + 1.0) * rest**3 + SLIDE_BOUNCE * rest**2
+        if self._progress >= 1.0:
+            self._timer.stop()
+        self._on_change()
 
 
 class NavItem(QAbstractButton):
     """Icon + label (+ a small badge on the right).
 
     Selected: a soft violet pill in 淡紫, a quiet card with a blue icon in 深色.
+    The pill itself is drawn by the Sidebar underneath, so it can slide from
+    row to row; the row only blends its icon and label colours by how much of
+    the pill sits on it (``_on``), and its text never moves.
     """
 
     def __init__(self, key: str, label: str, icon_name: str, parent=None, strong=False):
@@ -30,6 +133,8 @@ class NavItem(QAbstractButton):
         self._strong = strong
         self._icon = icon_name
         self._selected = False
+        # 0..1: how much of the sliding pill covers this row right now.
+        self._on = 0.0
         self._hover = 0.0
         # The hover shade fades in and out instead of switching on and off.
         self._hover_anim = QVariantAnimation(self)
@@ -49,12 +154,30 @@ class NavItem(QAbstractButton):
             self._selected = selected
             self.update()
 
+    def set_on(self, amount: float) -> None:
+        amount = min(1.0, max(0.0, amount))
+        if abs(amount - self._on) > 0.004:
+            self._on = amount
+            self.update()
+
     def set_badge(self, text: str, kind: str = "") -> None:
         text = t(text)
         if (text, kind) != (self._badge, self._badge_kind):
             self._badge, self._badge_kind = text, kind
             self._place_spinner()
             self.update()
+
+    def _label_font(self) -> QFont:
+        font = QFont(self.font())
+        font.setPixelSize(13)
+        # Selected / strong rows stand out by colour, not bold (theme.strong).
+        font.setWeight(theme.body_weight())
+        return font
+
+    def pill_width(self) -> float:
+        """The shade hugs the icon and the words, not the whole row."""
+        words = QFontMetrics(self._label_font()).horizontalAdvance(self._label)
+        return min(float(self.width()), 40 + words + PILL_TAIL)
 
     def sizeHint(self) -> QSize:
         return QSize(SIDE_WIDTH - 24, 36)
@@ -84,8 +207,7 @@ class NavItem(QAbstractButton):
     def _badge_font(self) -> QFont:
         font = QFont(self.font())
         font.setPixelSize(11)
-        font.setBold(True)
-        return font
+        return theme.strong(font)
 
     def _badge_rect(self) -> QRectF:
         metrics = QFontMetrics(self._badge_font())
@@ -109,28 +231,25 @@ class NavItem(QAbstractButton):
         round_icons = theme.shape("round_icons")
         # 淡紫: a pill, and the icon sits in a circle (filled when selected).
         corner = box.height() / 2 if round_icons else theme.radius()
-        if self._selected:
-            painter.setPen(QPen(theme.color("nav_on_line"), 1))
-            painter.setBrush(theme.color("nav_on"))
-            painter.drawRoundedRect(box, corner, corner)
-            fg, icon = theme.color("nav_on_ink"), theme.color("nav_on_icon")
-        else:
-            if self._hover > 0:
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(theme.color("ink", 0.05 * self._hover))
-                painter.drawRoundedRect(box, corner, corner)
-            fg, icon = theme.color("ink"), theme.color("nav_icon")
+        on = self._on
+        # The hover shade fades out where the sliding pill already sits.
+        hover = self._hover * (1.0 - on)
+        if hover > 0:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(theme.color("ink", 0.05 * hover))
+            shade = QRectF(box.x(), box.y(), self.pill_width() - 1.0, box.height())
+            painter.drawRoundedRect(shade, corner, corner)
+        fg = _mix(theme.color("ink"), theme.color("nav_on_ink"), on)
+        icon = _mix(theme.color("nav_icon"), theme.color("nav_on_icon"), on)
         # Hovered: the icon grows a little (selected ones stay put).
-        grow = 0.0 if self._selected else self._hover
+        grow = hover
         if round_icons:
             side = 28 + 1.5 * grow
             circle = QRectF(18 - side / 2, (self.height() - side) / 2, side, side)
-            if self._selected:
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(theme.color("nav_on_circle"))
-            else:
-                painter.setPen(QPen(theme.color("ring"), 1.2))
-                painter.setBrush(theme.color("card"))
+            ring = theme.color("ring")
+            ring.setAlphaF(ring.alphaF() * (1.0 - on))
+            painter.setPen(QPen(ring, 1.2) if on < 1 else Qt.NoPen)
+            painter.setBrush(_mix(theme.color("card"), theme.color("nav_on_circle"), on))
             painter.drawEllipse(circle.adjusted(0.6, 0.6, -0.6, -0.6))
             pad = 6.5 - 0.5 * grow
             icons.paint(painter, circle.adjusted(pad, pad, -pad, -pad), self._icon, icon, 1.9)
@@ -143,15 +262,7 @@ class NavItem(QAbstractButton):
                 icon,
                 1.9,
             )
-        font = QFont(self.font())
-        font.setPixelSize(13)
-        if self._selected:
-            font.setWeight(QFont.Weight.Bold)
-        elif self._strong:
-            font.setWeight(QFont.Weight.Bold)
-        else:
-            font.setWeight(theme.body_weight())
-        painter.setFont(font)
+        painter.setFont(self._label_font())
         painter.setPen(fg)
         text_rect = QRectF(40, 0, self.width() - 48, self.height())
         painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, self._label)
@@ -165,7 +276,7 @@ class NavItem(QAbstractButton):
             bg, ink = theme.color("badge_ok"), theme.color("ok")
         elif self._badge_kind == "must":
             bg, ink = theme.color("badge_must"), theme.color("badge_must_ink")
-        elif self._selected:
+        elif self._on >= 0.5:
             bg, ink = theme.color("badge_on"), theme.color("badge_on_ink")
         else:
             bg, ink = theme.color("badge"), theme.color("badge_ink")
@@ -234,6 +345,10 @@ class Sidebar(QWidget):
         layout.addSpacing(14)
 
         self.items: dict[str, NavItem] = {}
+        self._selected: str | None = None
+        self._slide_from: QRectF | None = None
+        self._drawn_pill: QRectF | None = None
+        self._slide = _Slide(self, self._slide_step)
         for key, label, icon_name in self.PAGES:
             layout.addWidget(self._item(key, label, icon_name))
         layout.addStretch(1)
@@ -262,6 +377,7 @@ class Sidebar(QWidget):
         # Leo 2026-10-09: 使用说明 bolder (2026-10-22 bold), always marked 必看.
         item = NavItem(key, label, icon_name, self, strong=key == "guide")
         item.clicked.connect(lambda *_a, k=key: self.navigate.emit(k))
+        item.installEventFilter(self)
         self.items[key] = item
         return item
 
@@ -286,19 +402,83 @@ class Sidebar(QWidget):
 
     def paintEvent(self, event):
         super().paintEvent(event)
-        inset = theme.shape("side_inset")
-        if not inset:
-            return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(theme.color("side"))
-        panel = QRectF(self.rect()).adjusted(inset, inset, -inset / 2, -inset)
-        painter.drawRoundedRect(panel, 22, 22)
+        inset = theme.shape("side_inset")
+        if inset:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(theme.color("side"))
+            panel = QRectF(self.rect()).adjusted(inset, inset, -inset / 2, -inset)
+            painter.drawRoundedRect(panel, 22, 22)
+        self._paint_pill(painter)
 
     def select(self, key: str | None) -> None:
+        # The pill leaves from wherever it is drawn now, so a quick second
+        # click turns it around mid-way instead of jumping back.
+        current = self._pill_rect()
+        self._selected = key if key in self.items else None
         for item_key, item in self.items.items():
             item.set_selected(item_key == key)
+        if current is None or self._selected is None:
+            self._slide_from = None
+            self._slide.finish()
+            return
+        self._slide_from = current
+        self._slide.start()
+
+    def _target_rect(self) -> QRectF | None:
+        item = self.items.get(self._selected) if self._selected else None
+        if item is None or item.isHidden():
+            return None
+        row = QRectF(item.geometry())
+        return QRectF(row.x(), row.y(), item.pill_width(), row.height()).adjusted(
+            0.5, 0.5, -0.5, -0.5
+        )
+
+    def _pill_rect(self) -> QRectF | None:
+        """Where the selected shade is drawn this frame.  It always ends on
+        the row's live place, so a resize mid-way or after needs no fix-up."""
+        target = self._target_rect()
+        if target is None:
+            return None
+        start, amount = self._slide_from, float(self._slide.value)
+        if start is None or amount >= 1.0:
+            return target
+        return _between(start, target, amount)
+
+    def _slide_step(self) -> None:
+        rect = self._pill_rect()
+        # Only the column strip the pill crosses is drawn again (4K stays
+        # smooth); each row the pill touches blends its colours by overlap.
+        dirty = rect if rect is not None else QRectF()
+        if self._drawn_pill is not None:
+            dirty = dirty.united(self._drawn_pill)
+        self._drawn_pill = rect
+        for item in self.items.values():
+            if rect is None:
+                item.set_on(0.0)
+                continue
+            box = QRectF(item.geometry()).adjusted(0.5, 0.5, -0.5, -0.5)
+            overlap = min(box.bottom(), rect.bottom()) - max(box.top(), rect.top())
+            item.set_on(overlap / box.height() if box.height() > 0 else 0.0)
+        if not dirty.isEmpty():
+            self.update(dirty.adjusted(-2, -2, 2, 2).toAlignedRect())
+
+    def eventFilter(self, watched, event):
+        # The bottom rows move with the window height: the pill is drawn on
+        # the row's live place, and the colours follow it here.
+        if event.type() in (QEvent.Move, QEvent.Resize, QEvent.Show, QEvent.Hide):
+            self._slide_step()
+        return False
+
+    def _paint_pill(self, painter: QPainter) -> None:
+        rect = self._pill_rect()
+        if rect is None:
+            return
+        corner = rect.height() / 2 if theme.shape("round_icons") else theme.radius()
+        painter.setPen(QPen(theme.color("nav_on_line"), 1))
+        painter.setBrush(theme.color("nav_on"))
+        painter.drawRoundedRect(rect, corner, corner)
 
     def showEvent(self, event):
         super().showEvent(event)

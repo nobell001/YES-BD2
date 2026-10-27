@@ -143,7 +143,7 @@ class CartridgeTile(QWidget):
             painter.drawText(off, Qt.AlignCenter, text)
         font = QFont(self.font())
         font.setPixelSize(12)
-        font.setBold(True)
+        theme.strong(font, digits=True)
         painter.setFont(font)
         top = cover.bottom() + 6
         number = card.code if not card.story else str(card.number)

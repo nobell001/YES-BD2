@@ -942,7 +942,7 @@ class Ring(QWidget):
             painter.drawArc(rect, 90 * 16, int(span * 16))
         big = QFont(self.font())
         big.setPixelSize(round(self._size * 0.27))
-        big.setBold(True)
+        theme.strong(big, digits=True)
         small = theme.body_font(self.font())
         small.setPixelSize(max(11, round(self._size * 0.12)))
         done_text = str(self._done)

@@ -1,35 +1,43 @@
-"""App fonts (Noto Sans TC / SC first, then the Windows UI fonts).
+"""App fonts: the Windows UI fonts first, the bundled Noto Sans as a fallback.
 
 The quest-style colour tokens that used to live here went with the old task
 pages (2026-10-04); the new shell keeps its own in ``src/ui/shell/theme.py``.
 
-Noto Sans replaced MiSans on 2026-10-05: at the window's small sizes MiSans
-put some horizontal strokes (the middle of 完) between two pixel rows, so they
-came out pale (Leo).  Both scripts ship, so Traditional and Simplified text
-each get their own letterforms; the one matching the app language goes first.
+Noto Sans replaced MiSans on 2026-10-05 (MiSans put some horizontal strokes
+between two pixel rows).  Noto had the same kind of fault: it carries no
+pixel-fitting (hinting) data, so at the window's small sizes Windows drew its
+horizontal strokes two pixels thick and its vertical strokes one pixel, uneven
+inside every character (Leo 2026-10-27, checked on the 2K PC at 125 %).  The
+Windows UI fonts are fitted to the pixel grid, every stroke comes out the same
+width; MaaEnd looks even for the same reason (Segoe UI, then 微软雅黑).
+
+Segoe UI goes first for Latin letters and digits; Chinese, Japanese and Korean
+characters fall through to the font of the app language.  Noto stays at the end
+for a Windows without those fonts.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-# Preferred global UI font stack for Traditional Chinese (and everything that
-# is not Simplified), best first. Qt and qfluentwidgets resolve unavailable
-# families through the platform fallback chain.
+_NOTO = ("Noto Sans TC", "Noto Sans SC")
+
+# Traditional Chinese, and every language without its own stack below.
 APP_FONT_FAMILIES = (
-    "Noto Sans TC",
-    "Noto Sans SC",
+    "Segoe UI",
     "Microsoft JhengHei UI",
     "Microsoft YaHei UI",
-    "Segoe UI",
+    *_NOTO,
 )
 _SIMPLIFIED_FAMILIES = (
-    "Noto Sans SC",
-    "Noto Sans TC",
+    "Segoe UI",
     "Microsoft YaHei UI",
     "Microsoft JhengHei UI",
-    "Segoe UI",
+    "Noto Sans SC",
+    "Noto Sans TC",
 )
+_JAPANESE_FAMILIES = ("Segoe UI", "Yu Gothic UI", "Meiryo UI", "Microsoft JhengHei UI", *_NOTO)
+_KOREAN_FAMILIES = ("Segoe UI", "Malgun Gothic", "Microsoft JhengHei UI", *_NOTO)
 _FONT_FILES = ("NotoSansTC-VF.ttf", "NotoSansSC-VF.ttf")
 _SIMPLIFIED_LOCALES = frozenset({"zh_CN", "zh_SG"})
 
@@ -50,7 +58,13 @@ def _app_locale_name() -> str:
 def font_families(locale_name: str | None = None) -> tuple[str, ...]:
     """The font stack for ``locale_name`` (default: the app's language)."""
     name = _app_locale_name() if locale_name is None else locale_name
-    return _SIMPLIFIED_FAMILIES if name in _SIMPLIFIED_LOCALES else APP_FONT_FAMILIES
+    if name in _SIMPLIFIED_LOCALES:
+        return _SIMPLIFIED_FAMILIES
+    if name.startswith("ja"):
+        return _JAPANESE_FAMILIES
+    if name.startswith("ko"):
+        return _KOREAN_FAMILIES
+    return APP_FONT_FAMILIES
 
 
 def _install_framework_fonts(families_list: tuple[str, ...]) -> None:
@@ -71,7 +85,7 @@ def _install_framework_fonts(families_list: tuple[str, ...]) -> None:
         qss = qss.replace("'Segoe UI', 'Microsoft YaHei', 'PingFang SC'", families)
         qss = qss.replace(
             '"Segoe UI SemiBold", "Microsoft YaHei", \'PingFang SC\'',
-            families + "; font-weight: 600",
+            families,
         )
         return qss.replace("'Microsoft YaHei Light'", families + "; font-weight: 300")
 
@@ -83,6 +97,12 @@ def _install_framework_fonts(families_list: tuple[str, ...]) -> None:
         result = original_init()
         apply_app_font()
         return result
+
+    # StrongBodyLabel (the old cards' titles) is 14 px DemiBold: the bars
+    # of dense characters run together, so plain weight (theme.strong).
+    from qfluentwidgets import StrongBodyLabel, getFont
+
+    StrongBodyLabel.getFont = lambda self: getFont(14)
 
     StyleSheet.content = content
     LogWindow._apply_theme = log_theme

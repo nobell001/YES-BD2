@@ -1340,7 +1340,7 @@ class AfterGachaNewMarkedTest(unittest.TestCase):
         with mock.patch("src.tasks.JunkGearTask.run_report.add_current_note") as note:
             self.assertTrue(task.run_claim())
         self.assertEqual(
-            "新装备 1 件都没拆；认出 1 件爛装，一键强化没选成没拆", note.call_args_list[0].args[0]
+            "新装备 1 件都没拆；认出 1 件烂装，一键强化没选成没拆", note.call_args_list[0].args[0]
         )
 
     def test_new_items_dismantled_add_no_note(self):

@@ -285,7 +285,7 @@ class AboutPage(Page):
         self.status_icon.hide()
         state.addWidget(self.status_icon, 0, Qt.AlignVCenter)
         self.status_text = Text("", "ok")
-        self.status_text.setStyleSheet("font-size: 17px; font-weight: 700;")
+        self.status_text.setStyleSheet("font-size: 17px;")
         self.status_text.hide()
         state.addWidget(self.status_text, 1, Qt.AlignVCenter)
         state.addStretch(1)

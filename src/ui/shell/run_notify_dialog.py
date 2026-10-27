@@ -51,8 +51,8 @@ class _Number(QWidget):
         painter.drawEllipse(self.rect())
         painter.setPen(theme.color("primary"))
         font = painter.font()
-        font.setBold(True)
         font.setPixelSize(12)
+        theme.strong(font, digits=True)
         painter.setFont(font)
         painter.drawText(self.rect(), Qt.AlignCenter, self._number)
 

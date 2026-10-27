@@ -86,14 +86,14 @@ class Stepper(QFrame):
             f"QFrame#stepper {{ background: {tk['inset'] if dark else tk['card']};"
             f" border: {'none' if dark else '1px solid ' + tk['line2']}; border-radius: 16px; }}"
             f"QFrame#stepper QPushButton {{ background: transparent; border: none;"
-            f" border-radius: 13px; color: {tk['ink']}; font-size: 16px; font-weight: 700;"
+            f" border-radius: 13px; color: {tk['ink']}; font-size: 16px;"
             f" padding: 0px;"
             f" min-height: 26px; max-height: 26px; }}"
             f"QFrame#stepper QPushButton:hover {{ color: {tk['accent']};"
             f" background: {tk['card'] if dark else tk['accent_soft']}; }}"
             f"QFrame#stepper QPushButton:disabled {{ color: {theme.rgba('ink', 0.25)}; }}"
             f"QFrame#stepper QLineEdit {{ background: transparent; border: none; padding: 0px;"
-            f" color: {tk['ink']}; font-size: 14px; font-weight: 700;"
+            f" color: {tk['ink']}; font-size: 14px;"
             f" selection-background-color: {tk['accent']}; selection-color: {tk['on_accent']}; }}"
             f"QFrame#stepper QLineEdit:focus {{ border-bottom: 2px solid {tk['accent']}; }}"
         )
@@ -189,7 +189,7 @@ class PvpPanel(QWidget):
             f" border: {'none' if dark else '1px solid ' + tk['line2']}; }}"
             f"QPushButton:hover {{ background: {tk['card'] if dark else tk['accent_soft']}; }}"
             f"QPushButton:checked {{ background: {tk['accent']}; color: {tk['on_accent']};"
-            f" border-color: {tk['accent']}; font-weight: 700; }}"
+            f" border-color: {tk['accent']}; }}"
         )
 
     # ------------------------------------------------------------ values

@@ -121,7 +121,7 @@ class StepNumber(QWidget):
         painter.drawEllipse(QRectF(self.rect()))
         font = QFont(self.font())
         font.setPixelSize(13)
-        font.setWeight(QFont.Weight.Bold)
+        theme.strong(font, digits=True)
         painter.setFont(font)
         painter.setPen(theme.color("on_primary"))
         painter.drawText(QRectF(self.rect()), Qt.AlignCenter, self._number)

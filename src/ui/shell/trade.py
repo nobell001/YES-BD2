@@ -87,7 +87,7 @@ class DishTile(QWidget):
         if self._picked and self._label:
             font = QFont(self.font())
             font.setPixelSize(10)
-            font.setBold(True)
+            theme.strong(font)
             painter.setFont(font)
             badge = QRectF(
                 3, 3, max(16, 8 + painter.fontMetrics().horizontalAdvance(self._label)), 16
@@ -238,7 +238,7 @@ class DayCell(QWidget):
             )
         font = QFont(self.font())
         font.setPixelSize(11)
-        font.setBold(True)
+        theme.strong(font, digits=True)
         painter.setFont(font)
         ink = (
             theme.color("today_ink")

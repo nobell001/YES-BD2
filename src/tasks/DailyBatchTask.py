@@ -208,7 +208,7 @@ class ChildBatchTask(BaseTask):
         super().__init__(*args, **kwargs)
         self.name = self.batch_label
         self.description = (
-            "按顺序执行已开启的公会、小屋、酒馆、常客圣石、快速狩猎、抽抽乐、爛装分解、精炼、"
+            "按顺序执行已开启的公会、小屋、酒馆、常客圣石、快速狩猎、抽抽乐、烂装分解、精炼、"
             "PVP、广场、跑商、活动战斗、救赎之塔、本周还没做的周常，最后领取任务奖励、通行证和邮件。"
         )
         self.icon = FluentIcon.COMPLETED

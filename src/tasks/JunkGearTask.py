@@ -133,7 +133,9 @@ DETAIL_READ_RETRIES = 3
 # A junk verdict is read twice this far apart: a 穿戴中 tag or lock drawn late
 # on a slow PC would otherwise send the item to auto-dismantle.
 DETAIL_CONFIRM_SECONDS = 1.0
-LABEL = "爛装强化分解"
+# The task's own name (self.name) stays 爛装强化分解: it keys the saved
+# settings and the 一键日常 tick.  Texts players read say 烂装.
+LABEL = "烂装强化分解"
 # The weekly 制作装备 default: +5 dismantles the crafted N item.
 CRAFT_N_TARGET_LEVEL = 5
 # Every item detail popup shows this line; the plain bag grid never does.
@@ -392,7 +394,7 @@ class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRef
             "SR 会点开核对，只拆 3★/4★ 角色专用的；设定里开启 5★ 后，SR 不点开直接拆；"
             "上锁、穿戴中、已强化的一律保留，UR 不碰。"
             "背包筛选和排序会改回原样。"
-            "没有可分解的爛装时，做一件 N 装备强化后分解（每日任务）。"
+            "没有可分解的烂装时，做一件 N 装备强化后分解（每日任务）。"
         )
         self.icon = FluentIcon.DELETE
         self.default_config.update(
@@ -404,7 +406,7 @@ class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRef
         )
         self.config_description.update(
             {
-                "强化目标等级": "爛装强化到的等级，达到后游戏自动分解。",
+                "强化目标等级": "烂装强化到的等级，达到后游戏自动分解。",
                 "最多处理件数": (
                     "整次最多处理几件（黄色!新装备、R、SR 和 N 装备都算在内），1~10 件。"
                 ),
@@ -506,7 +508,7 @@ class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRef
                     self._clear_saved_sort()
                 else:
                     self.log_warning(
-                        f"爛装强化分解：未能把背包排序恢复为「{original_sort}」。", notify=True
+                        f"{LABEL}：未能把背包排序恢复为「{original_sort}」。", notify=True
                     )
         if not stopped:
             self._restore_bag_detail_view()
@@ -556,14 +558,14 @@ class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRef
             return False, "识别装备", False
         self._junk_left = ""
         if junk and colours_distorted:
-            self.log_info(f"爛装强化分解：画面颜色异常，识别出 {len(junk)} 件爛装，未分解。")
-            self._junk_left = f"认出 {len(junk)} 件爛装，画面颜色异常没拆"
+            self.log_info(f"{LABEL}：画面颜色异常，识别出 {len(junk)} 件烂装，未分解。")
+            self._junk_left = f"认出 {len(junk)} 件烂装，画面颜色异常没拆"
             return True, "", False
         if junk:
             done = self._enhance_and_dismantle(junk, frame)
             if done is None:
                 # Cancelled before enhancing: go on.
-                self._junk_left = f"认出 {len(junk)} 件爛装，一键强化没选成没拆"
+                self._junk_left = f"认出 {len(junk)} 件烂装，一键强化没选成没拆"
                 return True, "", False
             if not done:
                 return False, "强化分解", False
@@ -683,7 +685,7 @@ class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRef
         2026-10-11 「沒有解到 就去像週常那樣 做一件n裝 強化後分解」)."""
         self.info_set("当前阶段", "制作 N 装备分解")
         self.log_info(
-            f"{LABEL}：这次没有分解到爛装，做一件 N 装备强化后分解（每日任务「装备分解」）。"
+            f"{LABEL}：这次没有分解到烂装，做一件 N 装备强化后分解（每日任务「装备分解」）。"
         )
         if not self._open_craft_page():
             return False
@@ -1217,7 +1219,7 @@ class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRef
             if wanted not in OPENED_GRADES or five_star_sr:
                 # R is junk off the grid (Leo 2026-10-11 「r不點開」); SR too
                 # with 5★ let go (Leo 2026-10-15 「我的意思就是你直接拆sr」).
-                report.append(f"{where}:爛装[格子{wanted}]")
+                report.append(f"{where}:烂装[格子{wanted}]")
                 junk.append((row, column))
                 continue
             # A stale popup (swallowed close) would make the next click hit
@@ -1263,7 +1265,7 @@ class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRef
                         if again is not None
                         else (False, "第二次没读到详情")
                     )
-            report.append(f"{label}:{'爛装' if verdict else '保留'}[{reason}]")
+            report.append(f"{label}:{'烂装' if verdict else '保留'}[{reason}]")
             if verdict:
                 junk.append((row, column))
             else:
@@ -1273,7 +1275,7 @@ class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRef
                 return None
         summary = "；".join(report)
         self.info_set(f"{grade or '不筛选'} 识别", summary)
-        self.log_info(f"爛装强化分解（{grade or '不筛选'}）：{summary}")
+        self.log_info(f"{LABEL}（{grade or '不筛选'}）：{summary}")
         return junk
 
     def _close_detail(self) -> bool:
@@ -1539,7 +1541,7 @@ class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRef
                 match = re.search(r"已分解共(\d+)个装备", text)
                 if match and int(match.group(1)) != planned:
                     self.log_warning(
-                        f"爛装强化分解：结果显示分解 {match.group(1)} 件，计划 {planned} 件。"
+                        f"{LABEL}：结果显示分解 {match.group(1)} 件，计划 {planned} 件。"
                     )
                 self._click_reference(*NEUTRAL_TAP_POINT, after_sleep=1.2)
                 progress_at = monotonic()
@@ -1549,7 +1551,7 @@ class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRef
                 frame, EQUIPMENT_TITLE_KEYWORDS, "背包"
             ):
                 if seen_result:
-                    self.log_info(f"爛装强化分解：已强化并分解 {planned} 件。")
+                    self.log_info(f"{LABEL}：已强化并分解 {planned} 件。")
                 else:
                     self.log_info(f"{LABEL}：没读到强化结果，点一下空白处后已回到背包。")
                 return True
@@ -1562,5 +1564,5 @@ class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRef
                 progress_at = monotonic()
                 continue
             self.sleep(0.8)
-        self.log_info("爛装强化分解：未确认强化分解结果。")
+        self.log_info(f"{LABEL}：未确认强化分解结果。")
         return False

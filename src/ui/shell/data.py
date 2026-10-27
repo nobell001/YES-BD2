@@ -31,7 +31,7 @@ CHILD_META = {
     "领取常客圣石": ("常客圣石", "gem", "claim"),
     "快速狩猎": ("快速狩猎", "crosshair", "fight"),
     "免费抽抽乐": ("抽抽乐", "gift", "claim"),
-    "爛装强化分解": ("爛装分解", "recycle", "grow"),
+    "爛装强化分解": ("烂装分解", "recycle", "grow"),
     "每日精炼一次": ("每日精炼", "sparkles", "grow"),
     "自动PVP": ("镜中之战", "swords", "fight"),
     "广场女神像": ("广场女神像", "landmark", "grow"),
