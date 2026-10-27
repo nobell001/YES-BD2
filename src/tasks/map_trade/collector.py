@@ -327,6 +327,21 @@ class Collector(SkillExecutionMixin):
                     # its hidden items may not have been shown.
                     before_search.append(target.key)
                 if isinstance(searched, SkillExecutionResult):
+                    if not searched.depleted:
+                        # A monster touched the character while 探查 was
+                        # pressed (YES-BD2 #61): run away and do the map
+                        # again, as after the other presses.
+                        left = self._leave_battle(card, role)
+                        if left == "left" and battled_here.get(target.key, 0) < BATTLE_REDOS_MAX:
+                            battled_here[target.key] = battled_here.get(target.key, 0) + 1
+                            continue
+                        if left not in ("left", "none"):
+                            stopped = self._skip_card(
+                                card, f"{role.label}探查时撞到怪进了战斗，{left}", completed_this_run
+                            )
+                            if stopped is not None:
+                                return stopped
+                            break
                     stopped = self._skip_after_skill_failure(
                         card, f"{role.label}探查", searched, completed_this_run
                     )

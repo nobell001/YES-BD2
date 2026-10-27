@@ -164,12 +164,14 @@ from src.tasks.map_trade.vision import normalize_text
 from src.utils.calibration import FHD_1080
 from src.utils.field_followers import dismiss_once_per_run
 from src.utils.press_confirm import press_and_confirm
-from src.utils.wait_limits import STUCK_SECONDS, StillTimer
+from src.utils.wait_limits import STUCK_SECONDS, MotionWatch, StillTimer
 
 
 # Field status text after a map click: '自动移动中：魔法阵' (bottom centre) and
 # '已完成自动移动' (top centre); 1920x1080 fractions.
 AUTO_MOVE_TEXT_RELATIVE_ROI = (560 / 1920, 80 / 1080, 1360 / 1920, 980 / 1080)
+# The game's own word that a walk ended.
+WALK_ARRIVED_TEXT = "完成自动移动"
 # The game's 自动移动 dialog after a map destination is picked (player 1080p,
 # YES-BD2 #24): 「是否自动移动前往所选目的地？」 with 取消 / 确认; it does not
 # show once the player ticked 不再显示.
@@ -1392,27 +1394,50 @@ class SandboxNavigationMixin:
 
     def _walk_state(self, frame: np.ndarray) -> str:
         """"caught" when a field patrol stopped the walk, "moving" while
-        "自动移动中" shows, else "idle"."""
-        walking, caught = self._walk_flags(frame)
-        if caught:
+        "自动移动中" shows, "arrived" once the game says 「已完成自动移动」,
+        else "idle"."""
+        text = self._walk_text(frame)
+        if self._walk_caught(text):
             return "caught"
-        return "moving" if walking else "idle"
+        if "移动中" in text:
+            return "moving"
+        return "arrived" if WALK_ARRIVED_TEXT in text else "idle"
 
     def _auto_moving(self, frame: np.ndarray) -> bool:
         """"自动移动中" shows: the game is walking the character somewhere."""
         return self._walk_flags(frame)[0]
 
     def _wait_auto_move_finished(self, timeout: float) -> str:
-        """Wait while "自动移动中" shows: "done" once it is gone, "caught" as
-        soon as a patrol stops the walk, "timeout" when it never ends."""
+        """Wait while "自动移动中" shows: "done" once it is gone, "battle" when
+        a monster met on the way was run from (the walk is to be made again),
+        "timeout" when it never ends.
+
+        Leo 2026-10-27 「被巡邏抓到就繼續 他會走到目的地」「有些被巡邏抓到只是被傳走
+        但他會繼續走 有些會進入戰鬥」: a catch is waited out like
+        _wait_resuming_walk, never stopped."""
         end_at = monotonic() + max(0.0, timeout)
         idle = 0
         still = StillTimer()
+        # An unread banner over a panning field is still the walk (YES-BD2 #62);
+        # one change holds the wait, it presses nothing.
+        motion = MotionWatch(looks=1)
         while monotonic() <= end_at:
             frame = self.vision.capture()
             state = self._walk_state(frame)
             if state == "caught":
-                return state
+                self._status("导航状态", "被巡逻发现，等游戏自己继续走")
+                return self._wait_resuming_walk(RESUMING_WALK_TIMEOUT)
+            if state == "arrived":
+                # The followers and the camera still settle after it (live
+                # 4K 2026-10-27: waited 21 s more on a moving picture).
+                return "done"
+            if state == "idle" and not self._black_frame(frame):
+                # A battle's own animation would read as a moving field.
+                met = self._battle_on_the_way(frame)
+                if met is not None:
+                    return met
+            if state == "idle" and motion.moving(frame):
+                state = "moving"
             if state == "moving" and still.still_for(frame, monotonic()) >= STUCK_SECONDS:
                 # The banner is up but nothing moves: the walk stopped.
                 self._status(
@@ -1429,22 +1454,45 @@ class SandboxNavigationMixin:
             self.task.sleep(0.5)
         return "timeout"
 
-    def _wait_resuming_walk(self, timeout: float) -> None:
+    def _battle_on_the_way(self, frame: np.ndarray) -> str | None:
+        """A field battle met while walking (off the field): "battle" once it
+        was left, "timeout" when it could not be, None when there is none."""
+        if self.classify(frame) == ScreenState.SANDBOX:
+            return None
+        if self._leave_battle_result(frame):
+            return "battle"
+        leave = getattr(self.task, "leave_field_battle", None)
+        if not callable(leave):
+            return None
+        left = leave("跑图路上")
+        if left == "left":
+            return "battle"
+        if left == "none":
+            return None
+        self._status("导航状态", f"路上撞到怪进了战斗，{left}")
+        return "timeout"
+
+    def _wait_resuming_walk(self, timeout: float) -> str:
         """Wait until a walk has ended, patrol catches included: after a catch
         the game reloads the map and walks on by itself (Leo 2026-10-03:
         "放著總會過的"), so nothing is pressed.  Ends once the character
-        stands still with no banner, loading screen or patrol words up."""
+        stands still with no banner, loading screen or patrol words up:
+        "done", or "battle" when a battle was run from on the way and no walk
+        went on after it (the walk is to be made again), "timeout" else."""
 
         end_at = monotonic() + max(0.0, timeout)
         idle = 0
+        fled = False
         still = StillTimer()
+        motion = MotionWatch(looks=1)
         while monotonic() <= end_at:
             frame = self.vision.capture()
+            panning = motion.moving(frame)
             if still.still_for(frame, monotonic()) >= STUCK_SECONDS:
                 self._status(
                     "导航状态", f"画面 {STUCK_SECONDS:.0f} 秒没动，不再等自动移动，继续确认地图"
                 )
-                return
+                return "battle" if fled else "timeout"
             if self._black_frame(frame):
                 idle = 0
                 self._status("导航状态", "加载中，等待自动移动继续")
@@ -1452,25 +1500,33 @@ class SandboxNavigationMixin:
                 walking, caught = self._walk_flags(frame)
                 if walking or caught:
                     idle = 0
+                    # A walk going on after the battle needs no new walk.
+                    fled = fled and not walking
                     if caught:
                         self._status("导航状态", "被巡逻发现，等游戏自己继续走")
+                elif panning:
+                    # The banner unread while the field pans (YES-BD2 #62).
+                    idle = 0
                 elif self.classify(frame) == ScreenState.SANDBOX:
                     idle += 1
                     if idle >= AUTO_MOVE_IDLE_READS:
-                        return
+                        return "battle" if fled else "done"
                 else:
                     # A loading screen with art (not black), a dialog, or
                     # a field battle met on the way (Memory Edge, live 4K
                     # 2026-10-09: VICTORY, 离开, then the walk goes on).
                     idle = 0
-                    if not self._leave_battle_result(frame):
+                    if self._leave_battle_result(frame):
+                        fled = True
+                    else:
                         # A battle still being fought: run away (Leo
                         # 2026-10-22, BaseBD2Task.leave_field_battle).
                         leave = getattr(self.task, "leave_field_battle", None)
-                        if callable(leave):
-                            leave("跑图路上")
+                        if callable(leave) and leave("跑图路上") == "left":
+                            fled = True
             self.task.sleep(0.5)
         self._status("导航状态", f"自动移动{timeout:.0f}秒仍未结束，继续确认地图")
+        return "timeout"
 
     def _leave_battle_result(self, frame: np.ndarray) -> bool:
         """Press 离开 when a field battle's result shows; True when pressed."""
@@ -1511,29 +1567,6 @@ class SandboxNavigationMixin:
             )
             stopped = True
         return stopped
-
-    def _stop_caught_walk(self) -> None:
-        """After a patrol catch the map reloads at its entrance and the game
-        walks on toward the same spot, to be caught again (ch14 live, twice
-        within 3 s): stop that walk the moment its banner shows, then wait
-        until the character stands in the field with no patrol words up."""
-
-        end_at = monotonic() + self._loading_timeout()
-        calm = 0
-        while monotonic() <= end_at:
-            frame = self.vision.capture()
-            walking, caught = self._walk_flags(frame)
-            if walking:
-                self._cancel_walk()
-                calm = 0
-                continue
-            if not caught and self.classify(frame) == ScreenState.SANDBOX:
-                calm += 1
-                if calm >= AUTO_MOVE_IDLE_READS:
-                    return
-            else:
-                calm = 0
-            self.task.sleep(0.5)
 
     def _click_sandbox_navigation_menu_teleport(self, frame: np.ndarray) -> bool:
         """Select a stacked navigation-map teleport submenu by OCR center."""
@@ -1644,8 +1677,10 @@ class SandboxNavigationMixin:
             return label, center
         return None
 
-    def _walk_to_sandbox_teleport_interaction(self) -> NavigationResult:
-        """Use the sandbox navigation map to walk back to a portal interaction prompt."""
+    def _walk_to_sandbox_teleport_interaction(self, redo: bool = True) -> NavigationResult:
+        """Use the sandbox navigation map to walk back to a portal interaction
+        prompt; a battle met on the way is run from and the walk made once
+        more (``redo``)."""
 
         self._status("导航状态", "改用导航/徒步前往传送阵")
         # The minimap itself opens the area map (as M does).  The icon
@@ -1697,18 +1732,15 @@ class SandboxNavigationMixin:
         )
         menu_end_at = monotonic() + SANDBOX_NAVIGATION_CONFIRM_TIMEOUT
         destination_confirmed = False
+        caught_early = False
         while monotonic() <= menu_end_at:
             menu_frame = self.vision.capture()
             walk_text = self._walk_text(menu_frame)
             if self._walk_caught(walk_text):
                 # Caught before the banner was ever read (live 2K: "被发现了！！"
-                # 3 s after the click).
-                self._stop_caught_walk()
-                return NavigationResult(
-                    False,
-                    ScreenState.SANDBOX,
-                    "走向传送阵时被巡逻发现并驱逐，已停止自动移动",
-                )
+                # 3 s after the click): the walk itself was under way.
+                caught_early = destination_confirmed = True
+                break
             if self._auto_move_question_shown(walk_text):
                 # 「是否自动移动前往所选目的地？」 (YES-BD2 #24): its title
                 # 自动移动 is not the walk banner; its 确认 starts the walk.
@@ -1751,15 +1783,19 @@ class SandboxNavigationMixin:
         # The hand prompt shows while the walk is still finishing; pressing
         # it then keeps the walk alive across the teleport and drags the
         # character back through the floors (live 2K 2026-09-29).
-        if self._wait_auto_move_finished(SANDBOX_NAVIGATION_WALK_TIMEOUT) == "caught":
-            # From ch14 左侧回廊's 中央回廊 side every try is caught (Leo:
-            # 萬一被抓要應對，避免卡死): stop the walk and let the caller go
-            # by 狩猎场 or 艾琳 instead of waiting for a prompt that never shows.
-            self._stop_caught_walk()
+        walked = (
+            self._wait_resuming_walk(RESUMING_WALK_TIMEOUT)
+            if caught_early
+            else self._wait_auto_move_finished(SANDBOX_NAVIGATION_WALK_TIMEOUT)
+        )
+        if walked == "battle":
+            if redo:
+                self._status("导航状态", "走向传送阵时撞到怪，逃跑后重新走一次")
+                return self._walk_to_sandbox_teleport_interaction(redo=False)
             return NavigationResult(
                 False,
                 ScreenState.SANDBOX,
-                "走向传送阵时被巡逻发现并驱逐，已停止自动移动",
+                "走向传送阵时两次撞到怪进了战斗，都已逃跑，没走到传送阵",
             )
         if not self._click_sandbox_teleport_interaction(timeout=self._loading_timeout()):
             # A walk still going (resumed after an unseen catch) would fight

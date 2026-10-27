@@ -1106,6 +1106,8 @@ class NavigatorTest(unittest.TestCase):
         navigator._open_field_map = lambda: "安全 测试镇"
         navigator._click_sandbox_navigation_map = lambda: self.fail("minimap opened the map")
         navigator._sandbox_navigation_page_has_keyword = lambda _frame: True
+        # The walk ends on the field (no battle on the way).
+        navigator.classify = lambda _frame: ScreenState.SANDBOX
         menu_calls = []
 
         def click_menu(_frame):
@@ -2097,34 +2099,73 @@ class FieldWaitTest(unittest.TestCase):
 
 
 class PatrolCatchTest(unittest.TestCase):
-    """Leo 2026-09-30: "寫程式時也要寫萬一被抓時要如何應對避免卡死" (ch14's 光明监视者)."""
+    """Leo 2026-09-30: "寫程式時也要寫萬一被抓時要如何應對避免卡死" (ch14's 光明监视者).
+
+    Leo 2026-10-27 「被巡邏抓到就繼續 他會走到目的地 但麻煩的是進入戰鬥」「有些被巡邏
+    抓到只是被傳走 但他會繼續走 有些會進入戰鬥」: a catch is waited out (it used to
+    stop the walk and give up), a battle on the way is run from and the walk
+    made again."""
 
     @staticmethod
-    def _navigator(banner_reads):
+    def _navigator(banner_reads, states=None, leave=None):
         reads = iter(banner_reads)
         clicks = []
         vision = SimpleNamespace(
             capture=lambda: np.zeros((1080, 1920, 3), np.uint8),
             ocr_text=lambda _frame, _name, relative_roi=None: next(reads),
+            ocr_boxes=lambda *_a, **_k: [],
             simplify=lambda text: text,
             click_client=lambda point, shape, after_sleep=0: clicks.append(point),
         )
         task = SimpleNamespace(sleep=lambda *_args: None, config={"加载页面等待秒数": 15.0})
+        if leave is not None:
+            task.leave_field_battle = leave
         navigator = Navigator(task, vision)
         navigator._status = lambda *_args: None
+        screens = iter(states or ())
+        navigator.classify = lambda _frame: next(screens, ScreenState.SANDBOX)
         return navigator, clicks
 
-    def test_a_catch_ends_the_walk_wait_at_once(self):
-        navigator, _clicks = self._navigator(
-            ["自动移动中：魔法阵", "光明监视者 凡入侵者，皆当驱除。当聆光之声，循其指引。"]
+    def test_a_catch_is_waited_out_until_the_walk_ends(self):
+        navigator, clicks = self._navigator(
+            [
+                "自动移动中：魔法阵",
+                "光明监视者 凡入侵者，皆当驱除。当聆光之声，循其指引。",
+                # Live 2K: the toast is still up when the game walks on.
+                "被光明监视者发现，已遭驱逐。 自动移动中：魔法阵",
+                "自动移动中：魔法阵",
+                "",
+                "",
+            ]
         )
 
-        self.assertEqual("caught", navigator._wait_auto_move_finished(45.0))
+        self.assertEqual("done", navigator._wait_auto_move_finished(45.0))
+        self.assertEqual([], clicks)  # the walk is never stopped
 
     def test_a_walk_is_over_after_two_quiet_reads(self):
         navigator, _clicks = self._navigator(["自动移动中：魔法阵", "", ""])
 
         self.assertEqual("done", navigator._wait_auto_move_finished(45.0))
+
+    def test_a_battle_on_the_way_is_run_from(self):
+        fled = []
+        navigator, _clicks = self._navigator(
+            ["自动移动中：魔法阵", ""],
+            states=[ScreenState.UNKNOWN],
+            leave=lambda label: fled.append(label) or "left",
+        )
+
+        self.assertEqual("battle", navigator._wait_auto_move_finished(45.0))
+        self.assertEqual(["跑图路上"], fled)
+
+    def test_a_battle_after_a_catch_is_run_from_too(self):
+        navigator, _clicks = self._navigator(
+            ["自动移动中：魔法阵", "被发现了", "", "", "", ""],
+            states=[ScreenState.UNKNOWN, ScreenState.SANDBOX, ScreenState.SANDBOX],
+            leave=lambda _label: "left",
+        )
+
+        self.assertEqual("battle", navigator._wait_auto_move_finished(45.0))
 
     def test_cancel_presses_the_x_only_under_the_banner(self):
         navigator, clicks = self._navigator(["自动移动中：魔法阵", ""])
@@ -2135,26 +2176,6 @@ class PatrolCatchTest(unittest.TestCase):
         self.assertFalse(navigator._cancel_walk())
         self.assertEqual([], clicks)
 
-    def test_after_a_catch_the_resumed_walk_is_stopped_at_once(self):
-        navigator, clicks = self._navigator(
-            [
-                "光明监视者 凡入侵者，皆当驱除。",
-                "",  # the map reloading
-                # Live 2K: the toast is still up when the game walks on.
-                "被光明监视者发现，已遭驱逐。 自动移动中：魔法阵",
-                "被光明监视者发现，已遭驱逐。 自动移动中：魔法阵",
-                "已中止自动移动。",
-                "",
-                "",
-            ]
-        )
-        states = iter((ScreenState.LOADING, ScreenState.SANDBOX, ScreenState.SANDBOX))
-        navigator.classify = lambda _frame: next(states)
-
-        navigator._stop_caught_walk()
-
-        self.assertEqual([(960, 985)], clicks)
-
     def _circle_walk_navigator(self, walk_text):
         frame = np.zeros((1080, 1920, 3), np.uint8)
         teleport = MatchResult(0.96, (500, 300), (40, 40), pixel_score=0.90, zncc_score=0.88)
@@ -2162,35 +2183,51 @@ class PatrolCatchTest(unittest.TestCase):
         navigator = Navigator(SimpleNamespace(sleep=lambda *_a: None, config={}), vision)
         navigator._status = lambda *_args: None
         navigator._open_field_map = lambda: "战斗Ⅱ剑之神殿左侧回廊"
-        navigator._sandbox_navigation_page_has_keyword = lambda _frame: True
         navigator._sandbox_navigation_teleport = lambda _frame: teleport
         navigator._walk_text = lambda _frame: walk_text
-        stopped = []
-        navigator._stop_caught_walk = lambda: stopped.append(True)
-        navigator._click_sandbox_teleport_interaction = lambda **_k: self.fail(
-            "waited for a prompt that never shows"
+        navigator.walks = []
+        navigator._click_sandbox_teleport_interaction = lambda **_k: True
+        navigator._open_circle_page = lambda how: NavigationResult(
+            True, ScreenState.SANDBOX_MAP, how
         )
-        return navigator, stopped
+        # The area map is open while the teleport is looked for.
+        opened = iter([True] * 100)
+        navigator._sandbox_navigation_page_has_keyword = lambda _frame: next(opened)
+        navigator._close_map_left_open_by_walk = lambda: False
+        return navigator
 
-    def test_caught_on_the_way_to_a_circle_gives_up_at_once(self):
-        navigator, stopped = self._circle_walk_navigator("自动移动中魔法阵")
-        navigator._wait_auto_move_finished = lambda _timeout: "caught"
-
-        result = navigator._walk_to_sandbox_teleport_interaction()
-
-        self.assertFalse(result.success)
-        self.assertEqual([True], stopped)
-        self.assertIn("驱逐", result.message)
-
-    def test_caught_before_the_walk_banner_shows(self):
+    def test_caught_before_the_walk_banner_shows_waits_and_goes_on(self):
         # Live 2K: "被发现了！！" 3 s after the click, no "自动移动中" read yet.
-        navigator, stopped = self._circle_walk_navigator("被发现了")
+        navigator = self._circle_walk_navigator("被发现了")
+        navigator._wait_resuming_walk = lambda _timeout: navigator.walks.append("resume") or "done"
+        navigator._wait_auto_move_finished = lambda _timeout: self.fail("the catch is waited out")
+
+        result = navigator._walk_to_sandbox_teleport_interaction()
+
+        self.assertTrue(result.success, result.message)
+        self.assertEqual(["resume"], navigator.walks)
+
+    def test_a_battle_on_the_way_to_a_circle_walks_once_more(self):
+        navigator = self._circle_walk_navigator("自动移动中魔法阵")
+        results = iter(["battle", "done"])
+        navigator._wait_auto_move_finished = lambda _timeout: (
+            navigator.walks.append("walk") or next(results)
+        )
+
+        result = navigator._walk_to_sandbox_teleport_interaction()
+
+        self.assertTrue(result.success, result.message)
+        self.assertEqual(["walk", "walk"], navigator.walks)
+
+    def test_two_battles_on_the_way_give_up_with_the_reason(self):
+        navigator = self._circle_walk_navigator("自动移动中魔法阵")
+        navigator._wait_auto_move_finished = lambda _timeout: "battle"
+        navigator._click_sandbox_teleport_interaction = lambda **_k: self.fail("not at the circle")
 
         result = navigator._walk_to_sandbox_teleport_interaction()
 
         self.assertFalse(result.success)
-        self.assertEqual([True], stopped)
-        self.assertIn("驱逐", result.message)
+        self.assertIn("撞到怪", result.message)
 
 
 class AreaMapTeleportIconTest(unittest.TestCase):

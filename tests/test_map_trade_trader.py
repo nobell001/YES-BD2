@@ -141,6 +141,27 @@ from src.utils.wait_limits import LOADING_MAX_SECONDS, STUCK_SECONDS
 ROOT = Path(__file__).resolve().parents[1]
 
 
+
+# Sells here would otherwise leave configs/map_trade_sold.json behind, and a
+# later test's shop search would skip what an earlier test "sold".
+_SOLD_FOLDER = None
+_SOLD_PATCH = None
+
+
+def setUpModule():
+    global _SOLD_FOLDER, _SOLD_PATCH
+    _SOLD_FOLDER = TemporaryDirectory()
+    _SOLD_PATCH = patch(
+        "src.tasks.map_trade.sold_today.SOLD_PATH", Path(_SOLD_FOLDER.name) / "sold.json"
+    )
+    _SOLD_PATCH.start()
+
+
+def tearDownModule():
+    _SOLD_PATCH.stop()
+    _SOLD_FOLDER.cleanup()
+
+
 class SellFlowTest(unittest.TestCase):
     def setUp(self):
         # The pre-click stillness check has its own tests

@@ -30,6 +30,7 @@ from src.tasks.map_trade.sale_days import (
     bundled_sale_days,
     describe_entry,
 )
+from src.tasks.map_trade.sold_today import SoldToday
 from src.tasks.map_trade.trader_constants import (
     CALENDAR_DIR,
     OWNED_NAME_FUZZY_MIN_CHARS,
@@ -63,8 +64,8 @@ from src.tasks.map_trade.trader_constants import (
     SALE_LIST_SCROLL_WAIT_TIMEOUT,
     SALE_LIST_SETTLE_SECONDS,
     SALE_LIST_TOP_ATTEMPTS,
-    SALE_MARKER_MIN_MARGIN,
     SALE_MARKER_CROP_OCR_SCALES,
+    SALE_MARKER_MIN_MARGIN,
     SALE_MARKER_OCR_DIGITS,
     SALE_MARKER_RELAXED_PIXEL_SCORE,
     SALE_MARKER_SEARCH_WIDTH,
@@ -241,7 +242,9 @@ class SellFlowMixin:
 
         owned = self.owned_items_at_max_rate()
         if owned is None:
-            return entries  # unreadable list: search the shops as before
+            # Unreadable list: search the shops as before, minus what this
+            # price day already sold (YES-BD2 #60).
+            return self._drop_sold_today(entries)
         owned_names = {self._normal(name) for name in owned}
         goods = self._known_goods(entries)
         exact_only = confusable_goods(goods)
@@ -260,6 +263,28 @@ class SellFlowMixin:
         if extra:
             self.task.log_info(f"卖：价目表另有120%但不在今日清单的：{'、'.join(extra)}（不卖）。")
         return keep
+
+    def _sale_day_key(self) -> str:
+        day = getattr(self, "_sale_calendar_date", None)
+        return day.isoformat() if day is not None else ""
+
+    def _sold_record(self) -> SoldToday:
+        record = getattr(self, "_sold_today", None)
+        if record is None:
+            record = self._sold_today = SoldToday()
+        return record
+
+    def _drop_sold_today(self, entries: list[CalendarEntry]) -> list[CalendarEntry]:
+        day = self._sale_day_key()
+        sold = self._sold_record().items(day) if day else set()
+        done = [entry.item for entry in entries if entry.item in sold]
+        if not done:
+            return entries
+        self._status("今天已卖过", "、".join(done))
+        self.task.log_info(
+            f"卖：价目表没读到，{'、'.join(done)}今天已经卖过，不再去它们的商店。"
+        )
+        return [entry for entry in entries if entry.item not in sold]
 
     def _known_goods(self, entries: list[CalendarEntry]) -> dict[str, tuple[str, ...]]:
         """Every good's names (bundled 价表, aliases, today's plan), so a
@@ -458,7 +483,10 @@ class SellFlowMixin:
                     selected_shop = ""
                     continue
                 selected_shop = entry.shop
-            if not self._sell_entry_with_retry(entry):
+            if self._sell_entry_with_retry(entry):
+                if self._sale_day_key():
+                    self._sold_record().add(self._sale_day_key(), entry.item)
+            else:
                 if self._last_sale_unavailable:
                     detail = f"{entry.item}（{self._last_sale_reason}）"
                     unavailable.append(detail)

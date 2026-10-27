@@ -64,7 +64,15 @@ from src.utils.image_utils import (
     stabilize_template_match,
 )
 from src.utils.ocr_utils import keyword_read, normalize_ocr_text
-from src.utils.wait_limits import STUCK_SECONDS, StillTimer, capped, is_loading_dark, load_wait, scene_at_press
+from src.utils.wait_limits import (
+    STUCK_SECONDS,
+    MotionWatch,
+    StillTimer,
+    capped,
+    is_loading_dark,
+    load_wait,
+    scene_at_press,
+)
 
 REFERENCE_WIDTH = FHD_1080.width
 REFERENCE_HEIGHT = FHD_1080.height
@@ -717,12 +725,19 @@ class SquareGoddessTask(BaseBD2Task):
         self.tap_key(GODDESS_ROW_KEY, after_sleep=2.0)
 
     def _walk_or_prompt_within(self, seconds: float) -> bool:
+        """True once the prayer prompt, the walk banner or a field that keeps
+        panning shows (YES-BD2 #62: the banner went unread while walking)."""
         end_at = monotonic() + seconds
+        motion = MotionWatch()
         while True:
+            frame = self.capture_frame()
             point, text = self._ocr_pattern_click_point(
-                self.capture_frame(), GODDESS_PRAY_PATTERNS, name="女神像许愿", roi=None
+                frame, GODDESS_PRAY_PATTERNS, name="女神像许愿", roi=None
             )
             if point is not None or self._walk_banner_shown(text):
+                return True
+            if motion.moving(frame):
+                self.log_info("广场女神像：没读到「自动移动中」，但画面一直在动，当作已经在走。")
                 return True
             if monotonic() >= end_at:
                 return False
@@ -735,19 +750,11 @@ class SquareGoddessTask(BaseBD2Task):
         x, y = GODDESS_ROW_USUAL_POINT
         self.log_info("广场女神像：每日导航读不到，照它平常的位置点一下。")
         self._click_client(round(x * width), round(y * height), width, height, after_sleep=1.0)
-        end_at = monotonic() + GODDESS_ROW_PRESS_CONFIRM_SECONDS
-        while True:
-            frame = self.capture_frame()
-            point, text = self._ocr_pattern_click_point(
-                frame, GODDESS_PRAY_PATTERNS, name="女神像许愿", roi=None
-            )
-            if point is not None or self._walk_banner_shown(text):
-                self.log_info("广场女神像：点了以后开始走向女神像了。")
-                return True
-            if monotonic() >= end_at:
-                self.log_info("广场女神像：照平常位置点了也没开始走。")
-                return False
-            self.sleep(0.5)
+        if self._walk_or_prompt_within(GODDESS_ROW_PRESS_CONFIRM_SECONDS):
+            self.log_info("广场女神像：点了以后开始走向女神像了。")
+            return True
+        self.log_info("广场女神像：照平常位置点了也没开始走。")
+        return False
 
     def _click_square_notice_if_present(self) -> bool:
         # The square "!" is the field F button: it shows while the characters
@@ -794,6 +801,9 @@ class SquareGoddessTask(BaseBD2Task):
         )
         walking_since = None
         walk_still = StillTimer()
+        # The banner can go unread while the field pans (YES-BD2 #62): a
+        # moving field is the walk too, and nothing is pressed during it.
+        walk_motion = MotionWatch()
         talked = False
         # Nothing to read, no walk and no press: the screen is not getting
         # anywhere (the overall limit only holds a walk that keeps moving).
@@ -810,7 +820,10 @@ class SquareGoddessTask(BaseBD2Task):
             )
             self.info_set("女神像许愿 OCR", text or "-")
 
-            if point is None and self._walk_banner_shown(text):
+            banner = self._walk_banner_shown(text)
+            # After a wish press the wish itself may move the picture.
+            panning = walk_motion.moving(frame) and not (click_count or talked)
+            if point is None and (banner or panning):
                 now = monotonic()
                 idle_since = now
                 walking_since = now if walking_since is None else walking_since

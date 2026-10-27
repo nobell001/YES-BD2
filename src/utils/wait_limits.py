@@ -107,6 +107,43 @@ class StillTimer:
         return now - self.since
 
 
+# A walk pans the field by far more than the stuck check's threshold: live
+# 4K clone 2026-10-27, walking 39-81 a look, standing still at most 2.1, the
+# followers and camera settling after arrival 3.1 then 2.3.  Above that
+# settling, so the wait ends when the walk does.
+WALK_PAN_MIN_DIFF = 8.0
+
+
+class MotionWatch:
+    """Whether the scene keeps moving look after look: a walk pans the whole
+    field even when its 「自动移动中」 banner goes unread (YES-BD2 #62, 4K at
+    150% with a 1080p window: the walk to the goddess was under way, the
+    banner never read, so the tool called it 没开始走 and pressed elsewhere)."""
+
+    def __init__(self, looks: int = 2, min_diff: float = WALK_PAN_MIN_DIFF):
+        self.looks = max(1, int(looks))
+        self.min_diff = min_diff
+        self.picture = None
+        self.moves = 0
+
+    def reset(self) -> None:
+        self.picture = None
+        self.moves = 0
+
+    def moving(self, frame) -> bool:
+        """True once the last ``looks`` looks each differed from the one before."""
+        picture = _thumb(frame)
+        if picture is None:
+            self.reset()
+            return False
+        if scene_moved(self.picture, picture, self.min_diff):
+            self.moves += 1
+        else:
+            self.moves = 0
+        self.picture = picture
+        return self.moves >= self.looks
+
+
 def is_loading_dark(frame) -> bool:
     """The black loading screen; an all-zero frame is a blank test frame."""
     try:
