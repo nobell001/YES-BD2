@@ -1508,3 +1508,34 @@ class MinutesAndSecondsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PreemptTest(unittest.TestCase):
+    """塔洛斯 stage 7 (2K PC 2026-10-28): lost with 「先发制人」 off, won with it on."""
+
+    def test_saved_switches_are_turned_on(self):
+        from types import SimpleNamespace
+
+        from src.tasks.fiend_hunt.fight import _set_preempt
+
+        cells = {"安娜塔西亚": (1, 1), "格兰希特": (1, 3)}
+        saved = TurnState(1, 1, ("安娜塔西亚", "格兰希特"), cells, preempt={"格兰希特": "技能1"})
+        live = TurnState(1, 1, ("安娜塔西亚", "格兰希特"), cells)
+        calls, lines = [], []
+        screen = SimpleNamespace(
+            set_preempt=lambda slot, skill: calls.append((slot, skill)) or True
+        )
+        _set_preempt(screen, live, saved, lines.append)
+        self.assertEqual([(1, "技能1")], calls)
+        self.assertIn("先发制人", lines[0])
+
+    def test_a_switch_that_stays_off_stops(self):
+        from types import SimpleNamespace
+
+        from src.tasks.fiend_hunt.fight import _set_preempt
+
+        cells = {"格兰希特": (1, 3)}
+        saved = TurnState(1, 1, ("格兰希特",), cells, preempt={"格兰希特": "技能1"})
+        screen = SimpleNamespace(set_preempt=lambda slot, skill: False)
+        with self.assertRaises(TurnMismatch):
+            _set_preempt(screen, TurnState(1, 1, ("格兰希特",), cells), saved, print)

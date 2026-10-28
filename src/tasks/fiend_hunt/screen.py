@@ -70,6 +70,13 @@ PANNED_FOLDER = "拖空截图"  # under the save's folder
 PANNED_KEEP = 20  # newest frames kept there (10 drags), so the folder stays small
 AUTO_SKILL_GAP = 0.1  # s between the two captures that see the ⟳ spin
 AUTO_SKILL_POLLS = 8
+# The planning screen fades in after a stage loads: its BATTLE button is there
+# while the scenery and the top-right icons are still dark, and a tap then
+# does nothing (4K PC 2026-10-28, 塔洛斯 stage 7 with auto skill on: read at
+# once, tapped, never turned off; the same tap 8 s later turned it off in
+# 0.7 s).  The state counts once two reads AUTO_SKILL_SETTLE_GAP apart agree.
+AUTO_SKILL_SETTLE_READS, AUTO_SKILL_SETTLE_GAP = 12, 0.4
+AUTO_SKILL_TAPS = 2  # a tap that didn't take is made once more, after a steady read
 BOSS_HP_READS, BOSS_HP_GAP = 6, 0.5  # end-screen HP: two equal reads needed
 # While reading the grid the lit card is only taken if the column is
 # already steady on these captures; otherwise that unit's card is left out
@@ -101,6 +108,18 @@ TURN_WAIT_SECONDS = 240.0
 STILL_SECONDS = STUCK_SECONDS
 PLANNING_STEADY_SECONDS = 1.0
 POLL = 0.3
+# 塔洛斯战术教材 (grid_scales): the grid at 100% zoom is drawn 1.31-1.33
+# times layout's size (2K PC 2026-10-28).  Leo 「格子對就不動 … 用戶格子導致
+# 有問題就用滾輪調整」: a grid of another size is zoomed back, out to the far
+# end (78-80%) and in five notches (about 101%), and checked on the 「N%」 bar.
+# Below about 95% the bracket search can slip a column (91%: 1.10 for 1.20).
+TALOS_GRID_SCALES = (1.25, 1.40)
+ZOOM_OUT_NOTCHES = 8
+ZOOM_IN_NOTCHES = 5
+ZOOM_OK = (95, 106)
+WHEEL_POINT = (960 / 1920, 860 / 1080)  # the floor between the sides, above the SP bar
+GRID_READS = 3
+END_WORD_EVERY = 2.0  # seconds between reads of the end word as text (a lost fight)
 # A tombstone makes its cell look busy; bare floor stays below this.
 TOMBSTONE_BUSY_MIN = 40.0
 # A cell a unit stands on scored 36 or more on the 36 saved top-down turns
@@ -330,8 +349,13 @@ class GameFightScreen:
         log: Callable[[str], None] = lambda message: None,
         load_screenshot: Callable[[Path], np.ndarray | None] = load_frame,
         read_cards: bool | None = None,
+        grid_scales: tuple[float, float] | None = None,
+        wheel: Callable[[int], None] | None = None,
     ) -> None:
         self.task = task
+        # The grid's usual size range (塔洛斯: TALOS_GRID_SCALES); None: 魔兽, layout's own.
+        self.grid_scales = grid_scales
+        self.wheel = wheel or self._wheel
         self.known = sorted(set(known_names))
         plain: dict[str, list[str]] = {}
         for name in self.known:
@@ -376,6 +400,9 @@ class GameFightScreen:
         # The grid as drawn when it isn't where layout has it (zoomed with the
         # mouse wheel or moved, 4K PC 2026-10-08): cells are pressed there.
         self._grid: vision.Grid | None = None
+        # How the last fight ended: "battle_end" (魔兽追踪者), "victory" or
+        # "lost" (塔洛斯战术教材); None while it goes on.
+        self.end_word: str | None = None
 
     # --- FightScreen ------------------------------------------------------------------
 
@@ -385,12 +412,20 @@ class GameFightScreen:
             return None
         return vision.read_turn(frame, self.ocr)
 
+    def team_of(self, frame: np.ndarray) -> int | None:
+        """TEAMn top-left; 1 in a fight without teams (塔洛斯战术教材: no TEAMn,
+        the button bottom-left reads 「更换」); None when unsure."""
+        team = vision.read_team(frame, self.ocr)
+        if team is None and vision.single_team(frame, self.ocr):
+            return 1
+        return team
+
     def read_state(self, turn: int) -> TurnState:
         frame = self._ready_frame()
         live_turn = vision.read_turn(frame, self.ocr)
         if live_turn is None:
             raise ScreenReadError("读不到回合数")
-        team = vision.read_team(frame, self.ocr)
+        team = self.team_of(frame)
         if team is None:
             raise ScreenReadError("读不到 TEAM1/TEAM2/TEAM3")
         count = vision.slot_count(frame)
@@ -445,7 +480,7 @@ class GameFightScreen:
             frame = self._ready_frame()
         except ScreenReadError:
             return None
-        team = vision.read_team(frame, self.ocr)
+        team = self.team_of(frame)
         count = vision.slot_count(frame)
         if team is None or count < 1:
             return None
@@ -533,7 +568,7 @@ class GameFightScreen:
         """Change to ``team``, one team at a time (更换队伍 is one-way; a fight
         may have a third team, Leo 2026-10-01).  False if a step doesn't move on."""
         frame = self._ready_frame()
-        current = vision.read_team(frame, self.ocr)
+        current = self.team_of(frame)
         for _ in range(len(vision.TEAMS)):
             if current == team:
                 return True
@@ -615,12 +650,18 @@ class GameFightScreen:
         return column is not None, self.capture() if column is None else column[0]
 
     def saved_attack(self, turn: int, slot: int) -> bool | None:
-        """Whether turn ``turn``'s screenshot has list slot ``slot`` on attack (no icon)."""
+        """Whether turn ``turn``'s screenshot has list slot ``slot`` on attack or
+        击退 (no skill icon, no SP)."""
         saved = self._saved_frame(turn)
         if saved is None:
             return None
         icon = vision.has_skill_icon(saved, slot)
         return None if icon is None else not icon
+
+    def saved_action(self, turn: int, slot: int) -> str | None:
+        """攻击 / 击退 / 技能 as turn ``turn``'s screenshot shows list slot ``slot``."""
+        saved = self._saved_frame(turn)
+        return None if saved is None else vision.list_action(saved, slot)
 
     def pick_like(self, turn: int, slot: int) -> str | None:
         """fix_like without a burst, leaving nobody selected."""
@@ -630,22 +671,22 @@ class GameFightScreen:
 
     def fix_like(self, turn: int, slot: int, burst: int | None = None) -> str | None:
         """Light list slot ``slot``'s card that turn ``turn``'s screenshot shows, in
-        one go: attack when the entry has no skill icon, else the skill card with
-        the same icon; on a skill, also step its 爆发 to ``burst`` while it is
+        one go: attack when the entry has no icon, 击退 when it shows the arrow,
+        else the skill card with the same icon; on a skill, also step its 爆发 to ``burst`` while it is
         selected.  The unit is left selected, so the next unit is selected
         straight from it (no ⇅ tap and wait between units); clear_selection
         when done.  The card's label, or None when that can't be told."""
         saved = self._saved_frame(turn)
-        icon = None if saved is None else vision.has_skill_icon(saved, slot)
-        if icon is None:
+        action = None if saved is None else vision.list_action(saved, slot)
+        if action is None:
             return None
         self.card_labels.pop(slot, None)
         column = self._select_slot(slot, chain=True)
         if column is None:
             return None
         frame, count, lit = column
-        row = layout.ATTACK_ROW
-        if icon:
+        row = vision.card_row(action)
+        if action == vision.SKILL_LABEL:
             row = vision.card_like(frame, count, saved, slot, lenient=True)
         if row is None:
             return None
@@ -666,6 +707,8 @@ class GameFightScreen:
         second = self.capture()
         if not (vision.planning_visible(first) and vision.planning_visible(second)):
             return None
+        if not vision.icons_lit(second):
+            return None  # still fading in: dark icons read as off
         dot = vision.auto_skill_on(second)
         if dot != vision.auto_skill_turning(first, second):
             return None
@@ -683,25 +726,39 @@ class GameFightScreen:
             self.sleep(BOSS_HP_GAP)
         return None
 
+    def steady_auto_skill_state(self) -> bool | None:
+        """The auto-skill state once two reads in a row agree (None: never)."""
+        last = None
+        for _ in range(AUTO_SKILL_SETTLE_READS):
+            state = self.auto_skill_state()
+            if state is not None and state == last:
+                return state
+            last = state
+            self.sleep(AUTO_SKILL_SETTLE_GAP)
+        return None
+
     def set_auto_skill(self, on: bool) -> bool:
-        """Switch the auto-skill icon (top right, the diamond) on or off with one
+        """Switch the auto-skill icon (top right, the diamond) on or off with a
         tap where needed; True once both its colour and its spin show that way."""
-        state = self.auto_skill_state()
-        if state is None:
-            return False
-        if state == on:
-            return True
-        # Posted taps only reach the game while it is in front (a tap sent with
-        # another window in front was lost, 2K PC 2026-10-01).
-        bring = getattr(self.task, "_bring_game_to_foreground", None)
-        if callable(bring) and not bring():
-            raise ScreenReadError("游戏窗口不在最前面")
-        self.input.tap(layout.AUTO_SKILL)
-        for _ in range(AUTO_SKILL_POLLS):
-            self.sleep(POLL_STEP)
-            if self.auto_skill_state() == on:
+        state = self.steady_auto_skill_state()
+        for _ in range(AUTO_SKILL_TAPS):
+            if state is None:
+                return False
+            if state == on:
                 return True
-        return False
+            # Posted taps only reach the game while it is in front (a tap sent
+            # with another window in front was lost, 2K PC 2026-10-01).
+            bring = getattr(self.task, "_bring_game_to_foreground", None)
+            if callable(bring) and not bring():
+                raise ScreenReadError("游戏窗口不在最前面")
+            self.input.tap(layout.AUTO_SKILL)
+            for _ in range(AUTO_SKILL_POLLS):
+                self.sleep(POLL_STEP)
+                if self.auto_skill_state() == on:
+                    return True
+            # Read again before another tap: one that took late must not be undone.
+            state = self.steady_auto_skill_state()
+        return state == on
 
     def clear_selection(self) -> None:
         self._clear_selection(self.capture())
@@ -716,6 +773,27 @@ class GameFightScreen:
 
     def grid_frame(self) -> np.ndarray:
         return self._ready_frame()
+
+    def set_preempt(self, slot: int, skill: str) -> bool:
+        """Select slot ``slot`` and turn on the 「先发制人」 beside its ``skill``
+        card; True once the switch shows on."""
+        column = self._select_slot(slot)
+        if column is None:
+            raise ScreenReadError(f"选不到第 {slot + 1} 个角色，开不了先发制人")
+        frame, cards, _ = column
+        row = vision.card_row(skill)
+        if row is None or row >= cards or not vision.preempt_beside(frame, self.ocr, row):
+            self._clear_selection(self.capture())
+            raise ScreenReadError(f"第 {slot + 1} 个角色的{skill}旁边找不到「先发制人」")
+        done = vision.preempt_on(frame, row)
+        for _ in range(2):
+            if done:
+                break
+            self.input.tap(layout.preempt_switch(row))
+            frame = self._poll(lambda now: vision.preempt_on(now, row))
+            done = vision.preempt_on(frame, row)
+        self._clear_selection(self.capture())
+        return done
 
     def set_burst(self, slot: int, level: int) -> bool:
         """Select list slot ``slot`` and step its lit skill card's 爆发 to ``level``."""
@@ -801,10 +879,24 @@ class GameFightScreen:
         deadline = self.clock() + TURN_WAIT_SECONDS
         steady_since = None
         still, still_since = None, self.clock()
+        read_word_at = self.clock() + END_WORD_EVERY
         while self.clock() <= deadline:
             frame = self.capture()
             if vision.battle_end_visible(frame):
+                self.end_word = "battle_end"
                 return "end"
+            if vision.victory_visible(frame):
+                self.end_word = "victory"
+                self.log("出现 VICTORY：这场赢了")
+                return "end"
+            if self.clock() >= read_word_at:
+                read_word_at = self.clock() + END_WORD_EVERY
+                word = None if vision.planning_visible(frame) else vision.lost_word(frame, self.ocr)
+                if word is not None:
+                    self.end_word = "lost"
+                    self.log(f"出现「{word}」：这场输了")
+                    self._keep_picture(frame, "fiend-lost")
+                    return "end"
             if vision.planning_visible(frame) and vision.slot_count(frame) > 0:
                 steady_since = steady_since if steady_since is not None else self.clock()
                 if self.clock() - steady_since >= PLANNING_STEADY_SECONDS:
@@ -946,6 +1038,10 @@ class GameFightScreen:
         """Find the grid's cells as drawn; toggle the view twice once if they
         aren't where layout has them, and press them where they are if that
         didn't put them back (the mouse wheel zooms the top-down view)."""
+        if self.grid_scales is None and vision.talos_layout(frame):
+            self.grid_scales = TALOS_GRID_SCALES  # 塔洛斯's buttons: its grid sizes
+        if self.grid_scales is not None:
+            return self._place_sized_grid(frame)
         drawn = vision.grid_on_screen(frame)
         if drawn is None:
             return frame  # brackets not seen: keep pressing as before
@@ -970,10 +1066,80 @@ class GameFightScreen:
             drawn = again
         if drawn.off(vision.LAYOUT_GRID):
             self._grid = drawn
-            self.log(f"格子照画面上的位置按（大小 {drawn.scale:.2f}，左上 {drawn.left:.0f},{drawn.top:.0f}）")
+            self.log(
+                f"格子照画面上的位置按（大小 {drawn.scale:.2f}，"
+                f"左上 {drawn.left:.0f},{drawn.top:.0f}）"
+            )
         else:
             self._grid = None
         return frame
+
+    def _place_sized_grid(self, frame: np.ndarray) -> np.ndarray:
+        """塔洛斯: the grid at its usual size is pressed where it is drawn; any
+        other size is zoomed back first.  The place must read the same
+        twice (2K PC 2026-10-28 stage 2 T5: one read 100 px low)."""
+        low, high = self.grid_scales
+
+        def usual(grid: vision.Grid | None) -> bool:
+            return grid is not None and low <= grid.scale <= high
+
+        drawn = vision.grid_on_screen(frame)
+        if drawn is None:
+            # Not one bracket: maybe the view was read wrong (stages 5 and 8 on
+            # the 2K PC 2026-10-28: dark floors).  切换视角 once and look again,
+            # else back to where it was, before the wheel.
+            self.log("看不到格子，先按一次切换视角再看")
+            flipped = self._flip_view()
+            drawn = vision.grid_on_screen(flipped)
+            if drawn is None:
+                frame = self._flip_view()
+            else:
+                frame = flipped
+        if not usual(drawn):
+            seen = "看不到格子" if drawn is None else f"格子大小 {drawn.scale:.2f}"
+            self.log(f"{seen}，不是平常的大小，用滚轮调回 100%")
+            frame = self._zoom_back()
+            drawn = vision.grid_on_screen(frame)
+            if not usual(drawn):
+                seen = "还是看不到格子" if drawn is None else f"格子大小还是 {drawn.scale:.2f}"
+                raise ScreenReadError(f"用滚轮调过缩放，{seen}")
+        if self._grid is None or drawn.off(self._grid):
+            # A new place: read once more and take it only when two reads agree.
+            for _ in range(GRID_READS - 1):
+                again = vision.grid_on_screen(self._settled_frame())
+                if usual(again) and not again.off(drawn):
+                    break
+                drawn = again if usual(again) else drawn
+            else:
+                raise ScreenReadError("格子的位置每次读的都不一样")
+            self.log(
+                f"格子照画面上的位置按（大小 {drawn.scale:.2f}，"
+                f"左上 {drawn.left:.0f},{drawn.top:.0f}）"
+            )
+        self._grid = drawn
+        return frame
+
+    def _zoom_back(self) -> np.ndarray:
+        """Wheel out to the far end, then in to about 100%, checked on the 「N%」 bar."""
+        self.wheel(-ZOOM_OUT_NOTCHES)
+        self.wheel(ZOOM_IN_NOTCHES)
+        percent = vision.zoom_percent(self.capture(), self.ocr)
+        for _ in range(2):
+            if percent is None or ZOOM_OK[0] <= percent <= ZOOM_OK[1]:
+                break
+            self.wheel(1 if percent < ZOOM_OK[0] else -1)
+            percent = vision.zoom_percent(self.capture(), self.ocr)
+        self.log(f"缩放调到 {percent}%" if percent is not None else "缩放调过了（没读到百分比）")
+        return self._settled_frame()
+
+    def _wheel(self, notches: int) -> None:
+        self.task.scroll_client(
+            WHEEL_POINT,
+            1 if notches > 0 else -1,
+            count=abs(notches),
+            interval=0.12,
+            after_sleep=0.8,
+        )
 
     def _press(self, cell: Cell) -> layout.Point:
         point = layout.cell_press(cell)
@@ -1001,6 +1167,14 @@ class GameFightScreen:
 
         self._files.submit(write)
 
+    def _flip_view(self) -> np.ndarray:
+        """Tap 切换视角 once without asking which view it is, and let it settle."""
+        self.input.tap(vision.view_toggle_point(self.capture()) or layout.VIEW_TOGGLE)
+        self.sleep(VIEW_SETTLE)
+        self._settled_frame()
+        self.sleep(VIEW_SETTLE)
+        return self.capture()
+
     def _toggle_view(self, *, topdown: bool) -> np.ndarray:
         """Tap 切换视角 and wait until the view asked for has settled.
 
@@ -1010,7 +1184,7 @@ class GameFightScreen:
         a tap that didn't take is sent once more.
         """
         for _ in range(VIEW_TOGGLE_TAPS):
-            self.input.tap(layout.VIEW_TOGGLE)
+            self.input.tap(vision.view_toggle_point(self.capture()) or layout.VIEW_TOGGLE)
             frame = self.capture()
             for _ in range(VIEW_TOGGLE_POLLS):  # top-down after ~0.7 s
                 if vision.is_topdown(frame) == topdown:
@@ -1106,6 +1280,11 @@ class GameFightScreen:
             found = snap_name(self._name_text(frame), self._spelling)
             if found is not None:
                 return None, self._spelling[found], frame
+            if vision.single_team(frame, self.ocr):
+                # A fight with no teams (塔洛斯战术教材) never shows TEAMn, and
+                # its floor's grid lines pass for a card column: no name means
+                # the hold missed (2K PC 2026-10-22).
+                return None, None, frame
             self._keep_picture(frame, "fiend-grid")
             row, col = cell
             raise ScreenReadError(
@@ -1215,15 +1394,28 @@ class GameFightScreen:
     def _hold_order(self, frame: np.ndarray, team: int, turn: int) -> list[Cell]:
         first: list[Cell] = []
         if self.record is not None:
+            # where the last saved turn of this team put everyone: they mostly
+            # still stand there (Leo 2026-10-28 「應該會記憶每個回合每個角色占哪個格子」)
+            placed = [
+                saved
+                for number, saved in sorted(self.record.turns.items())
+                if number < turn and saved.team == team
+            ]
+            if placed:
+                first += [placed[-1].cells[unit] for unit in placed[-1].order]
             saved = self.record.turns.get(turn)
             if saved is not None and saved.team == team:
                 first += [saved.cells[unit] for unit in saved.order]
         first += list(self.last_cells.get(team, {}).values())
         # where units were is only a guess once they may have moved: a guess
         # that looks like bare floor waits until the busy cells were held
-        first = [cell for cell in first if vision.cell_busy_score(frame, cell) >= EMPTY_LOOKING_MAX]
+        first = [
+            cell
+            for cell in first
+            if vision.cell_busy_score(frame, cell, self._grid) >= EMPTY_LOOKING_MAX
+        ]
         order: list[Cell] = []
-        for cell in first + vision.cells_by_busy(frame):
+        for cell in first + vision.cells_by_busy(frame, self._grid):
             if cell not in order:
                 order.append(cell)
         return order
@@ -1268,7 +1460,9 @@ class GameFightScreen:
                 # missing (2K PC 2026-10-07).  Every cell that held nobody gets
                 # one more, slower hold, busy-looking ones first.
                 retried = True
-                queue = sorted(empty, key=lambda cell: -vision.cell_busy_score(frame, cell))
+                queue = sorted(
+                    empty, key=lambda cell: -vision.cell_busy_score(frame, cell, self._grid)
+                )
                 empty = []
                 continue
             cell = queue.pop(0)
@@ -1483,7 +1677,9 @@ class GameFightScreen:
         if not dead:
             return {}
         stones = [
-            cell for cell in empty if vision.cell_busy_score(frame, cell) >= TOMBSTONE_BUSY_MIN
+            cell
+            for cell in empty
+            if vision.cell_busy_score(frame, cell, self._grid) >= TOMBSTONE_BUSY_MIN
         ]
         if len(stones) == 1 and len(dead) == 1:
             return {dead[0]: stones[0]}

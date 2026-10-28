@@ -19,8 +19,9 @@ working/
 updates/
 update/
 data/
-!src/tasks/fiend_hunt/data/
-!src/tasks/affinity/data/
+# Pictures and records the tool ships live in data folders under src/:
+# never ignored (塔洛斯's ✕ picture was left out once, 2026-10-28).
+!src/**/data/
 data_export/
 data_import/
 click_screenshots/

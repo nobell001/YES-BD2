@@ -4,6 +4,7 @@ from time import monotonic
 
 import numpy as np
 
+from src.tasks import run_report
 from src.tasks.map_trade.calendar import (
     PURCHASE_STOCK_REFRESH_HOUR,
     purchase_stock_date,
@@ -49,6 +50,12 @@ NO_FAVORITES_MESSAGE = (
     "请在游戏里进入梦幻广场，找商人洛兹，点「商店」，"
     "把要买的商品图片右上角的星星点成黄色，下次跑商就会买"
 )
+# The shop already shows 售罄: today's stock was bought by an earlier run.
+# Said on the report so 「沒有按購買」 has its reason (Leo 2026-10-28).
+ALREADY_BOUGHT_NOTE = (
+    "买：今天的商品已经买过了（商店显示售罄），"
+    f"每天{PURCHASE_STOCK_REFRESH_HOUR:02d}:00刷新后才会再买"
+)
 
 
 class BuyFlowMixin:
@@ -85,6 +92,7 @@ class BuyFlowMixin:
             return completed
         if purchase_state[0] is None:
             self._buy_completed_in_current_shop = True
+            run_report.add_current_note(ALREADY_BOUGHT_NOTE)
             return True
         rebuild_cycle = str(self.task.config.get("收藏重建周期", "永不"))
         every_run = rebuild_cycle == "每次"

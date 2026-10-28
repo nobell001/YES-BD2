@@ -194,6 +194,7 @@ config = {
         ["src.tasks.QuickHuntTask", "QuickHuntTask"],
         ["src.tasks.FiendHuntTask", "FiendHuntTask"],
         ["src.tasks.FiendHuntTask", "FiendHuntRecordTask"],
+        ["src.tasks.TalosTask", "TalosTask"],
         ["src.tasks.SquareGoddessTask", "SquareGoddessTask"],
         ["src.tasks.MapTradeTask", "MapTradeTask"],
         ["src.tasks.BargainLoopTask", "BargainLoopTask"],

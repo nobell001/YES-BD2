@@ -3493,3 +3493,57 @@ msgstr "Login retries before giving up"
 
 msgid "连续这么多次没进主页，就取消这次一键日常/周常"
 msgstr "After this many misses in a row, this Run All Dailies / Weeklies is cancelled"
+
+msgid "游戏里显示执行状态"
+msgstr "Show run status in the game"
+
+msgid "跑的时候在游戏画面上方显示进度，不挡点击、不影响辨识"
+msgstr "Shows progress at the top of the game while running. It never blocks clicks or recognition."
+
+msgid "正在停止"
+msgstr "Stopping"
+
+msgid "跑完"
+msgstr "Finished"
+
+msgid "已停止"
+msgstr "Stopped"
+
+msgid "第 {n} / {total} 项"
+msgstr "Item {n} / {total}"
+
+
+
+
+msgid "完成 {n}"
+msgstr "{n} done"
+
+msgid "跳过 {n}"
+msgstr "{n} skipped"
+
+msgid "失败 {n}"
+msgstr "{n} failed"
+
+msgid "回到工具看结算"
+msgstr "See the summary in the tool"
+
+msgid "{done} / {total} 项"
+msgstr "{done} / {total} items"
+
+msgid "游戏里可以显示执行状态"
+msgstr "Run status can show in the game"
+
+msgid "跑的时候在游戏画面上方显示正在跑什么、跑到第几项，还有暂停、停止按钮。默认关闭，在「设置」里打开。"
+msgstr "While running, the top of the game shows what is running, which item it is on, and Pause/Stop buttons. Off by default; turn it on in Settings."
+
+msgid "打开右边的开关就好。它不挡点击、截图拍不到，不会影响辨识。"
+msgstr "Just turn on the switch on the right. It never blocks clicks and never shows in screenshots, so recognition is not affected."
+
+msgid "第 {n} 关"
+msgstr "Stage {n}"
+
+msgid "按继续改打第 {n} 关"
+msgstr "Resume to play Stage {n} instead"
+
+msgid "已通关"
+msgstr "cleared"

@@ -55,6 +55,12 @@ CARD_ICON_X = (278.0, 330.0)
 CARD_ICON_DY = (-42.0, 2.0)  # from the row's SLOT_Y
 LIST_ICON_R = 10.5  # inside the list icon's ring, round ICON_CENTRE
 BURST_DOWN_X, BURST_UP_X = 288.0, 443.0
+# 「先发制人」 beside a skill card (塔洛斯 stage 7, 格兰希特, 2K PC 2026-10-28):
+# its word right of the card, a switch under it, orange when on (5 SP).
+PREEMPT_TEXT_X = (445.0, 560.0)
+PREEMPT_TEXT_DY = (-30.0, 4.0)  # from the row's SLOT_Y
+PREEMPT_SWITCH = (499.0, 15.0)  # x, and y from SLOT_Y
+PREEMPT_SWITCH_HALF = (24.0, 10.0)
 BURST_BOX: Box = (560.0, 48.0, 1100.0, 84.0)
 # The lit skill's name, the header line above BURST_BOX (Leo 2026-10-06:
 # "特级三重箭矢 +5", 4K PC); the costume list knows each costume's skill name.
@@ -98,6 +104,7 @@ AUTO_SKILL_BOX: Box = (1470.0, 22.0, 1525.0, 78.0)
 
 # Bottom row.
 CHANGE_TEAM: Point = (124.0, 978.0)  # 更换队伍
+CHANGE_LABEL_BOX: Box = (70.0, 990.0, 175.0, 1022.0)  # its label; 「更换」 alone with no teams
 VIEW_TOGGLE: Point = (1520.0, 980.0)  # 切换视角
 BATTLE: Point = (1772.5, 985.0)
 TURN_BOX: Box = (1620.0, 950.0, 1740.0, 1020.0)  # "TURN. 13"
@@ -161,6 +168,21 @@ def card_box(row: int) -> Box:
 
 def card_tap(row: int) -> Point:
     return CARD_TAP_X, SLOT_Y[row]
+
+
+def preempt_text_box(row: int) -> Box:
+    y = SLOT_Y[row]
+    return PREEMPT_TEXT_X[0], y + PREEMPT_TEXT_DY[0], PREEMPT_TEXT_X[1], y + PREEMPT_TEXT_DY[1]
+
+
+def preempt_switch(row: int) -> Point:
+    return PREEMPT_SWITCH[0], SLOT_Y[row] + PREEMPT_SWITCH[1]
+
+
+def preempt_switch_box(row: int) -> Box:
+    x, y = preempt_switch(row)
+    half_x, half_y = PREEMPT_SWITCH_HALF
+    return x - half_x, y - half_y, x + half_x, y + half_y
 
 
 def card_icon_box(row: int) -> Box:

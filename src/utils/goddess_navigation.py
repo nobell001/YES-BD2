@@ -151,7 +151,8 @@ def scan_navigation(frame, *, ocr, normalize, match, passes, icon_specs):
         chosen = choose_navigation(icon_candidates, text_candidates, text)
         if chosen is not None:
             return chosen
-    # Absence only describes this frame; it never means the task is complete.
+    # Absence only describes this frame; the task counts the wish as made only
+    # when every look is absent and the row's key and spot start no walk.
     state = "unknown" if saw_task or not texts else "absent"
     return NavigationObservation(state, " | ".join(dict.fromkeys(texts)))
 

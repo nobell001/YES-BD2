@@ -36,6 +36,7 @@ class Shell(QObject):
         from src.ui.shell.report_page import ReportPage
         from src.ui.shell.settings import SettingsPage
         from src.ui.shell.sidebar import Sidebar
+        from src.ui.shell.talos_page import TalosPage
         from src.ui.shell.task_page import TaskPage
         from src.ui.shell.trade import TradePage
 
@@ -48,6 +49,7 @@ class Shell(QObject):
             ),
             "trade": TradePage(),
             "map": MapPage(),
+            "talos": TalosPage(),
             "fiend": FiendPage(),
             "settings": SettingsPage(window),
         }
@@ -101,6 +103,10 @@ class Shell(QObject):
 
         # 设置「跑的时候游戏静音」 (Leo 2026-10-09).
         self._sound_timer = sound_watch.start(self)
+        from src.ui.shell import game_status
+
+        # 设置「游戏里显示执行状态」 (YES-BD2 #60, Leo 2026-10-28).
+        self._game_status = game_status.start(self, self._on_hotkey)
         self._start_hotkeys()
         from src.ui.shell import autorun
 

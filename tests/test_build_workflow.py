@@ -109,6 +109,28 @@ class BuildWorkflowTest(unittest.TestCase):
         self.assertEqual(6, self.workflow.count("v1.2.3"))
         self.assertIn('[string]$Version = "v1.2.3"', script)
 
+    def test_launcher_times_the_pip_sources_and_uses_the_fastest(self):
+        # A player 2026-10-22: Aliyun gave 80-100 kB/s and the install looked
+        # stuck for an hour.
+        script = (ROOT / "scripts" / "prepare_pyappify_launcher.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("async fn fastest_pip_index_urls", script)
+        self.assertIn("let (fastest, second_fastest) = fastest_pip_index_urls(app_name).await;", script)
+        # The probe file is the wheel this install really downloads.
+        requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+        self.assertIn("openvino==2026.2.1 ", requirements)
+        self.assertIn("openvino-2026.2.1-21919-cp312-cp312-win_amd64.whl", script)
+        for index in (
+            "https://mirrors.aliyun.com/pypi/simple/",
+            "https://pypi.tuna.tsinghua.edu.cn/simple",
+            "https://mirrors.cloud.tencent.com/pypi/simple/",
+            "https://repo.huaweicloud.com/repository/pypi/simple/",
+            "https://mirrors.ustc.edu.cn/pypi/simple/",
+            "https://pypi.org/simple/",
+        ):
+            self.assertIn(f'"{index}"', script)
+
     def test_launcher_uses_project_icon(self):
         self.assertIn('icon: "icons/icon.png"', self.pyappify_config)
         self.assertTrue((ROOT / "icons" / "icon.png").is_file())

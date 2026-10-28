@@ -27,6 +27,11 @@ DATA = Path(__file__).resolve().parent / "data"
 
 BATTLE_BUTTON_MIN = 0.8
 BATTLE_END_MIN = 0.7
+# 塔洛斯战术教材 ends on VICTORY, drawn where BATTLE END is and in the same
+# letters (2K PC 2026-10-28, stages 1-2: 0.99-1.00; the guide video's nine
+# wins at 480p 0.92-0.94, their fade-in 0.6-0.7; every planning, battle and
+# BATTLE END frame kept 0.38 or less).
+VICTORY_MIN = 0.8
 OUT_MIN = 0.6
 # A selected unit's portrait gets white corner brackets; unselected slots
 # score 0.00, selected ones 0.32-0.43 on every saved frame.
@@ -86,6 +91,83 @@ def battle_end_visible(frame: np.ndarray) -> bool:
     return battle_end_score(frame) >= BATTLE_END_MIN
 
 
+def victory_score(frame: np.ndarray) -> float:
+    return _match(frame, layout.BATTLE_END_BOX, "victory_word.png")
+
+
+def victory_visible(frame: np.ndarray) -> bool:
+    return victory_score(frame) >= VICTORY_MIN
+
+
+# A lost fight: 塔洛斯 stage 7 on the 2K PC 2026-10-28 showed 「DEFEAT」 in
+# white on a red band across the whole screen's middle (返回 / 重新挑战
+# under it), not where VICTORY shows.  The band is checked by colour first
+# (every column red, dark above it), then its middle read; the VICTORY box is
+# read too, for a word shown there.
+DEFEAT_WORDS = ("DEFEAT", "LOSE", "FAIL", "失败")
+DEFEAT_BAND_BOX: layout.Box = (0.0, 458.0, 1920.0, 538.0)
+DEFEAT_ABOVE_BOX: layout.Box = (0.0, 405.0, 1920.0, 435.0)
+DEFEAT_WORD_BOX: layout.Box = (760.0, 458.0, 1160.0, 538.0)
+DEFEAT_RED_MIN = 30.0  # red over green/blue, per column (the band: 50+)
+DEFEAT_RED_COLUMNS = 0.8  # share of columns that must be that red
+
+
+def end_word(frame: np.ndarray, ocr: Ocr) -> str:
+    """The word where BATTLE END / VICTORY shows, read as text (upper case, no spaces)."""
+    return _ocr_text(_text_image(frame, layout.BATTLE_END_BOX, 68), ocr).upper().replace(" ", "")
+
+
+PREEMPT_WORDS = ("先发制人", "先發制人")
+PREEMPT_ON_MIN = 0.1  # share of the switch that is orange when on (0.23 on, 0.0 off)
+
+
+def preempt_beside(frame: np.ndarray, ocr: Ocr, row: int) -> bool:
+    """Whether card row ``row`` has the 「先发制人」 switch beside it."""
+    text = _ocr_text(_text_image(frame, layout.preempt_text_box(row), 68), ocr)
+    return any(word in text for word in PREEMPT_WORDS)
+
+
+def preempt_on(frame: np.ndarray, row: int) -> bool:
+    hsv = cv2.cvtColor(_bgr(_ref(frame, layout.preempt_switch_box(row))), cv2.COLOR_BGR2HSV)
+    orange = (
+        (hsv[:, :, 0] >= 10) & (hsv[:, :, 0] <= 30) & (hsv[:, :, 1] > 120) & (hsv[:, :, 2] > 120)
+    )
+    return float(orange.mean()) >= PREEMPT_ON_MIN
+
+
+def _redness(frame: np.ndarray, box: layout.Box) -> np.ndarray:
+    """Red over the larger of green and blue, the median of each column."""
+    part = _bgr(_ref(frame, box)).astype(np.int16)
+    red = part[:, :, 2] - np.maximum(part[:, :, 0], part[:, :, 1])
+    return np.median(red, axis=0)
+
+
+def defeat_band(frame: np.ndarray) -> bool:
+    band = _redness(frame, DEFEAT_BAND_BOX)
+    above = _redness(frame, DEFEAT_ABOVE_BOX)
+    return (
+        float((band >= DEFEAT_RED_MIN).mean()) >= DEFEAT_RED_COLUMNS
+        and float((above >= DEFEAT_RED_MIN).mean()) < DEFEAT_RED_COLUMNS
+    )
+
+
+def lost_word(frame: np.ndarray, ocr: Ocr) -> str | None:
+    """The lost fight's word as read (DEFEAT), or None."""
+    words = []
+    if defeat_band(frame):
+        words.append(_ocr_text(_text_image(frame, DEFEAT_WORD_BOX, 68), ocr).upper())
+    words.append(end_word(frame, ocr))
+    for word in words:
+        word = word.replace(" ", "")
+        if any(each in word for each in DEFEAT_WORDS):
+            return word
+    return None
+
+
+def lost_visible(frame: np.ndarray, ocr: Ocr) -> bool:
+    return lost_word(frame, ocr) is not None
+
+
 # A battle never holds still: the units, the boss and the effects keep
 # moving.  The whole screen, shrunk, is compared with how it looked when it
 # last changed; a still screen means the game stopped (a disconnect dialog,
@@ -112,11 +194,75 @@ def floor_level(frame: np.ndarray) -> float:
 
 
 def is_topdown(frame: np.ndarray) -> bool:
-    """Top-down view: the floor under the grid is light grey, not dark or coloured."""
+    """Top-down view: the floor under the grid is light grey, not dark or coloured.
+
+    塔洛斯战术教材 is told by its own floor (talos_topdown): stage 3's angled
+    view stands on light stone, which the floor check took for the top-down
+    grey (2K PC 2026-10-28: cells pressed in the angled view)."""
+    if talos_layout(frame):
+        return talos_topdown(frame)
     if floor_level(frame) <= layout.TOPDOWN_FLOOR_MIN:
         return False
     hsv = cv2.cvtColor(_bgr(_ref(frame, layout.FLOOR_BOX)), cv2.COLOR_BGR2HSV)
     return float(hsv[..., 1].mean()) <= layout.TOPDOWN_FLOOR_SAT_MAX
+
+
+# 切换视角 isn't always in the same place: 塔洛斯战术教材 puts 切换画面 where
+# it stands in a 魔兽 fight and moves it 100 px left (2K PC 2026-10-22, the
+# fixed tap hit the greyed-out 切换画面).  Its white icon (data/view_toggle.png)
+# is found along the bottom right: 0.90-0.99 on every frame showing it, at
+# most 0.43 elsewhere; the button is pressed where the icon is.
+VIEW_TOGGLE_BOX: layout.Box = (1250.0, 925.0, 1700.0, 1000.0)
+VIEW_TOGGLE_MIN = 0.7
+VIEW_TOGGLE_BELOW_ICON = 13.0  # reference px from the icon's centre to the press
+
+
+def view_toggle_point(frame: np.ndarray) -> layout.Point | None:
+    """Where to press 切换视角; None when its icon isn't seen."""
+    area = np.where(to_gray(_ref(frame, VIEW_TOGGLE_BOX)) > 200, 255, 0).astype(np.uint8)
+    icon = np.where(_template("view_toggle.png") > 200, 255, 0).astype(np.uint8)
+    _, score, _, (x, y) = cv2.minMaxLoc(template_match_response(area, icon))
+    if score < VIEW_TOGGLE_MIN:
+        return None
+    left, top = VIEW_TOGGLE_BOX[:2]
+    return (
+        left + x + icon.shape[1] / 2,
+        top + y + icon.shape[0] / 2 + VIEW_TOGGLE_BELOW_ICON,
+    )
+
+
+# 塔洛斯战术教材 puts 切换视角 at x 1420 (a 魔兽 fight: 1520).  Its top-down
+# view stands on a lavender tiled floor; every angled stage shows its own
+# scenery, light stone too (stage 3), which the floor check took for the
+# top-down grey.  Three places away from the list, the grid and the buttons
+# (2K PC 2026-10-28, stages 3-5): top-down hue 131-161, saturation 26-37;
+# angled hue 26-93, saturation 64-103.  (切换画面 beside it is no sign:
+# lit in stage 3's angled view, greyed in stage 5's.)
+TALOS_TOGGLE_X_MAX = 1470.0
+TALOS_FLOOR_BOXES: tuple[layout.Box, ...] = (
+    (170.0, 600.0, 330.0, 760.0),
+    (400.0, 130.0, 1500.0, 220.0),
+    (700.0, 820.0, 1250.0, 900.0),
+)
+TALOS_FLOOR_HUE = (115.0, 170.0)
+TALOS_FLOOR_SAT_MAX = 50.0
+
+
+def talos_layout(frame: np.ndarray) -> bool:
+    """塔洛斯战术教材's planning buttons (切换视角 left of its usual place)."""
+    point = view_toggle_point(frame)
+    return point is not None and point[0] <= TALOS_TOGGLE_X_MAX
+
+
+def talos_topdown(frame: np.ndarray) -> bool:
+    """塔洛斯: the lavender top-down floor in at least two of the three places."""
+    lavender = 0
+    for box in TALOS_FLOOR_BOXES:
+        hsv = cv2.cvtColor(_bgr(_ref(frame, box)), cv2.COLOR_BGR2HSV)
+        hue, saturation = float(hsv[..., 0].mean()), float(hsv[..., 1].mean())
+        if TALOS_FLOOR_HUE[0] <= hue <= TALOS_FLOOR_HUE[1] and saturation <= TALOS_FLOOR_SAT_MAX:
+            lavender += 1
+    return lavender >= 2
 
 
 _VIEW_SCALE = 0.5  # the reference is kept at half the 1080p size
@@ -305,6 +451,19 @@ ICON_EDGE_STEP = 30.0
 ICON_PRESENT_MIN = 0.65
 ICON_ABSENT_MAX = 0.60
 _ICON_SCALE = 4  # icon work image: 4 px per reference pixel
+# 击退 (knockback, the card under the normal attack; 塔洛斯战术教材 uses it,
+# Leo 2026-10-22): a white arrow on a dark disc where the skill icon sits.
+# Over a bright portrait the disc is faint and the ring check fails, so the
+# arrow's white shape is fitted (IoU with knockback_arrow.png, cut from a 2K
+# capture).  Arrows 0.87-1.00, skill icons and bare portraits 0.00-0.63 (2K
+# capture + 32 turns of a 720p guide video, every turn and direction).
+ARROW_WHITE_V = 200
+ARROW_WHITE_S = 60
+ARROW_R = 9.0  # reference px round the icon centre holding the arrow
+ARROW_SHIFT = 8  # work px tried off centre
+ARROW_PRESENT_MIN = 0.80
+ARROW_ABSENT_MAX = 0.70
+SKILL_LABEL = "技能"
 _ICON_DIRECTIONS = 72
 # Two captures of the list agree (90th percentile of the pixel difference
 # in each entry's face band) once nothing sweeps it.
@@ -338,8 +497,94 @@ def skill_icon_score(frame: np.ndarray, slot: int) -> float:
     return float((steps > ICON_EDGE_STEP).mean())
 
 
+@lru_cache(maxsize=None)
+def _arrow_masks() -> tuple[np.ndarray, ...]:
+    """The 击退 arrow (white, pointing up) turned in 45° steps."""
+    arrow = _template("knockback_arrow.png") > 127
+    side = arrow.shape[0]
+    masks = []
+    for step in range(8):
+        turn = cv2.getRotationMatrix2D((side / 2 - 0.5, side / 2 - 0.5), -45 * step, 1)
+        turned = cv2.warpAffine(arrow.astype(np.uint8), turn, (side, side), flags=cv2.INTER_NEAREST)
+        masks.append(turned > 0)
+    return tuple(masks)
+
+
+def knockback_score(frame: np.ndarray, slot: int) -> float:
+    """How well the white shape where the list icon sits fits the 击退 arrow (0..1).
+
+    The arrow points the way the unit knocks (each character its own way, Leo
+    2026-10-22), so every 45° turn is tried, a few pixels off centre too.
+    """
+    x, dy = layout.ICON_CENTRE
+    y = layout.SLOT_Y[slot] + dy
+    masks = _arrow_masks()
+    side = masks[0].shape[0]
+    reach = side / _ICON_SCALE / 2
+    part = _bgr(layout.crop(frame, (x - reach, y - reach, x + reach, y + reach)))
+    if part.size == 0:
+        return 0.0
+    shrink = part.shape[0] > side
+    part = cv2.resize(
+        part, (side, side), interpolation=cv2.INTER_AREA if shrink else cv2.INTER_CUBIC
+    )
+    hsv = cv2.cvtColor(part, cv2.COLOR_BGR2HSV)
+    white = (hsv[..., 2] > ARROW_WHITE_V) & (hsv[..., 1] < ARROW_WHITE_S)
+    ys, xs = np.mgrid[:side, :side]
+    inside = np.hypot(xs - side / 2 + 0.5, ys - side / 2 + 0.5) < ARROW_R * _ICON_SCALE
+    area = int(masks[0].sum())
+    around = np.hypot(xs - side / 2 + 0.5, ys - side / 2 + 0.5)
+    most = int((white & (around < ARROW_R * _ICON_SCALE + ARROW_SHIFT * 1.5)).sum())
+    least = int((white & (around < ARROW_R * _ICON_SCALE - ARROW_SHIFT * 1.5)).sum())
+    if most < area * ARROW_ABSENT_MAX or least > area / ARROW_ABSENT_MAX:
+        return 0.0  # too little or too much white to fit the arrow at all (quick way out)
+    best = 0.0
+    for dx in range(-ARROW_SHIFT, ARROW_SHIFT + 1, 2):
+        for dy_ in range(-ARROW_SHIFT, ARROW_SHIFT + 1, 2):
+            near = white & np.roll(inside, (dy_, dx), (0, 1))
+            for mask in masks:
+                shifted = np.roll(mask, (dy_, dx), (0, 1))
+                union = (near | shifted).sum()
+                if union:
+                    best = max(best, float((near & shifted).sum() / union))
+    return best
+
+
+def has_knockback(frame: np.ndarray, slot: int) -> bool | None:
+    """True: the entry shows the 击退 arrow; False: it doesn't; None: can't tell."""
+    score = knockback_score(frame, slot)
+    if score >= ARROW_PRESENT_MIN:
+        return True
+    if score <= ARROW_ABSENT_MAX:
+        return False
+    return None
+
+
+def list_action(frame: np.ndarray, slot: int) -> str | None:
+    """攻击 / 击退 / 技能 as list entry ``slot`` shows it; None when unsure."""
+    knockback = has_knockback(frame, slot)
+    if knockback is None:
+        return None
+    if knockback:
+        return CARD_LABELS[layout.KNOCKBACK_ROW]
+    icon = _round_icon(frame, slot)
+    if icon is None:
+        return None
+    return SKILL_LABEL if icon else CARD_LABELS[layout.ATTACK_ROW]
+
+
 def has_skill_icon(frame: np.ndarray, slot: int) -> bool | None:
-    """True: a skill card; False: an attack; None: can't tell."""
+    """True: a skill card; False: an attack or 击退 (no SP); None: can't tell.
+
+    The 击退 arrow sits in a round dark disc where a skill icon sits, so it
+    is ruled out first (塔洛斯战术教材, 2026-10-22)."""
+    knockback = has_knockback(frame, slot)
+    if knockback is None:
+        return None
+    return False if knockback else _round_icon(frame, slot)
+
+
+def _round_icon(frame: np.ndarray, slot: int) -> bool | None:
     score = skill_icon_score(frame, slot)
     if score >= ICON_PRESENT_MIN:
         return True
@@ -352,20 +597,21 @@ def same_card(frame: np.ndarray, slot: int, saved: np.ndarray, saved_slot: int) 
     """Whether list entry ``slot`` shows the card ``saved_slot`` shows in ``saved``.
 
     A skill card shows its costume's portrait with the round icon: the same
-    only with the icon and the same face.  An attack has no icon, and its
-    portrait is not tied to the card (on the 4K PC it changed after picks
-    within one planning screen), so an attack is the same as an attack.
+    only with the icon and the same face.  An attack has no icon and 击退
+    its arrow; their portrait is not tied to the card (on the 4K PC it
+    changed after picks within one planning screen), so an attack is the
+    same as an attack, 击退 as 击退.
     Both frames are compared at 1080p reference size, so they may differ in
     resolution, but should come from the same PC (same colours).  None when
     it isn't clear.
     """
-    icon, saved_icon = has_skill_icon(frame, slot), has_skill_icon(saved, saved_slot)
-    if icon is None or saved_icon is None:
+    action, saved_action = list_action(frame, slot), list_action(saved, saved_slot)
+    if action is None or saved_action is None:
         return None
-    if icon != saved_icon:
+    if action != saved_action:
         return False
-    if not saved_icon:
-        return True
+    if saved_action != SKILL_LABEL:
+        return True  # 攻击 or 击退: the portrait isn't tied to the card
     face = face_difference(frame, slot, saved, saved_slot)
     if face <= FACE_SAME_MAX:
         return True
@@ -401,12 +647,24 @@ def list_steady(frame: np.ndarray, other: np.ndarray, slots: int) -> bool:
 # --- grid ---------------------------------------------------------------------------------
 
 
-def cell_busy_score(frame: np.ndarray, cell: Cell) -> float:
+def grid_cell_box(cell: Cell, grid: Grid | None = None) -> layout.Box:
+    """The cell's box as drawn: layout's, or moved and sized with ``grid``."""
+    left, top, right, bottom = layout.cell_box(cell)
+    if grid is None:
+        return left, top, right, bottom
+    (left, top), (right, bottom) = grid.point((left, top)), grid.point((right, bottom))
+    return left, top, right, bottom
+
+
+def cell_busy_score(frame: np.ndarray, cell: Cell, grid: Grid | None = None) -> float:
     """Contrast inside a cell: a unit or tombstone scores high, bare floor low.
 
     Only used to decide which cells to hold first, never as the answer.
+    ``grid``: where the cells are really drawn (塔洛斯: a bigger grid, Leo
+    2026-10-28 「我看你常常一格一格點 找角色」 — read at layout's places
+    the units' cells looked like bare floor).
     """
-    return float(to_gray(_ref(frame, layout.cell_box(cell))).std())
+    return float(to_gray(_ref(frame, grid_cell_box(cell, grid))).std())
 
 
 # Where the top-down grid really is, from the white brackets at the cells'
@@ -417,9 +675,32 @@ def cell_busy_score(frame: np.ndarray, cell: Cell) -> float:
 # left within 1 px of GRID_FOUND_AT, and at 0.90 on the 水魔兽 frame.
 GRID_SEARCH_BOX: layout.Box = (380.0, 330.0, 880.0, 750.0)
 GRID_SCALES = tuple(round(0.80 + 0.01 * step, 2) for step in range(33))
+# 塔洛斯战术教材 draws it far bigger and higher (2K PC 2026-10-22: scale 1.31,
+# top left 395,264; the guide video's nine stages 1.31-1.32, top 398-498).
+# Searched only when the usual room finds nothing (it takes 4 times as long).
+GRID_WIDE_BOX: layout.Box = (380.0, 240.0, 920.0, 800.0)
+GRID_WIDE_SCALES = tuple(round(0.80 + 0.01 * step, 2) for step in range(61))
 GRID_ARM = 9.0  # bracket arm, reference px
 GRID_FOUND_AT = (480.0, 432.0)  # where the match puts layout's own grid
 GRID_MATCH_MIN = 0.2
+
+
+# 塔洛斯战术教材's top-down view zooms with the mouse wheel: a bar with
+# 「N%」 under its knob shows top middle while it turns (2K PC 2026-10-28:
+# 78-80% at the far end, then 84, 88, 92, 97, 101, 105, 110, 114 a notch;
+# the grid drawn about 1.32 x N/100 times layout's size).  The text is read
+# along the whole bar, as it follows the knob.
+ZOOM_TEXT_BOX: layout.Box = (780.0, 95.0, 1110.0, 130.0)
+_ZOOM_TEXT = re.compile(r"(\d{2,3})\s*%")
+
+
+def zoom_percent(frame: np.ndarray, ocr: Ocr) -> int | None:
+    """N of the 「N%」 zoom bar while it shows; None otherwise."""
+    found = _ZOOM_TEXT.search(_ocr_text(_text_image(frame, ZOOM_TEXT_BOX, 68), ocr))
+    if found is None:
+        return None
+    value = int(found.group(1))
+    return value if 50 <= value <= 200 else None
 
 
 @dataclass(frozen=True)
@@ -459,8 +740,14 @@ def _grid_brackets(scale: float) -> np.ndarray:
     arm = max(3, round(GRID_ARM * scale))
     for left, right in layout.CELL_X:
         for top, bottom in layout.CELL_Y:
-            xs = (round((left - origin_x) * scale) + 1, 1), (round((right - origin_x) * scale) + 1, -1)
-            ys = (round((top - origin_y) * scale) + 1, 1), (round((bottom - origin_y) * scale) + 1, -1)
+            xs = (
+                (round((left - origin_x) * scale) + 1, 1),
+                (round((right - origin_x) * scale) + 1, -1),
+            )
+            ys = (
+                (round((top - origin_y) * scale) + 1, 1),
+                (round((bottom - origin_y) * scale) + 1, -1),
+            )
             for x, step_x in xs:
                 for y, step_y in ys:
                     cv2.line(image, (x, y), (x + step_x * arm, y), 1.0, 2)
@@ -470,32 +757,70 @@ def _grid_brackets(scale: float) -> np.ndarray:
 
 def grid_on_screen(frame: np.ndarray) -> Grid | None:
     """The top-down grid as drawn (see GRID_SEARCH_BOX); None when its brackets aren't seen."""
-    part = _bgr(_ref(frame, GRID_SEARCH_BOX))
+    found = _find_grid(frame, GRID_SEARCH_BOX, GRID_SCALES)
+    if found is not None:
+        return found
+    return _find_grid(frame, GRID_WIDE_BOX, GRID_WIDE_SCALES, every_column=True)
+
+
+# 塔洛斯's empty columns have dim brackets, so a match one column right (its
+# last column on the bare floor between the two sides) scored about as well:
+# 2K PC frame scaled to 2560, 0.316 there against 0.306 in place.  That last
+# column then holds no bracket at all (0.00 of its arms lit; the dimmest real
+# column 0.05).  The wide search takes the best match whose every column has some.
+GRID_COLUMN_MIN = 0.02
+GRID_TRIES = 4
+
+
+def _column_arms(bright: np.ndarray, brackets: np.ndarray, x: int, y: int, scale: float) -> float:
+    """The least lit share of one column's bracket arms, with the match at ``x``, ``y``."""
+    height, width = brackets.shape
+    window = bright[y : y + height, x : x + width]
+    origin_x = layout.CELL_X[0][0]
+    least = 1.0
+    for left, right in layout.CELL_X:
+        a, b = round((left - origin_x) * scale), round((right - origin_x) * scale) + 3
+        arms = brackets[:, a:b]
+        least = min(least, float((window[:, a:b] * arms).sum() / max(arms.sum(), 1.0)))
+    return least
+
+
+def _find_grid(
+    frame: np.ndarray, box: layout.Box, scales: tuple[float, ...], every_column: bool = False
+) -> Grid | None:
+    part = _bgr(_ref(frame, box))
     gray = cv2.cvtColor(part, cv2.COLOR_BGR2GRAY).astype(np.float32)
     bright = ((gray - cv2.blur(gray, (9, 9)) > 22) & (gray > 165)).astype(np.float32)
     best = (GRID_MATCH_MIN, None)
-    for scale in GRID_SCALES:
+    for scale in scales:
         brackets = _grid_brackets(scale)
         if brackets.shape[0] > bright.shape[0] or brackets.shape[1] > bright.shape[1]:
             continue
         scores = correlation_response(bright, brackets)
-        _, score, _, (x, y) = cv2.minMaxLoc(scores)
-        if score > best[0]:
-            best = (score, (scale, x, y))
+        for _ in range(GRID_TRIES if every_column else 1):
+            _, score, _, (x, y) = cv2.minMaxLoc(scores)
+            if score <= best[0]:
+                break
+            if not every_column or _column_arms(bright, brackets, x, y, scale) >= GRID_COLUMN_MIN:
+                best = (score, (scale, x, y))
+                break
+            # no bracket in a column: not the grid; look past this place
+            reach = round(GRID_ARM * scale)
+            scores[max(0, y - reach) : y + reach + 1, max(0, x - reach) : x + reach + 1] = 0
     if best[1] is None:
         return None
     scale, x, y = best[1]
     found_x, found_y = GRID_FOUND_AT
     return Grid(
         scale,
-        GRID_SEARCH_BOX[0] + x + (layout.CELL_X[0][0] - found_x) * scale,
-        GRID_SEARCH_BOX[1] + y + (layout.CELL_Y[0][0] - found_y) * scale,
+        box[0] + x + (layout.CELL_X[0][0] - found_x) * scale,
+        box[1] + y + (layout.CELL_Y[0][0] - found_y) * scale,
     )
 
 
-def cells_by_busy(frame: np.ndarray) -> list[Cell]:
+def cells_by_busy(frame: np.ndarray, grid: Grid | None = None) -> list[Cell]:
     cells = [(row, col) for row in range(ROWS) for col in range(COLS)]
-    return sorted(cells, key=lambda cell: -cell_busy_score(frame, cell))
+    return sorted(cells, key=lambda cell: -cell_busy_score(frame, cell, grid))
 
 
 # --- who stands on a cell, from the look of the unit (fighting from screenshots) -----------
@@ -681,6 +1006,13 @@ def read_team(frame: np.ndarray, ocr: Ocr) -> int | None:
         return None
     team = int(text[4])
     return team if team in TEAMS else None
+
+
+def single_team(frame: np.ndarray, ocr: Ocr) -> bool:
+    """A fight with no teams: the button bottom-left reads 「更换」, not 「更换队伍」,
+    and no TEAMn shows top-left (塔洛斯战术教材, 2K 2026-10-22)."""
+    text = _ocr_text(_text_image(frame, layout.CHANGE_LABEL_BOX, 68), ocr).replace(" ", "")
+    return text == "更换"
 
 
 # 爆发 flame on a list entry (layout.flame_box), read at 4 px per reference
@@ -880,6 +1212,19 @@ def _auto_skill_masks(height: int, width: int) -> tuple[np.ndarray, np.ndarray]:
     l1 = np.abs(xx - AUTO_SKILL_DIAMOND[0]) + np.abs(yy - AUTO_SKILL_DIAMOND[1])
     ring = (l1 >= AUTO_SKILL_RING[0]) & (l1 <= AUTO_SKILL_RING[1]) & (from_dot > 9)
     return from_dot <= radius, ring
+
+
+# The top-right icons once the planning screen has faded in: the diamond's
+# white outline (98th percentile 244-255 on and off, 魔兽追踪者 and every
+# 塔洛斯 stage, dark ones too) is grey (85) while the screen still fades in
+# after a load (4K PC clone 2026-10-28), when the game also ignores taps.
+ICONS_LIT_MIN = 200
+
+
+def icons_lit(frame: np.ndarray) -> bool:
+    """Whether the top-right icons are fully shown (not still fading in)."""
+    part = cv2.cvtColor(_bgr(_ref(frame, layout.AUTO_SKILL_BOX)), cv2.COLOR_BGR2GRAY)
+    return float(np.percentile(part, 98)) >= ICONS_LIT_MIN
 
 
 def auto_skill_on(frame: np.ndarray) -> bool:

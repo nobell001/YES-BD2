@@ -50,6 +50,7 @@ from src.tasks.fiend_hunt.planner import Cell, Drag, apply_drags, apply_order_sw
 from src.tasks.fiend_hunt.record import FightRecord, TurnState
 from src.tasks.fiend_hunt.turn_plan import (
     ATTACK,
+    KNOCKBACK,
     SKILL,
     TurnActions,
     TurnMismatch,
@@ -62,7 +63,8 @@ FIX_ROUNDS = 3
 TURN_READS = 3  # more reads of a TURN that isn't the expected one, until two agree
 # Cards tried on a unit that doesn't look as in the saved screenshot, after
 # the saved card if the save has one.  Units have 1-4 skill cards (seen on
-# the 4K PC); 击退 isn't used against a 魔兽 (Leo).
+# the 4K PC); 击退 isn't used against a 魔兽 (Leo), so it is only tried
+# when the screenshot shows its arrow (塔洛斯战术教材, Leo 2026-10-22).
 CARD_TRIES = (ATTACK, *(f"{SKILL}{number}" for number in range(1, 5)))
 
 
@@ -327,7 +329,26 @@ def prepare_turn(
     Returns how this turn is left, confirmed on the screen, for the next turn.
     """
     live = _arrange(screen, saved, log, carried, by_screenshot, confirmed, pushes)
+    _set_preempt(screen, live, saved, log)
     return _set_bursts(screen, live, saved, log, loose_bursts)
+
+
+def _set_preempt(
+    screen: FightScreen, live: TurnState, saved: TurnState, log: Callable[[str], None]
+) -> None:
+    """Turn on the saved 「先发制人」 switches (each holds 5 SP, so before the 爆发)."""
+    if not saved.preempt:
+        return
+    set_preempt = getattr(screen, "set_preempt", None)
+    if not callable(set_preempt):
+        raise ScreenReadError("这个画面没法开先发制人")
+    for unit in sorted(saved.preempt, key=saved.order.index):
+        skill = saved.preempt[unit]
+        if unit not in live.order:
+            raise TurnMismatch(f"第 {saved.turn} 回合：{unit} 不在列表里，开不了先发制人")
+        if not set_preempt(live.order.index(unit), skill):
+            raise TurnMismatch(f"第 {saved.turn} 回合：{unit} {skill} 的「先发制人」开不起来")
+        log(f"第 {saved.turn} 回合：{unit} {skill} 开了先发制人")
 
 
 def _lower_bursts(
@@ -588,7 +609,7 @@ def _pick_cards(
             )
         log(f"第 {saved.turn} 回合：{unit} 从 {shown[unit]} 换成 {wanted}")
         shown[unit] = wanted
-        if wanted != ATTACK:
+        if wanted.startswith(SKILL):
             _lower_bursts(screen, live, saved, log, (unit,))
     return TurnState(live.turn, live.team, live.order, live.cells, live.dead, shown)
 
@@ -627,7 +648,7 @@ def _match_screenshot(
             return False
         picked[unit] = card
         log(f"第 {turn} 回合：{unit} 换成 {card}，跟存档截图一样了")
-        if card != ATTACK:
+        if card.startswith(SKILL):
             _lower_bursts(screen, live, saved, log, (unit,))
         return True
 
@@ -668,13 +689,18 @@ def _match_screenshot(
             if card is not None and looks_as_saved(unit):
                 picked[unit] = card
                 log(f"第 {turn} 回合：{unit} 一次换成 {card}，跟存档截图一样了")
-                if card != ATTACK:
+                if card.startswith(SKILL):
                     _lower_bursts(screen, live, saved, log, (unit,))
         wrong = [unit for unit in wrong if unit not in picked]
-    tries = {unit: _card_tries(saved.skills.get(unit)) for unit in wrong}
+    saved_action = getattr(screen, "saved_action", None)
+    tries = {}
     for unit in wrong:
-        if tries[unit][0] == ATTACK:
-            fits(unit, ATTACK)
+        tries[unit] = _card_tries(saved.skills.get(unit))
+        if callable(saved_action) and saved_action(turn, live.order.index(unit)) == KNOCKBACK:
+            tries[unit] = _card_tries(KNOCKBACK)
+    for unit in wrong:
+        if tries[unit][0] in (ATTACK, KNOCKBACK):
+            fits(unit, tries[unit][0])
             tries[unit] = tries[unit][1:]
     for unit in wrong:
         if unit not in picked and not any(fits(unit, card) for card in tries[unit]):

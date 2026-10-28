@@ -19,6 +19,8 @@ import sys
 import time
 from pathlib import Path
 
+from src.utils.wait_limits import LOADING_MAX_SECONDS
+
 REPO = Path(__file__).resolve().parents[2]
 SETUP_SCRIPT = REPO / "tools" / "clone_desktop" / "setup.ps1"
 DATA_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "bd2-auto" / "clone-desktop"
@@ -379,6 +381,11 @@ def child_session_id() -> int | None:
 
 
 GAME_NAMES = {"browndust ii.exe"}
+# Signing the clone out is the clone closing, not stuck: live 4K 2026-10-28,
+# `logoff` at 20:39:23.2 and 「Session logoff succeeded」 at 20:39:44.1 (20.9 s)
+# with the game and the tool in it.  The 20 s wait gave up 0.9 s before the
+# clone was gone, so the run here never started.  Waited like a loading screen.
+LOGOFF_WAIT_SECONDS = LOADING_MAX_SECONDS
 
 
 def _tool_names() -> set[str]:
@@ -414,7 +421,7 @@ def clone_open() -> bool:
     return _in_clone_session(_tool_names() | GAME_NAMES)
 
 
-def end_clone(timeout: float = 20.0) -> bool:
+def end_clone(timeout: float = LOGOFF_WAIT_SECONDS) -> bool:
     """From outside: close the viewer and sign out the 桌面分身, as its X does.
 
     The game and the tool in it close with it.  The viewer goes first, or it

@@ -54,6 +54,9 @@ CLOSE_GAME_NOTICE_KEY = "_关闭游戏新设定提示"
 RUN_NOTIFY_NOTICE_KEY = "_跑完通知新设定提示"
 # 定时启动 (首页) likewise (Leo 2026-10-22, release handover: 「新功能要跳窗」).
 SCHEDULE_NOTICE_KEY = "_定时启动新设定提示"
+# 游戏里显示执行状态 (设置) likewise (Leo 2026-10-28 「預設關閉 但是更新後要提示用戶
+# 這裡可以開啟」).
+STATUS_BAR_NOTICE_KEY = "_游戏状态条新设定提示"
 CLOSE_GAME_NOTE = "全部做完了，照设定关闭了游戏"
 CLOSE_GAME_FAILED_NOTE = "全部做完了，但游戏没能关掉，请自己关闭"
 # Leo 2026-10-21 「這次新增兩個功能 更新上去和以前一樣 要跳窗告訴用戶」: a
@@ -229,6 +232,7 @@ class ChildBatchTask(BaseTask):
                 NEW_DAILIES_NOTICE_KEY: False,
                 RUN_NOTIFY_NOTICE_KEY: False,
                 SCHEDULE_NOTICE_KEY: False,
+                STATUS_BAR_NOTICE_KEY: False,
                 # Ticked on 首页 (src/ui/shell/autorun.py, Leo 2026-10-09).
                 "打开工具时自动开始": False,
                 **{key: True for key in child_keys},
@@ -667,17 +671,28 @@ class ChildBatchTask(BaseTask):
                     overlay[AFTER_GACHA_KEY] = last_ran == (GACHA_CHILD_KEY, True)
                 task.config = ChainMap(overlay, original_config or {})
                 task.info_clear()
+                task.done_already_note = ""
                 last_ran = (child.config_key, False)
                 with suppress_task_completion_notifications(task):
                     child_ok = bool(task.run())
                     last_ran = (child.config_key, child_ok)
                     self._raise_if_stopped()
                     self._child_finished[child.config_key] = time.time()
-                    if child_ok:
+                    already = child_ok and getattr(task, "done_already_note", "")
+                    if already:
+                        # Done before this run (seen on screen): 跳过, and
+                        # counted as done today like a skip from history.
+                        skipped.append(child.config_key)
+                        pre_completed.append(child.config_key)
+                        publish_outcome()
+                        run_report.row_ended(child.config_key, run_report.SKIP, already)
+                        self.log_info(f"{self.batch_label}：{child.config_key} {already}，跳过。")
+                    elif child_ok:
                         completed.append(child.config_key)
                         publish_outcome()
                         run_report.row_ended(child.config_key, run_report.DONE)
                         self.log_info(f"{self.batch_label}：{child.config_key} 完成。")
+                    if child_ok:
                         # Counted for the game day (and week) it started in.
                         started = self._child_started[child.config_key]
                         self._delay_child_schedule(
@@ -1128,6 +1143,8 @@ class DailyBatchTask(ChildBatchTask):
             self.config[RUN_NOTIFY_NOTICE_KEY] = True
         if own and SCHEDULE_NOTICE_KEY not in own:
             self.config[SCHEDULE_NOTICE_KEY] = True
+        if own and STATUS_BAR_NOTICE_KEY not in own:
+            self.config[STATUS_BAR_NOTICE_KEY] = True
         for child in self.child_tasks:
             key = child.config_key
             if child.weekly and key not in own and isinstance(weekly.get(key), bool):
@@ -1179,6 +1196,7 @@ class WeeklyBatchTask(ChildBatchTask):
             NEW_DAILIES_NOTICE_KEY,
             RUN_NOTIFY_NOTICE_KEY,
             SCHEDULE_NOTICE_KEY,
+            STATUS_BAR_NOTICE_KEY,
             "完成日常后自动关机",
             "打开工具时自动开始",
         ):

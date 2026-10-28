@@ -13,6 +13,8 @@ from src.tasks.BaseBD2Task import CartridgeSpecialPageResult
 from src.utils.fantasia_square import LIFE_SLOT_POINTS, square_card_point
 from src.tasks.map_trade.models import MatchResult, TemplateSpec
 from src.tasks.SquareGoddessTask import (
+    GODDESS_NAVIGATION_ABSENT,
+    GODDESS_WISHED_NOTE,
     FANTASIA_SQUARE_TEMPLATE,
     GODDESS_NAVIGATION_CLICKED,
     QUICK_SWITCH_PAGE_PATTERNS,
@@ -510,6 +512,86 @@ class SquareGoddessEntryTest(unittest.TestCase):
         task._wished_today = lambda: True
         self.assertTrue(SquareGoddessTask._pray_at_goddess(task))
         self.assertNotIn("pray", stages)
+
+    def _row_gone_task(self, navigation, square_shown):
+        task = object.__new__(SquareGoddessTask)
+        task.config = {}
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_info = lambda *_args, **_kwargs: None
+        task.done_already_note = ""
+        stages = []
+        task._click_square_notice_if_present = lambda: False
+        task._click_goddess_daily_navigation_until = lambda **_kwargs: navigation
+        task._wait_for_goddess_prayer_completion = (
+            lambda **_kwargs: stages.append("pray") or True
+        )
+        task._wished_today = lambda: False
+        task._prayer_prompt_steady = lambda: False
+        task._walk_by_key = lambda: stages.append("E") or False
+        task._press_row_where_it_usually_is = lambda: stages.append("spot") or False
+        task._square_still_shown = lambda: square_shown
+        return task, stages
+
+    def test_no_wish_row_in_a_clear_square_means_wished_today(self):
+        # 4K 2026-10-28 00:37 (game day 10-28): Leo had wished; every look read
+        # the square's right side with no daily row, E and the row's spot
+        # started no walk, the square was still up → was 失败, now 跳过.
+        task, stages = self._row_gone_task(GODDESS_NAVIGATION_ABSENT, True)
+        self.assertTrue(SquareGoddessTask._pray_at_goddess(task))
+        self.assertEqual(["E", "spot"], stages)
+        self.assertEqual(GODDESS_WISHED_NOTE, task.done_already_note)
+
+    def test_no_wish_row_but_square_covered_is_still_a_failure(self):
+        task, stages = self._row_gone_task(GODDESS_NAVIGATION_ABSENT, False)
+        self.assertFalse(SquareGoddessTask._pray_at_goddess(task))
+        self.assertEqual("", task.done_already_note)
+
+    def test_task_text_seen_but_row_unread_is_still_a_failure(self):
+        # Some look saw task words it could not pair: the row may be there.
+        task, stages = self._row_gone_task(None, True)
+        self.assertFalse(SquareGoddessTask._pray_at_goddess(task))
+        self.assertEqual("", task.done_already_note)
+
+    def test_navigation_is_absent_only_when_every_look_was_absent(self):
+        for states, expected in (
+            (["absent"] * 3, GODDESS_NAVIGATION_ABSENT),
+            (["absent", "unknown", "absent"], None),
+        ):
+            with self.subTest(states=states):
+                task = object.__new__(SquareGoddessTask)
+                looks = iter(states)
+                clock = iter(range(100))
+                task.capture_frame = lambda: None
+                task.sleep = lambda _seconds: None
+                task._observe_goddess_navigation = lambda _frame: SimpleNamespace(
+                    state=next(looks), navigation=None
+                )
+                with patch(
+                    "src.tasks.SquareGoddessTask.monotonic",
+                    side_effect=lambda: next(clock) * 0.5,
+                ):
+                    result = SquareGoddessTask._click_goddess_daily_navigation_until(
+                        task, timeout=1.0
+                    )
+                self.assertEqual(expected, result)
+
+    def test_wished_before_run_records_the_day_and_says_skipped(self):
+        task = object.__new__(SquareGoddessTask)
+        task.config = {"启用": True}
+        info = {}
+        task.info_set = lambda key, value: info.__setitem__(key, value)
+        messages = []
+        task.log_info = lambda message, notify=False: messages.append(message)
+        recorded = []
+        task._record_wish = lambda: recorded.append(True)
+        task._enter_square_from_home = lambda: True
+        task._pray_at_goddess = lambda: task.done_already(GODDESS_WISHED_NOTE) or True
+        task._return_home_from_square = lambda: True
+
+        self.assertTrue(SquareGoddessTask.run(task))
+        self.assertEqual([True], recorded)
+        self.assertEqual("今天已许愿", info["女神像许愿结果"])
+        self.assertEqual("今天已许愿，跳过并返回主页。", info["状态"])
 
     def test_successful_run_returns_home_after_prayer(self):
         task = object.__new__(SquareGoddessTask)

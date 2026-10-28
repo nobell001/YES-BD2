@@ -23,7 +23,9 @@ does it once for every task; this module is that one place (Leo 2026-10-12,
 - a tap on the dark backdrop left of a paid pass's 签到 panel (no ✕, no
   关闭; the only button on it is 购买, never pressed);
 - 「离开」 on a field battle's result (VICTORY / DEFEAT), where Esc does
-  nothing (src/utils/field_battle).
+  nothing (src/utils/field_battle);
+- 「点击继续」 on the battle's 暂停 menu, never its 「关闭」, which is the
+  技能过场动画 setting.
 
 The game's quit dialog (Esc pressed on a top page) is recognised so the way
 home cancels it and stops pressing Esc (Leo 2026-10-12 「這遊戲按沒幾下就會變成
@@ -90,6 +92,18 @@ PASS_SIGNIN_LABEL = "签到弹窗外的空白处"
 # 战场角色设置 button), and it hides the page behind it.  取消 keeps the
 # settings as they were.
 STRAY_PANEL_TITLES = ("战场角色设置",)
+# The menu Esc or ‖ opens in a battle: 暂停 over the fight, 离开 (逃跑 in a
+# field battle), 重新挑战 and 点击继续 along the bottom, and the battle
+# settings: 技能过场动画 with its choices 每次观看 / 1天观看1次 / 仅观看新技能 /
+# 关闭, the volumes.  That 「关闭」 is a setting, not a close button: the way
+# home pressed it 11 times in a 塔洛斯 fight (Leo's 4K 2026-10-28 16:02, 「判斷
+# 完全不對」).  Only 「点击继续」 is pressed there; it closes the menu and changes
+# nothing.
+BATTLE_MENU_CONTINUE = ("点击继续", "點擊繼續")
+BATTLE_MENU_WORDS = (
+    "离开", "離開", "逃跑", "重新挑战", "重新挑戰",
+    "技能过场动画", "技能過場動畫", "整体音量", "整體音量",
+)
 
 
 @dataclass(frozen=True)
@@ -133,6 +147,24 @@ def is_quit_dialog(boxes) -> bool:
     return False
 
 
+def battle_menu_continue(boxes):
+    """The 「点击继续」 box of a battle's 暂停 menu, or None when that menu is
+    not on screen (two cues: 点击继续 and a button or setting of the menu)."""
+    named = _named(boxes)
+    words = tuple(normalize_ocr_text(word) for word in BATTLE_MENU_CONTINUE)
+    box = next((box for name, box in named if any(word in name for word in words)), None)
+    if box is None:
+        return None
+    text = "".join(name for name, _box in named)
+    if not any(normalize_ocr_text(word) in text for word in BATTLE_MENU_WORDS):
+        return None
+    return box
+
+
+def is_battle_menu(boxes) -> bool:
+    return battle_menu_continue(boxes) is not None
+
+
 def is_notice_list(boxes) -> bool:
     """The game's 公告 list: at least two tagged rows and two dated rows."""
     named = _named(boxes)
@@ -168,6 +200,9 @@ def pick(boxes, *, allow_cancel: bool = False) -> PopupPress | None:
     if is_quit_dialog(boxes):
         # Never 确认 here; 取消 keeps the game open (allowed even mid-task).
         return PopupPress(CANCEL_TEXT, _exact(named, CANCEL_TEXT))
+    box = battle_menu_continue(boxes)
+    if box is not None:
+        return PopupPress(BATTLE_MENU_CONTINUE[0], box)
     box = _exact(named, OVERLAY_DISMISS_KEYWORDS[0])
     if box is not None:
         return PopupPress(OVERLAY_DISMISS_KEYWORDS[0], box)

@@ -90,3 +90,44 @@ Costume fixtures (4K PC, Leo 2026-10-06, a real fight's TURN 1, 艾尼尔 select
 | --- | --- |
 | `cards_4k_eleaneer_attack_lit.png` | 最前方 lit; skill cards 贯穿的魔弓, B级偶像, 夜色流影兔女郎 |
 | `cards_4k_eleaneer_skill1_lit.png` | 技能1 lit: header "特级三重箭矢 +5" (souseha: 三重箭矢), the lit card's art changes expression |
+
+塔洛斯战术教材 grid fixture (2K PC, 2026-10-22, stage 1 TURN 1, top-down, nobody selected; scaled to 1080p, only x 370-930 / y 230-810 kept):
+
+| file | screen |
+| --- | --- |
+| `talos_planning_2k.png` | the grid drawn 1.31 times layout's size, top left at 395,264 |
+| `talos_view_buttons_2k.png` | Leo's 2K screenshot, only the bottom-right buttons (x 1240-1710 / y 915-1010): 切换视角 at x 1420, greyed-out 切换画面 at 1520 |
+
+塔洛斯战术教材 end screens (2K PC, 2026-10-28; scaled to 1080p, only the top right x 1300-1920 / y 0-160 and bottom right y 860-1080 kept):
+
+| file | screen |
+| --- | --- |
+| `talos_defeat_2k.png` | stage 7 lost: 「DEFEAT」 on a red band mid-screen, 返回 / 重新挑战 under it |
+| `talos_angled_s8_dark_2k.png` | stage 8 angled view on a dark floor, 切换画面 grey (floor boxes and buttons kept) |
+| `talos_topdown_s8_dark_2k.png` | stage 8 top-down: the lavender grid floor (floor boxes and buttons kept) |
+| `talos_preempt_off_2k.png` | stage 7 T1, 格兰希特 selected: 「先发制人」 beside its skill card, switch off, SP 8 (card area kept) |
+| `talos_preempt_on_2k.png` | the same after the switch: orange, the skill card greyed with a clock 5, SP 3 |
+| `talos_autoskill_on_a.png` / `_b.png` | 4K PC main desktop (2560x1440 game) 2026-10-28, 塔洛斯 stage 7 T1: auto skill on (diamond lit, ⟳ spinning), two captures 0.135 s apart (top-right icons and the BATTLE pill kept) |
+| `talos_autoskill_off_a.png` / `_b.png` | the same 1.4 s after one tap on the diamond: off |
+| `talos_fading_in.png` | 4K PC clone 2026-10-28, stage 7 T1 right after the load: BATTLE pill shown, top-right icons still dark (fading in) |
+| `talos_victory_2k.png` | stage 2 won: VICTORY where BATTLE END shows, REWARD 20,000, 返回 |
+| `talos_victory_sparkle_2k.png` | stage 1 won, the tool's own picture: VICTORY with a sparkle over 返回 |
+
+塔洛斯战术教材 views (2K PC, 2026-10-28, TURN 1; scaled to 1080p, only the buttons x 1230-1720 / y 900-1020, the floor box x 340-760 / y 740-910 and vision.TALOS_FLOOR_BOXES kept):
+
+| file | screen |
+| --- | --- |
+| `talos_angled_s3_light_floor_2k.png` | stage 3 angled on light stone (the floor check alone said top-down); 切换画面 lit |
+| `talos_angled_s4_2k.png` | stage 4 angled |
+| `talos_angled_s5_grey_switch_2k.png` | stage 5 angled, dark warehouse; 切换画面 greyed out all the same |
+| `talos_topdown_s3_2k.png` | stage 3 top-down, lavender floor |
+| `talos_topdown_s5_2k.png` | stage 5 top-down |
+
+塔洛斯战术教材 zoom bar (2K PC, 2026-10-28, the wheel test on stage 3; scaled to 1080p, only x 760-1130 / y 70-150 kept):
+
+| file | screen |
+| --- | --- |
+| `talos_zoom_78_2k.png` | top-down view zoomed out to its end: 「78%」 |
+| `talos_zoom_97_2k.png` | 「97%」 |
+| `talos_zoom_114_2k.png` | 「114%」 |
+| `talos_zoom_none_2k.png` | angled view, no wheel turned: no bar |

@@ -408,26 +408,52 @@ def slot_icon_scores(frame_1080: np.ndarray, centre: tuple[int, int]) -> tuple[f
 
 
 # The enhance / refine badge right of the cell centre: white digits in a
-# diamond (「15」) or a plain 「+7」.  Leo's 4K bag 2026-10-11, 70 cells:
-# badged 0.044-0.173 white, unbadged <= 0.005.  The grid OCR missed many of
-# the diamonds, so a fully enhanced 顶级英雄盔甲 (15) was taken as +0.
-BADGE_WHITE_BOX = (15, -5, 45, 40)
-BADGE_WHITE_MIN = 0.02
+# diamond (「15」) or a plain 「+7」.  The grid OCR missed many of the diamonds
+# (Leo's 4K bag 2026-10-11), so a fully enhanced 顶级英雄盔甲 (15) was taken
+# as +0; the white pixels there are looked at as well.
+# White item art can reach more than a small 「+7」 (0.044): the silver band of
+# an R ring (Leo's 冰雪红宝石, 4K 2026-10-28) read 0.063 and the bag kept the
+# unenhanced ring as 已强化.  So the share alone never decides: a cell counts
+# as badged when one white blob there is shaped like a digit: 12-22 px tall,
+# at most 13 wide, in the right part of the spot where the number sits
+# (「15」 strokes at x 28-44, 「+7」's 7 at 42-52; ring band x 9-25, h 10; a
+# sword hilt x 15-33, 18 wide).  161 cells of Leo's 4K bags plus his two rings
+# on the live bag: no miss either way, also blurred, at 2K and darker.
+BADGE_GLYPH_BOX = (5, -15, 65, 60)
+BADGE_GLYPH_HEIGHT = (12, 22)
+BADGE_GLYPH_WIDTH = (2, 13)
+BADGE_GLYPH_X = (24, 60)
+BADGE_GLYPH_Y = (-5, 35)
 
 
-def badge_white_ratio(frame_1080: np.ndarray, centre: tuple[int, int]) -> float:
-    dx, dy, width, height = BADGE_WHITE_BOX
-    x, y = centre[0] + dx, centre[1] + dy
-    patch = frame_1080[max(0, y) : y + height, max(0, x) : x + width, :3]
+def badge_glyph_found(frame_1080: np.ndarray, centre: tuple[int, int]) -> bool:
+    """A white digit-shaped blob in the badge spot (offsets from ``centre``)."""
+    dx, dy, width, height = BADGE_GLYPH_BOX
+    x0, y0 = centre[0] + dx, centre[1] + dy
+    patch = frame_1080[max(0, y0) : y0 + height, max(0, x0) : x0 + width, :3]
     if patch.size == 0:
-        return 1.0
-    hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
-    return float(((hsv[:, :, 1] < 60) & (hsv[:, :, 2] > 200)).mean())
+        return True
+    hsv = cv2.cvtColor(np.ascontiguousarray(patch), cv2.COLOR_BGR2HSV)
+    mask = ((hsv[:, :, 1] < 60) & (hsv[:, :, 2] > 200)).astype(np.uint8)
+    count, _labels, stats, _centres = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    left = max(0, y0) - centre[1], max(0, x0) - centre[0]
+    for x, y, w, h, _area in stats[1:count]:
+        x, y = x + left[1], y + left[0]
+        if (
+            BADGE_GLYPH_HEIGHT[0] <= h <= BADGE_GLYPH_HEIGHT[1]
+            and BADGE_GLYPH_WIDTH[0] <= w <= BADGE_GLYPH_WIDTH[1]
+            and x >= BADGE_GLYPH_X[0]
+            and x + w <= BADGE_GLYPH_X[1]
+            and y >= BADGE_GLYPH_Y[0]
+            and y + h <= BADGE_GLYPH_Y[1]
+        ):
+            return True
+    return False
 
 
 def badge_shown(frame_1080: np.ndarray, centre: tuple[int, int]) -> bool:
     """The cell shows an enhance or refine number (or anything unsure)."""
-    return badge_white_ratio(frame_1080, centre) >= BADGE_WHITE_MIN
+    return badge_glyph_found(frame_1080, centre)
 
 
 def slot_icon_shown(frame_1080: np.ndarray, centre: tuple[int, int]) -> bool:

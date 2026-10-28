@@ -14,6 +14,7 @@ read as 「无新奖励」.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic
 from types import SimpleNamespace
@@ -27,12 +28,12 @@ from src.tasks.task_vision_mixin import (
     REFERENCE_WIDTH,
     TaskVisionMixin,
 )
+from src.utils.home_confirmation import HOME_ANNOUNCEMENT_CLEAR_REFERENCE_POINT
 from src.utils.known_popups import (  # noqa: F401 - re-exported for the tasks
     CONFIRM_TEXT,
     OVERLAY_DISMISS_KEYWORDS,
     REWARD_DIALOG_TITLES,
 )
-from src.utils.home_confirmation import HOME_ANNOUNCEMENT_CLEAR_REFERENCE_POINT
 from src.utils.ocr_utils import keyword_match_count, normalize_ocr_text
 from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS
 from src.utils.wait_limits import (
@@ -376,9 +377,11 @@ class ClaimPageMixin(TaskVisionMixin):
     def _open_page_from_home(
         self,
         label: str,
-        entry_point: tuple[int, int],
+        entry_point: tuple[int, int] | Callable[[], tuple[int, int]],
         title_keywords: tuple[str, ...],
     ) -> bool:
+        """``entry_point`` may be a function, asked on 主页 before each click
+        (an icon found by its label, which moves when event icons come and go)."""
         if not self._wait_for_home_confirmation(f"{label}入口前主页确认", timeout=3.0):
             # Started from another page (e.g. a task clicked while the bag
             # was open): go home first instead of failing (2026-09-28).
@@ -394,7 +397,8 @@ class ClaimPageMixin(TaskVisionMixin):
         self._sleep_after_recognition()
         for attempt in range(1, ENTRY_CLICK_ATTEMPTS + 1):
             self.info_set("当前阶段", f"打开{label}（第{attempt}次点击）")
-            self._click_reference(*entry_point, after_sleep=0.8)
+            point = entry_point() if callable(entry_point) else entry_point
+            self._click_reference(*point, after_sleep=0.8)
             if self._wait_for_title(label, title_keywords, timeout=ENTRY_RETRY_SECONDS, quiet=True):
                 return True
             # The game sometimes swallows a click on a confirmed home screen;
@@ -468,7 +472,9 @@ class ClaimPageMixin(TaskVisionMixin):
             if text != last_text:
                 last_text, same_since = text, now
             elif text and now - same_since >= STUCK_TITLE_SECONDS:
-                self.log_info(f"{label}：画面停在「{text}」{STUCK_TITLE_SECONDS:.0f}秒未变化，停止等待。")
+                self.log_info(
+                    f"{label}：画面停在「{text}」{STUCK_TITLE_SECONDS:.0f}秒未变化，停止等待。"
+                )
                 break
             if wait is not None:
                 if wait.over(

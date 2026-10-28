@@ -390,6 +390,32 @@ def schedule_steps(shell) -> list[Step]:
     ]
 
 
+def status_bar_steps(shell) -> list[Step]:
+    """游戏里显示执行状态 is new on 设置, off by default (Leo 2026-10-28 「預設關閉
+    但是更新後要提示用戶這裡可以開啟」)."""
+
+    def settings_item():
+        return shell.sidebar.items.get("settings")
+
+    def row():
+        return getattr(shell.pages.get("settings"), "status_bar_row", None)
+
+    return [
+        Step(
+            settings_item,
+            "游戏里可以显示执行状态",
+            "跑的时候在游戏画面上方显示正在跑什么、跑到第几项，还有暂停、停止按钮。"
+            "默认关闭，在「设置」里打开。",
+        ),
+        Step(
+            row,
+            "游戏里显示执行状态",
+            "打开右边的开关就好。它不挡点击、截图拍不到，不会影响辨识。",
+            before=lambda: shell.navigate("settings"),
+        ),
+    ]
+
+
 def _show_once(shell, class_name: str, key: str, steps, on_done: Callable[[], None]) -> bool:
     task = data.task_by_class_name(class_name)
     config = getattr(task, "config", None)
@@ -459,6 +485,13 @@ def show_schedule_notice(shell, on_done: Callable[[], None] = lambda: None) -> b
     return _show_once(shell, "DailyBatchTask", SCHEDULE_NOTICE_KEY, schedule_steps, on_done)
 
 
+def show_status_bar_notice(shell, on_done: Callable[[], None] = lambda: None) -> bool:
+    """Show 设置's new 游戏里显示执行状态 once after this update."""
+    from src.tasks.DailyBatchTask import STATUS_BAR_NOTICE_KEY
+
+    return _show_once(shell, "DailyBatchTask", STATUS_BAR_NOTICE_KEY, status_bar_steps, on_done)
+
+
 NOTICES = (
     show_new_dailies_notice,
     show_quick_hunt_notice,
@@ -468,6 +501,7 @@ NOTICES = (
     show_close_game_notice,
     show_run_notify_notice,
     show_schedule_notice,
+    show_status_bar_notice,
 )
 
 

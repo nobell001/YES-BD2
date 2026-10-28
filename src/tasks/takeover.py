@@ -15,6 +15,9 @@ Ignored:
 - mouse movement alone, F1-F24 (ok's Start/Stop hotkey is F9) and PrintScreen;
   Alt+F4 does count: it closes the game, the run is not to reopen it;
 - anything on the 桌面分身 (input reaches the clone only by accident);
+- a press on the in-game status bar's buttons (src/utils/game_status_bar);
+- the player's mouse while the tool moves the real cursor: held here, kept
+  off the game, a press on a bar button pressed for it (src/utils/mouse_guard);
 - any input while the running task says the player plays along
   (``player_plays_along``, e.g. recording a 魔兽追踪者 fight).
 
@@ -44,6 +47,8 @@ MOUSE_PRESS_MESSAGES = frozenset(
         0x020E,  # WM_MOUSEHWHEEL
     }
 )
+# The button up that follows each down, for a press kept off the game.
+BUTTON_UP = {0x0201: 0x0202, 0x0204: 0x0205, 0x0207: 0x0208, 0x020B: 0x020C}
 LLMHF_INJECTED = 0x01
 LLKHF_INJECTED = 0x10
 LLKHF_ALTDOWN = 0x20
@@ -105,6 +110,7 @@ class TakeoverMonitor:
         self._stopped_task = None
         self._listeners = []
         self._hook_errors = set()
+        self._swallow_up: set[int] = set()  # ups of downs kept off the game
         try:
             from src.utils.clone_desktop import in_clone
 
@@ -137,6 +143,14 @@ class TakeoverMonitor:
         return hwnd in handles or root in handles
 
     def on_mouse(self, msg, data) -> bool:
+        try:
+            keep_off = self._keep_off_game(msg, data)
+        except Exception as exc:
+            self._note_hook_error("鼠标", exc)
+            keep_off = False
+        if keep_off:
+            self._suppress_mouse()  # raises: the event goes nowhere
+            return False
         if self.in_clone:
             # Input reaches the 桌面分身 only through its viewer window, mostly
             # by accident: a click to focus the viewer (the game is always in
@@ -150,7 +164,17 @@ class TakeoverMonitor:
                 if task is not None:
                     import win32gui
 
-                    hwnd = win32gui.WindowFromPoint((data.pt.x, data.pt.y))
+                    from src.utils import game_status_bar
+
+                    point = (data.pt.x, data.pt.y)
+                    logger.info(f"takeover: a real press at {point}")
+                    if game_status_bar.on_button(point):
+                        # Aimed at the status bar's button, even when the press
+                        # beat the button waking up (Leo's 4K 2026-10-28 16:02).
+                        logger.info("takeover: a press on the status bar's button, not the game")
+                        return False
+                    # A click on the in-game status bar goes through to the game.
+                    hwnd = game_status_bar.window_at(point)
                     # The hook runs before the click is handled, so the
                     # foreground is still the window that had focus.
                     front = self._root_is_game(win32gui.GetForegroundWindow())
@@ -162,6 +186,46 @@ class TakeoverMonitor:
         except Exception as exc:
             self._note_hook_error("鼠标", exc)
         return False  # never hand the event to pynput callbacks (none are set)
+
+    def _keep_off_game(self, msg, data) -> bool:
+        """The player's mouse event never reaches the game: while the tool
+        moves the real cursor (src/utils/mouse_guard), or a press on a
+        status bar button that is not taking clicks yet.  A press on a bar
+        button is that button's press (Leo's 4K 2026-10-28 16:29
+        「按好幾次才有反應」)."""
+        if self.in_clone or data.flags & LLMHF_INJECTED:
+            return False
+        from src.utils import game_status_bar, mouse_guard
+
+        if msg in self._swallow_up:
+            self._swallow_up.discard(msg)
+            return True
+        if mouse_guard.active():
+            if msg in BUTTON_UP:
+                self._swallow_up.add(BUTTON_UP[msg])
+                action = game_status_bar.button_at(mouse_guard.player_point())
+                if action is not None and msg == 0x0201:
+                    logger.info(f"takeover: {action} pressed on the status bar (tool on the mouse)")
+                    game_status_bar.press(action)
+                else:
+                    logger.info("takeover: a press while the tool is on the mouse, kept off")
+            return True
+        if msg == 0x0201 and self._running_task() is not None:
+            point = (data.pt.x, data.pt.y)
+            action = game_status_bar.button_at(point)
+            if action is not None and not game_status_bar.live_at(point):
+                # The press beat the button waking up: it would go through to the game.
+                logger.info(f"takeover: {action} pressed on the status bar before it took clicks")
+                self._swallow_up.add(BUTTON_UP[msg])
+                game_status_bar.press(action)
+                return True
+        return False
+
+    def _suppress_mouse(self) -> None:
+        listener = self._listeners[0] if self._listeners else None
+        suppress = getattr(listener, "suppress_event", None)
+        if callable(suppress):
+            suppress()
 
     def on_key(self, msg, data) -> bool:
         if self.in_clone:
@@ -238,6 +302,11 @@ class TakeoverMonitor:
         for listener in self._listeners:
             listener.daemon = True
             listener.start()
+        if not self.in_clone:
+            # The tool's taps and drags hold only the mouse from now on.
+            from src.utils import mouse_guard
+
+            mouse_guard.set_hooked(True)
         logger.info("takeover monitor started")
         return True
 

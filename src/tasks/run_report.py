@@ -188,7 +188,8 @@ def loose_trade(started: float | None, finished: float) -> dict | None:
 def add_note(key: str, note: str) -> None:
     with _lock:
         row = _row(key)
-        if row is not None and note:
+        # The same note twice (a step that runs its check again) is said once.
+        if row is not None and note and note not in str(row.get("note") or ""):
             row["note"] = f"{row['note']}，{note}" if row.get("note") else note
 
 

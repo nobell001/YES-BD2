@@ -350,7 +350,7 @@ class FiendHuntTask(BaseBD2Task):
             screen,
             folder,
             files,
-            lambda frame: vision.read_team(frame, screen.ocr),
+            screen.team_of,
             load_frame,
             self._turn_log,
             summons_only(load_game_names().characters.values()),

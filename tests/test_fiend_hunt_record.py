@@ -93,6 +93,16 @@ class FightRecordTest(unittest.TestCase):
         self.assertEqual({"克蕾西亚": "Claasia_9"}, loaded.turns[1].costumes)
         self.assertEqual({"克蕾西亚": {"技能2": "Claasia_9"}}, loaded.cards)
 
+    def test_preempt_kept_per_skill_card(self):
+        state = TurnState(1, 1, ("甲", "乙"), {"甲": (1, 1), "乙": (1, 3)}, preempt={"乙": "技能1"})
+        record = FightRecord(turns={1: state})
+        data = record_to_dict(record)
+        self.assertEqual({"乙": "技能1"}, data["turns"][0]["preempt"])
+        self.assertEqual({"乙": "技能1"}, record_from_dict(data).turns[1].preempt)
+        self.assertNotIn("preempt", record_to_dict(sample_record())["turns"][0])
+        with self.assertRaises(TurnStateError):
+            TurnState(1, 1, ("甲",), {"甲": (1, 1)}, preempt={"甲": "攻击"})
+
     def test_save_and_load_give_the_same_record(self):
         record = sample_record()
         with tempfile.TemporaryDirectory() as folder:

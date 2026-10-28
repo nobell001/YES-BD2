@@ -1254,15 +1254,9 @@ class HomePage(Page):
 
     @staticmethod
     def _stage_text(task) -> str:
-        if task is None:
-            return ""
-        info = task_info_snapshot(task)
-        for key in ("当前阶段", "状态"):
-            text = str(info.get(key) or "").strip()
-            if text and text != "-":
-                name = str(getattr(task, "name", ""))
-                return text[len(name) :].lstrip("：: ") if name and text.startswith(name) else text
-        return ""
+        from src.ui.shell import game_status
+
+        return game_status.stage_text(task)
 
     def _update_logs(self, task) -> None:
         if task is not None:

@@ -61,6 +61,49 @@ class PickTest(unittest.TestCase):
         self.assertFalse(known_popups.is_quit_dialog(_boxes("退出公会", "取消")))
 
 
+class BattleMenuTest(unittest.TestCase):
+    """Leo's 4K 2026-10-28 16:02: the way home from a 塔洛斯 fight opened the
+    battle's 暂停 menu and pressed its 「关闭」 (the 技能过场动画 setting) 11
+    times as if it closed a popup."""
+
+    MENU = (
+        "暂停", "简化版技能过场动画", "技能过场动画", "过场动画单独设置", "每次观看",
+        "1天观看1次", "仅观看新技能", "关闭", "整体音量", "BGM音量", "离开", "重新挑战",
+        "点击继续",
+    )
+
+    def test_only_continue_is_pressed_never_the_close_setting(self):
+        for allow_cancel in (False, True):
+            press = known_popups.pick(_boxes(*self.MENU), allow_cancel=allow_cancel)
+            self.assertEqual(press.label, "点击继续")
+            self.assertEqual(press.box.name, "点击继续")
+
+    def test_the_field_battle_menu_too(self):
+        press = known_popups.pick(_boxes("暂停", "关闭", "逃跑", "重新挑战", "点击继续"))
+        self.assertEqual(press.label, "点击继续")
+
+    def test_a_plain_close_button_still_closes(self):
+        self.assertEqual(known_popups.pick(_boxes("活动公告", "关闭")).label, "关闭")
+        self.assertFalse(known_popups.is_battle_menu(_boxes("点击继续")))
+
+    def test_leos_picture(self):
+        import cv2
+
+        from tests.test_page_lookalikes import ONNXPaddleOcr, navigator_with_real_ocr
+
+        if ONNXPaddleOcr is None:
+            self.skipTest("no OCR")
+        from pathlib import Path
+
+        picture = Path(__file__).parent / "fixtures/talos/pause_menu_leo_4k_as_1080.jpg"
+        frame = cv2.imread(str(picture))
+        boxes = navigator_with_real_ocr().task.ocr(frame=frame)
+        self.assertTrue(any(box.name == "关闭" for box in boxes))  # what was pressed
+        press = known_popups.pick(boxes, allow_cancel=True)
+        self.assertEqual(press.label, "点击继续")
+        self.assertGreater(press.box.y, 900)  # the bottom button, not the setting row
+
+
 class QuitDialogOnTheWayHomeTest(unittest.TestCase):
     def test_quit_dialog_is_cancelled_and_reported(self):
         clicks = []

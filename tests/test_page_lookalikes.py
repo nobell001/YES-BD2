@@ -25,6 +25,7 @@ except ImportError:  # pragma: no cover - CI without OCR
 from src.tasks.map_trade.models import ScreenState
 from src.tasks.map_trade.navigator import Navigator
 from src.tasks.map_trade.vision import Vision
+from src.utils import known_popups
 
 FIXTURES = Path(__file__).parent / "fixtures"
 MANIFEST = FIXTURES / "pages.json"
@@ -77,6 +78,12 @@ CHECKS = {
     # dialog yet: it may say yes on none of these).
     "价目表": (lambda nav, frame: _trader(nav)._price_list_open(frame), {"price_list"}),
     "出售弹窗": (lambda nav, frame: _trader(nav)._sale_dialog_shown(frame), set()),
+    # Only 「点击继续」 is pressed on it, never its 「关闭」 setting (Leo's 4K
+    # 2026-10-28 16:02).
+    "战斗暂停菜单": (
+        lambda nav, frame: known_popups.is_battle_menu(nav.task.ocr(frame=frame)),
+        {"battle_pause_menu"},
+    ),
 }
 
 

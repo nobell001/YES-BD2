@@ -1276,11 +1276,18 @@ class SkillExecutionMixin:
             early = self._existing_record_outcome(action, existing)
             if early is not None:
                 return early, None
-        if (
-            detection.state in {ActionIconState.AVAILABLE, ActionIconState.USED}
-            and not detection.stable
-        ):
-            return SkillExecutionResult(False, message=f"{action.name}图标未达到跨帧稳定确认"), None
+        if detection.state is ActionIconState.USED and not detection.stable:
+            return SkillExecutionResult(
+                False,
+                message=f"{action.name}图标像是灰的，但连看几次都不一样，认不准就没按",
+            ), None
+        # Bright, but no two looks in a row agree: pressed at its fixed slot
+        # whatever its count reads, and the game's answer decides (4K clone
+        # 2026-10-28, 第13章主城区 吸收: its bright core read 0.852 against the
+        # 0.85 line and the last look's edge 0.717 against 0.72, while its
+        # count read 0/21 steadily; the map was left unpressed, and on a
+        # battle map 召集/压制 with it).
+        unsteady = detection.state is ActionIconState.AVAILABLE and not detection.stable
         # A pending ARMED/CLICKED record whose icon is not bright is settled
         # by the count first (its icon may read nothing on some maps).
         by_count = None if bright else self._resume_by_count(
@@ -1293,9 +1300,14 @@ class SkillExecutionMixin:
         )
         if resumed is not None:
             return resumed, None
-        if detection.state in {ActionIconState.ABSENT, ActionIconState.UNKNOWN}:
-            slot = self._slot_detection(action)
+        if unsteady or detection.state in {ActionIconState.ABSENT, ActionIconState.UNKNOWN}:
+            slot = self._slot_detection(action, seen_bright=unsteady)
             if slot is None:
+                if unsteady:
+                    return SkillExecutionResult(
+                        False,
+                        message=f"{action.name}图标是亮的，但连看几次都不一样，认不准就没按",
+                    ), None
                 if detection.state is ActionIconState.ABSENT:
                     return SkillExecutionResult(False, message=f"未识别到{action.name}图标"), None
                 return SkillExecutionResult(False, message=f"{action.name}图标状态未知"), None
@@ -1326,17 +1338,21 @@ class SkillExecutionMixin:
             return failure, None
         return None, (action, frame, detection, before)
 
-    def _slot_detection(self, action: SkillAction):
+    def _slot_detection(self, action: SkillAction, *, seen_bright: bool = False):
         """(frame, detection) at the action's fixed slot when its icon is
         washed out but the count under it reads steadily (Leo 2026-10-06:
-        decide by the text).  The press is then proven by an exact +1 on that
-        count or the game's toast; a full count is pressed once and judged
-        the same way (_finish_after_click)."""
+        decide by the text), or when it was seen bright with no two looks in
+        a row agreeing (``seen_bright``): bright is pressed whatever the count
+        reads (Leo 2026-10-28 「除非你確定跑圖次數已經確實滿了」).  The press is
+        then proven by an exact +1 on that count or the game's answer (the
+        icon greying, its toast); a full count is pressed once and judged the
+        same way (_finish_after_click)."""
         if action.fixed_count_relative_roi is None:
             return None
         self._last_count_window_stable = False
         count = self._read_count_window(action)
-        if count is None or not self._last_count_window_stable:
+        steady = count is not None and self._last_count_window_stable
+        if not steady and not seen_bright:
             return None
         frame = self.vision.capture()
         height, width = frame.shape[:2]
@@ -1346,10 +1362,9 @@ class SkillExecutionMixin:
         y = round((top - SLOT_ICON_ABOVE_COUNT) * height)
         side = max(4, round(SLOT_ICON_SIZE * height))
         match = MatchResult(0.0, (x - side // 2, y - side // 2), (side, side))
-        self._status(
-            f"{action.name}图标",
-            f"看不清，按固定栏位，以次数 {count[0]}/{count[1]} 为准",
-        )
+        by_count = f"以次数 {count[0]}/{count[1]} 为准" if steady else "次数没读稳，看游戏的反应"
+        seen = "是亮的，但连看几次都不一样" if seen_bright else "看不清"
+        self._status(f"{action.name}图标", f"{seen}，按固定栏位，{by_count}")
         detection = ActionIconDetection(
             ActionIconState.AVAILABLE,
             match,

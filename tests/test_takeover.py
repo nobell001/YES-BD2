@@ -192,6 +192,33 @@ class PausedRunTest(unittest.TestCase):
         executor.stop_current_task.assert_called_once()
 
 
+class StatusBarPressTest(unittest.TestCase):
+    """Leo's 4K 2026-10-28 16:02: his quick press on the bar's ▶ beat the
+    button waking up, went through to the paused game and counted as him
+    using it, so 继续 went home instead of to the picked stage."""
+
+    def test_a_press_on_a_bar_button_is_never_the_player_using_the_game(self):
+        from src.utils import game_status_bar
+
+        monitor, executor, task = PausedRunTest._monitor(self)
+        game_status_bar.set_buttons(900, [(0, 0, 50, 50)])  # (10, 10) is on a button
+        self.addCleanup(game_status_bar.unregister, 900)
+        MonitorTest._click(self, monitor, 100)
+        self.assertFalse(getattr(task, "player_stepped_in", False))
+        task.paused = False
+        MonitorTest._click(self, monitor, 100)
+        executor.stop_current_task.assert_not_called()
+
+    def test_off_the_buttons_the_paused_game_still_counts(self):
+        from src.utils import game_status_bar
+
+        monitor, _executor, task = PausedRunTest._monitor(self)
+        game_status_bar.set_buttons(900, [(200, 200, 250, 250)])
+        self.addCleanup(game_status_bar.unregister, 900)
+        MonitorTest._click(self, monitor, 100)
+        self.assertTrue(task.player_stepped_in)
+
+
 class InstallTest(unittest.TestCase):
     def test_nothing_starts_without_a_running_app(self):
         # Unit tests import the config (which installs the monitor); with no

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
+from src.tasks import run_report
 from src.tasks.map_trade import trade_detail
 from src.tasks.map_trade.calendar import (
     SALE_PRICE_REFRESH_HOUR,
@@ -427,6 +428,14 @@ class SellFlowMixin:
             entries = allowed_entries
         entries = self._apply_day_checklist(calendar_date.day, entries)
         if not entries:
+            # Said on the report, so a run that sold nothing says why
+            # (Leo 2026-10-28 「29 30 31 沒有東西賣 報表要寫清楚 例如 29號不販售」).
+            if sellable:
+                run_report.add_current_note(
+                    f"卖：{calendar_date.day}号价表上的商品都被出售设定（白名单、黑名单或出售清单）排除了，所以没卖"
+                )
+            else:
+                run_report.add_current_note(f"卖：{calendar_date.day}号不贩售")
             if use_blacklist:
                 self.task.log_info("跑商：筛选后没有可出售的最高价物品。")
             elif use_whitelist:

@@ -59,8 +59,7 @@ def _action(saved: str | None, frame: np.ndarray | None, slot: int) -> str:
         return "攻击" if saved == "攻击" else saved
     if frame is None:
         return ""
-    icon = vision.has_skill_icon(frame, slot)
-    return "" if icon is None else ("技能" if icon else "攻击")
+    return vision.list_action(frame, slot) or ""
 
 
 def _burst(saved: int | None, frame: np.ndarray | None, slot: int, action: str) -> int:

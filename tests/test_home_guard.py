@@ -222,6 +222,32 @@ class StepInAfterPauseTest(unittest.TestCase):
         home.assert_called_once_with(task)
         self.assertEqual(1, len(runs))
 
+    def test_the_task_leaves_its_own_screen_before_the_way_home(self):
+        # 塔洛斯: a fight is left by ‖ → 离开 → 确认; back, H and Esc do nothing there
+        from src.tasks.BaseBD2Task import PlayerSteppedIn
+
+        task, runs = self._task([PlayerSteppedIn(), True])
+        steps = []
+        task.leave_after_step_in = lambda: steps.append("leave")
+        def home(_task):
+            steps.append("home")
+            return True
+
+        with mock.patch("src.tasks.recovery.recover_to_home", side_effect=home):
+            self.assertTrue(task.run())
+        self.assertEqual(["leave", "home"], steps)
+        self.assertEqual(2, len(runs))
+
+    def test_a_failed_leave_still_goes_home(self):
+        from src.tasks.BaseBD2Task import PlayerSteppedIn
+
+        task, runs = self._task([PlayerSteppedIn(), True])
+        task.leave_after_step_in = mock.Mock(side_effect=RuntimeError("读不到"))
+        with mock.patch("src.tasks.recovery.recover_to_home", return_value=True) as home:
+            self.assertTrue(task.run())
+        home.assert_called_once_with(task)
+        self.assertEqual(2, len(runs))
+
     def test_a_new_run_forgets_a_step_in_left_by_a_stop(self):
         task, _runs = self._task([True])
         task._executor.current_task = task

@@ -3,7 +3,7 @@
     # The version our patched launcher reports. Installed launchers replace
     # themselves only with a higher one (ok's update_pyappify), so bump this
     # whenever the launcher patches below change.
-    [string]$LauncherVersion = "1.2.12",
+    [string]$LauncherVersion = "1.2.13",
     [string]$BuildDir = "pyappify_build",
     [ValidateSet("zlib", "lzma")]
     [string]$NsisCompression = "lzma",
@@ -1156,6 +1156,10 @@ foreach ($entry in @(
 # to 3 tries; pip's cache keeps every package already downloaded, and the
 # last try uses the other China mirror when Aliyun or Tsinghua is set. If
 # all fail, the message says what the player can do.
+# Before the install the pip sources are timed and the fastest one is used
+# (player report 2026-10-22: Aliyun gave that player 80-100 kB/s, so the
+# ~300 MB of packages looked stuck for an hour).  Only when the launcher's
+# setting is one of the listed sources; a source the player typed is kept.
 $pythonEnvRs = Replace-Once $pythonEnvRs `
     (@'
 #[cfg(target_os = "windows")]
@@ -1171,15 +1175,44 @@ pub async fn install_requirements(
 #[cfg(target_os = "windows")]
 const PIP_INSTALL_ATTEMPTS: usize = 3;
 
+/// The sources the launcher's settings list (index URL, then where the same
+/// source keeps its package files); only these are timed.
+#[cfg(target_os = "windows")]
+const PIP_SPEED_SOURCES: [(&str, &str, &str); 6] = [
+    ("aliyun", "https://mirrors.aliyun.com/pypi/simple/", "https://mirrors.aliyun.com/pypi/packages/"),
+    ("tsinghua", "https://pypi.tuna.tsinghua.edu.cn/simple", "https://pypi.tuna.tsinghua.edu.cn/packages/"),
+    ("tencent", "https://mirrors.cloud.tencent.com/pypi/simple/", "https://mirrors.cloud.tencent.com/pypi/packages/"),
+    ("huawei", "https://repo.huaweicloud.com/repository/pypi/simple/", "https://repo.huaweicloud.com/repository/pypi/packages/"),
+    ("ustc", "https://mirrors.ustc.edu.cn/pypi/simple/", "https://mirrors.ustc.edu.cn/pypi/packages/"),
+    ("pypi", "https://pypi.org/simple/", "https://files.pythonhosted.org/packages/"),
+];
+/// One of the largest packages the install downloads (its 76 MB wheel, the
+/// one that looked stuck); every source keeps it at the same path, and
+/// PyPI never removes a released file.
+#[cfg(target_os = "windows")]
+const PIP_SPEED_FILE: &str = "93/81/f4605ab2bdbb3daff7cadf7d5265e87c4fe95d01af00ae8e1638b9a4abe9/openvino-2026.2.1-21919-cp312-cp312-win_amd64.whl";
+#[cfg(target_os = "windows")]
+const PIP_SPEED_READ_SECONDS: u64 = 4;
+#[cfg(target_os = "windows")]
+const PIP_SPEED_READ_BYTES: u64 = 4 * 1024 * 1024;
+
+fn configured_pip_index_url() -> Option<String> {
+    GLOBAL_CONFIG_STATE
+        .get()?
+        .lock()
+        .ok()?
+        .get_effective_pip_index_url()
+}
+
+fn same_index(a: &str, b: &str) -> bool {
+    a.trim_end_matches('/') == b.trim_end_matches('/')
+}
+
 /// The other China mirror for the last try when the configured one keeps
 /// breaking off downloads; None keeps the configured source.
 #[cfg(target_os = "windows")]
 fn fallback_pip_index_url() -> Option<String> {
-    let configured = GLOBAL_CONFIG_STATE
-        .get()?
-        .lock()
-        .ok()?
-        .get_effective_pip_index_url()?;
+    let configured = configured_pip_index_url()?;
     if configured.contains("aliyun") {
         Some("https://pypi.tuna.tsinghua.edu.cn/simple".to_string())
     } else if configured.contains("tsinghua") {
@@ -1187,6 +1220,96 @@ fn fallback_pip_index_url() -> Option<String> {
     } else {
         None
     }
+}
+
+/// Bytes per second read from one source's copy of a large package, or None
+/// when the source cannot be reached in time.
+#[cfg(target_os = "windows")]
+async fn pip_source_speed(client: &Client, packages_url: &str) -> Option<f64> {
+    use std::time::{Duration, Instant};
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(PIP_SPEED_READ_SECONDS);
+    let response = tokio::time::timeout_at(
+        deadline.into(),
+        client
+            .get(format!("{}{}", packages_url, PIP_SPEED_FILE))
+            .header("Range", format!("bytes=0-{}", PIP_SPEED_READ_BYTES - 1))
+            .send(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let mut stream = response.bytes_stream();
+    let mut read: u64 = 0;
+    while read < PIP_SPEED_READ_BYTES {
+        match tokio::time::timeout_at(deadline.into(), futures_util::StreamExt::next(&mut stream)).await {
+            Ok(Some(Ok(chunk))) => read += chunk.len() as u64,
+            _ => break,
+        }
+    }
+    let seconds = started.elapsed().as_secs_f64().max(0.001);
+    if read == 0 {
+        None
+    } else {
+        Some(read as f64 / seconds)
+    }
+}
+
+fn speed_text(speed: Option<f64>) -> String {
+    match speed {
+        Some(bytes) if bytes >= 1024.0 * 1024.0 => format!("{:.1} MB/s", bytes / 1024.0 / 1024.0),
+        Some(bytes) => format!("{:.0} kB/s", bytes / 1024.0),
+        None => "-".to_string(),
+    }
+}
+
+/// The fastest and second fastest listed sources, when the launcher's
+/// setting is one of them (None: keep the setting).
+#[cfg(target_os = "windows")]
+async fn fastest_pip_index_urls(app_name: &str) -> (Option<String>, Option<String>) {
+    let configured = match configured_pip_index_url() {
+        Some(url) => url,
+        None => return (None, None),
+    };
+    if !PIP_SPEED_SOURCES.iter().any(|(_, url, _)| same_index(url, &configured)) {
+        return (None, None);
+    }
+    emit_info!(app_name, "正在测试哪个下载来源最快 / Timing the package sources...");
+    let client = match Client::builder().build() {
+        Ok(client) => client,
+        Err(_) => return (None, None),
+    };
+    let speeds = futures_util::future::join_all(
+        PIP_SPEED_SOURCES
+            .iter()
+            .map(|(_, _, packages)| pip_source_speed(&client, packages)),
+    )
+    .await;
+    emit_info!(
+        app_name,
+        "下载来源速度 / Source speeds: {}",
+        PIP_SPEED_SOURCES
+            .iter()
+            .zip(speeds.iter())
+            .map(|((name, _, _), speed)| format!("{} {}", name, speed_text(*speed)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let mut ranked: Vec<(f64, &str)> = PIP_SPEED_SOURCES
+        .iter()
+        .zip(speeds.iter())
+        .filter_map(|((_, url, _), speed)| speed.map(|s| (s, *url)))
+        .collect();
+    ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let first = ranked.first().map(|(_, url)| url.to_string());
+    let second = ranked.get(1).map(|(_, url)| url.to_string());
+    if let Some(url) = &first {
+        emit_info!(app_name, "用最快的来源下载 / Using the fastest source: {}", url);
+    }
+    (first, second)
 }
 
 #[cfg(target_os = "windows")]
@@ -1197,11 +1320,12 @@ pub async fn install_requirements(
     pip_args: &str,
 ) -> Result<(), Error> {
     let mut last_error = String::new();
+    let (fastest, second_fastest) = fastest_pip_index_urls(app_name).await;
     for attempt in 1..=PIP_INSTALL_ATTEMPTS {
         let index_override = if attempt == PIP_INSTALL_ATTEMPTS {
-            fallback_pip_index_url()
+            second_fastest.clone().or_else(fallback_pip_index_url)
         } else {
-            None
+            fastest.clone()
         };
         if attempt > 1 {
             emit_info!(

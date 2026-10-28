@@ -1733,5 +1733,90 @@
   "en": "After this many misses in a row, this Run All Dailies / Weeklies is cancelled",
   "ja": "この回数続けてホームに入れなければ、今回のデイリー/ウィークリー一括実行を中止します",
   "ko": "이 횟수만큼 연속으로 메인 화면에 못 들어가면 이번 일일/주간 일괄 실행을 취소합니다"
+ },
+ "游戏里显示执行状态": {
+  "en": "Show run status in the game",
+  "ja": "実行状況をゲーム画面に表示",
+  "ko": "게임 화면에 실행 상태 표시"
+ },
+ "跑的时候在游戏画面上方显示进度，不挡点击、不影响辨识": {
+  "en": "Shows progress at the top of the game while running. It never blocks clicks or recognition.",
+  "ja": "実行中、ゲーム画面の上部に進行状況を表示します。クリックや画像認識の邪魔はしません。",
+  "ko": "실행 중 게임 화면 위쪽에 진행 상황을 표시합니다. 클릭이나 인식을 방해하지 않습니다."
+ },
+ "正在停止": {
+  "en": "Stopping",
+  "ja": "停止中",
+  "ko": "중지 중"
+ },
+ "跑完": {
+  "en": "Finished",
+  "ja": "完了",
+  "ko": "완료"
+ },
+ "已停止": {
+  "en": "Stopped",
+  "ja": "停止しました",
+  "ko": "중지됨"
+ },
+ "第 {n} / {total} 项": {
+  "en": "Item {n} / {total}",
+  "ja": "{n} / {total} 項目",
+  "ko": "{n} / {total}번째"
+ },
+ "完成 {n}": {
+  "en": "{n} done",
+  "ja": "完了 {n}",
+  "ko": "완료 {n}"
+ },
+ "跳过 {n}": {
+  "en": "{n} skipped",
+  "ja": "スキップ {n}",
+  "ko": "건너뜀 {n}"
+ },
+ "失败 {n}": {
+  "en": "{n} failed",
+  "ja": "失敗 {n}",
+  "ko": "실패 {n}"
+ },
+ "回到工具看结算": {
+  "en": "See the summary in the tool",
+  "ja": "結果はツールで確認できます",
+  "ko": "결과는 도구에서 확인하세요"
+ },
+ "{done} / {total} 项": {
+  "en": "{done} / {total} items",
+  "ja": "{done} / {total} 項目",
+  "ko": "{done} / {total}개"
+ },
+ "游戏里可以显示执行状态": {
+  "en": "Run status can show in the game",
+  "ja": "実行状況をゲーム画面に表示できます",
+  "ko": "게임 화면에 실행 상태를 표시할 수 있습니다"
+ },
+ "跑的时候在游戏画面上方显示正在跑什么、跑到第几项，还有暂停、停止按钮。默认关闭，在「设置」里打开。": {
+  "en": "While running, the top of the game shows what is running, which item it is on, and Pause/Stop buttons. Off by default; turn it on in Settings.",
+  "ja": "実行中、ゲーム画面の上部に実行中の内容と何項目目か、一時停止・停止ボタンを表示します。初期状態はオフで、「設定」でオンにできます。",
+  "ko": "실행 중 게임 화면 위쪽에 무엇을 실행 중인지, 몇 번째 항목인지와 일시정지·중지 버튼을 표시합니다. 기본은 꺼짐이며 「설정」에서 켤 수 있습니다."
+ },
+ "打开右边的开关就好。它不挡点击、截图拍不到，不会影响辨识。": {
+  "en": "Just turn on the switch on the right. It never blocks clicks and never shows in screenshots, so recognition is not affected.",
+  "ja": "右のスイッチをオンにするだけです。クリックを妨げず、スクリーンショットにも写らないので、認識に影響しません。",
+  "ko": "오른쪽 스위치를 켜기만 하면 됩니다. 클릭을 막지 않고 스크린샷에도 찍히지 않아 인식에 영향을 주지 않습니다."
+ },
+ "第 {n} 关": {
+  "en": "Stage {n}",
+  "ja": "ステージ {n}",
+  "ko": "{n}스테이지"
+ },
+ "按继续改打第 {n} 关": {
+  "en": "Resume to play Stage {n} instead",
+  "ja": "再開するとステージ {n} に切り替えます",
+  "ko": "계속을 누르면 {n}스테이지로 바꿉니다"
+ },
+ "已通关": {
+  "en": "cleared",
+  "ja": "クリア済み",
+  "ko": "클리어함"
  }
 }

@@ -77,6 +77,84 @@ class PixelReadersTest(unittest.TestCase):
     def test_battle_end(self):
         self.check("battle_end.png", planning=False, topdown=False, slots=0, end=True)
 
+    def test_talos_victory_is_an_end_but_not_battle_end(self):
+        for name in ("talos_victory_2k.png", "talos_victory_sparkle_2k.png"):
+            for size, frame in frames(name):
+                with self.subTest(fixture=name, size=size):
+                    self.assertTrue(vision.victory_visible(frame))
+                    self.assertFalse(vision.battle_end_visible(frame))
+                    self.assertFalse(vision.planning_visible(frame))
+
+    def test_talos_defeat_is_a_lost_fight(self):
+        # 2K PC 2026-10-28 stage 7: 「DEFEAT」 on a red band mid-screen; the
+        # tool took it for a frozen battle.
+        for size, frame in frames("talos_defeat_2k.png"):
+            with self.subTest(size=size):
+                self.assertTrue(vision.defeat_band(frame))
+                self.assertIn("DEFEAT", vision.lost_word(frame, ocr))
+                self.assertFalse(vision.victory_visible(frame))
+                self.assertFalse(vision.planning_visible(frame))
+
+    def test_no_defeat_band_on_wins_and_fights(self):
+        for name in (
+            "talos_victory_2k.png",
+            "talos_victory_sparkle_2k.png",
+            "talos_angled_s4_2k.png",
+            "talos_planning_2k.png",
+            "battle_end.png",
+        ):
+            for size, frame in frames(name):
+                with self.subTest(fixture=name, size=size):
+                    self.assertFalse(vision.defeat_band(frame))
+                    self.assertIsNone(vision.lost_word(frame, ocr))
+
+    def test_talos_zoom_percent(self):
+        for name, percent in (
+            ("talos_zoom_78_2k.png", 78),
+            ("talos_zoom_97_2k.png", 97),
+            ("talos_zoom_114_2k.png", 114),
+            ("talos_zoom_none_2k.png", None),
+        ):
+            for size, frame in frames(name):
+                with self.subTest(fixture=name, size=size):
+                    self.assertEqual(percent, vision.zoom_percent(frame, ocr))
+
+    def test_talos_view_told_by_its_floor(self):
+        # 2K PC 2026-10-28: stage 3's angled view on light stone, which the
+        # floor check alone took for the top-down grey; stage 5's angled view
+        # with 切换画面 greyed out (no sign of the view).
+        for name, topdown in (
+            ("talos_angled_s3_light_floor_2k.png", False),
+            ("talos_angled_s4_2k.png", False),
+            ("talos_angled_s5_grey_switch_2k.png", False),
+            ("talos_topdown_s3_2k.png", True),
+            ("talos_topdown_s5_2k.png", True),
+            # stage 8's dark floor (2K PC 2026-10-28, run without help)
+            ("talos_angled_s8_dark_2k.png", False),
+            ("talos_topdown_s8_dark_2k.png", True),
+        ):
+            for size, frame in frames(name):
+                with self.subTest(fixture=name, size=size):
+                    self.assertTrue(vision.talos_layout(frame))
+                    self.assertEqual(topdown, vision.is_topdown(frame))
+        for name in ("real_cave_isometric_t1.png", "real_cave_topdown_t1.png"):
+            for size, frame in frames(name):
+                with self.subTest(fixture=name, size=size):
+                    self.assertFalse(vision.talos_layout(frame))  # a 魔兽 fight
+
+    def test_no_victory_on_other_screens(self):
+        for name in (
+            "battle_end.png",
+            "battle_end_hp_run1.png",
+            "planning_topdown_t1.png",
+            "talos_planning_2k.png",
+            "real_cave_isometric_t1.png",
+            "team2_planning_t13.png",
+        ):
+            for size, frame in frames(name):
+                with self.subTest(fixture=name, size=size):
+                    self.assertFalse(vision.victory_visible(frame))
+
     def test_dialog_over_the_planning_screen_hides_the_list(self):
         # the BATTLE pill still matches under the dim dialog; the list doesn't
         for size, frame in frames("change_team_dialog.png"):
@@ -88,6 +166,52 @@ class PixelReadersTest(unittest.TestCase):
         # TURN 1: four units on the bottom row, one front of the middle row
         occupied = {(2, 0), (2, 1), (2, 2), (2, 3), (1, 3)}
         self.assertEqual(occupied, set(vision.cells_by_busy(frame)[:5]))
+
+
+class TalosBusyCellsTest(unittest.TestCase):
+    """塔洛斯's grid is bigger: which cells hold someone is read on the grid as
+    drawn, not layout's (the five units of the planning frame)."""
+
+    def test_units_found_on_the_drawn_grid(self):
+        frame = load_fhd_bgr(FIXTURES / "talos_planning_2k.png")
+        grid = vision.grid_on_screen(frame)
+        self.assertIsNotNone(grid)
+        units = {(0, 2), (0, 3), (1, 2), (1, 3), (2, 3)}
+        self.assertEqual(units, set(vision.cells_by_busy(frame, grid)[:5]))
+        self.assertLess(
+            max(vision.cell_busy_score(frame, cell, grid) for cell in vision_cells() - units),
+            min(vision.cell_busy_score(frame, cell, grid) for cell in units),
+        )
+
+
+def vision_cells():
+    return {(row, col) for row in range(vision.ROWS) for col in range(vision.COLS)}
+
+
+class KnockbackTest(unittest.TestCase):
+    # 塔洛斯战术教材 (Leo 2026-10-22): 击退 shows a white arrow where the skill
+    # icon sits, pointing each character's own way.  A 2K capture (all five on
+    # 击退) and turns of a 720p guide video; only the list is kept.
+    CASES = {
+        "talos_list_knockback_2k.png": ["击退"] * 5,
+        "talos_list_video_00.png": ["技能", "技能", "技能", "攻击", "技能"],
+        "talos_list_video_01.png": ["击退", "击退", "攻击", "击退", "攻击"],
+        "talos_list_video_28.png": ["技能", "击退", "击退", "击退"],
+    }
+
+    def test_each_entry_reads_as_attack_knockback_or_skill(self):
+        for name, wanted in self.CASES.items():
+            frame = cv2.imread(str(FIXTURES / name))
+            with self.subTest(name=name):
+                seen = [vision.list_action(frame, slot) for slot in range(len(wanted))]
+                self.assertEqual(wanted, seen)
+                skills = [vision.has_skill_icon(frame, slot) for slot in range(len(wanted))]
+                self.assertEqual([action == "技能" for action in wanted], skills)
+
+    def test_same_card_tells_knockback_from_attack(self):
+        video_01 = cv2.imread(str(FIXTURES / "talos_list_video_01.png"))
+        self.assertFalse(vision.same_card(video_01, 0, video_01, 2))  # 击退 vs 攻击
+        self.assertTrue(vision.same_card(video_01, 0, video_01, 1))  # 击退 vs 击退
 
 
 @unittest.skipIf(ONNXPaddleOcr is None, "onnxocr not installed")
@@ -139,6 +263,17 @@ class CardColumnTest(unittest.TestCase):
         # TURN 21 top-down: 帕莱特 on 越过 (attack); her purple skill art is
         # nearly as saturated, and her 2nd skill card is greyed (cooldown 1)
         self.check("cards_t21_bright_skill_art.png", selected=0, cards=4, lit=0, label="攻击")
+
+    def test_preempt_switch_beside_the_skill_card(self):
+        # 塔洛斯 stage 7 (2K PC 2026-10-28): 格兰希特's 「先发制人」, off then on
+        for name, on in (("talos_preempt_off_2k.png", False), ("talos_preempt_on_2k.png", True)):
+            for size, frame in frames(name):
+                with self.subTest(fixture=name, size=size):
+                    self.assertEqual([1], vision.selected_slots(frame))
+                    self.assertEqual(3, vision.card_count(frame))
+                    self.assertFalse(vision.preempt_beside(frame, ocr, 1))
+                    self.assertTrue(vision.preempt_beside(frame, ocr, 2))
+                    self.assertEqual(on, vision.preempt_on(frame, 2))
 
     def test_no_column_while_nobody_is_selected(self):
         self.check("cards_t13_none.png", selected=None, cards=0, lit=None, label=None)
@@ -357,10 +492,45 @@ class GridOnScreenTest(unittest.TestCase):
                 x, y = drawn.point(layout.cell_press((0, 0)))
                 self.assertTrue(535 < x < 585 and 450 < y < 495, (x, y))
 
+    def test_talos_big_grid(self):
+        # 2K PC 2026-10-22, 塔洛斯战术教材 stage 1: the cells 1.31 the size,
+        # higher and left of layout's; the fixed cells pressed the floor
+        for size, frame in frames("talos_planning_2k.png"):
+            with self.subTest(size=size):
+                drawn = vision.grid_on_screen(frame)
+                self.assertAlmostEqual(1.31, drawn.scale, delta=0.015)
+                self.assertAlmostEqual(395, drawn.left, delta=3)
+                self.assertAlmostEqual(264, drawn.top, delta=3)
+                # row 1 col 4 (the red-hat unit) lands inside its bracket (690-780, 262-352)
+                x, y = drawn.point(layout.cell_press((0, 3)))
+                self.assertTrue(695 < x < 775 and 270 < y < 350, (x, y))
+
     def test_no_grid_off_the_top_down_view(self):
         for name in ("real_cave_isometric_t1.png", "battle_end.png"):
             with self.subTest(fixture=name):
                 self.assertIsNone(vision.grid_on_screen(load_fhd_bgr(FIXTURES / name)))
+
+
+class ViewToggleTest(unittest.TestCase):
+    def test_found_where_each_fight_puts_it(self):
+        # 魔兽: where layout has it; 塔洛斯 (2K PC 2026-10-22): 100 px left,
+        # with the greyed-out 切换画面 where 魔兽 has 切换视角
+        for name, (x, y) in (
+            ("real_cave_isometric_t1.png", layout.VIEW_TOGGLE),
+            ("real_cave_topdown_t1.png", layout.VIEW_TOGGLE),
+            ("talos_view_buttons_2k.png", (1420.0, 974.0)),
+        ):
+            for size, frame in frames(name):
+                with self.subTest(fixture=name, size=size):
+                    found = vision.view_toggle_point(frame)
+                    self.assertIsNotNone(found)
+                    self.assertAlmostEqual(x, found[0], delta=6)
+                    self.assertAlmostEqual(y, found[1], delta=8)
+
+    def test_none_without_the_button(self):
+        for name in ("battle_end.png", "planning_topdown_t1.png", "talos_planning_2k.png"):
+            with self.subTest(fixture=name):
+                self.assertIsNone(vision.view_toggle_point(load_fhd_bgr(FIXTURES / name)))
 
 
 class AutoSkillTest(unittest.TestCase):
@@ -387,6 +557,27 @@ class AutoSkillTest(unittest.TestCase):
                     self.assertEqual(on, vision.auto_skill_turning(first, second))
                     alpha = [cv2.cvtColor(f, cv2.COLOR_BGR2BGRA) for f in (first, second)]
                     self.assertEqual(on, vision.auto_skill_turning(*alpha))
+
+    def test_talos_4k_on_then_off_after_one_tap(self):
+        # 4K PC 2026-10-28, 塔洛斯 stage 7 T1 (auto skill on, 8 SP queued);
+        # the tap at (1497.5, 50) turned it off within 0.7 s
+        for state, on in (("on", True), ("off", False)):
+            pairs = frame_pairs(f"talos_autoskill_{state}_a.png", f"talos_autoskill_{state}_b.png")
+            for size, first, second in pairs:
+                with self.subTest(state=state, size=size):
+                    self.assertTrue(vision.icons_lit(second))
+                    self.assertEqual(on, vision.auto_skill_on(second))
+                    self.assertEqual(on, vision.auto_skill_turning(first, second))
+
+    def test_icons_still_fading_in_are_not_read(self):
+        # the planning screen's BATTLE shows before the scenery and icons do
+        for size, frame in frames("talos_fading_in.png"):
+            with self.subTest(size=size):
+                self.assertTrue(vision.planning_visible(frame))
+                self.assertFalse(vision.icons_lit(frame))
+        for name in ("auto_skill_on.png", "auto_skill_off.png", "real_cave_isometric_t1.png"):
+            with self.subTest(fixture=name):
+                self.assertTrue(vision.icons_lit(load_fhd_bgr(FIXTURES / name)))
 
     def test_moving_scenery_behind_a_still_icon_is_not_a_spin(self):
         # Flickering backdrop (effects, water): every dark pixel changes between

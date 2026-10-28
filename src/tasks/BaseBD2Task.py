@@ -248,6 +248,16 @@ def _escape_when_stuck(task) -> bool:
 def _home_after_step_in(task) -> bool:
     name = getattr(task, "name", "")
     cls = type(task)
+    leave = getattr(task, "leave_after_step_in", None)
+    if callable(leave):
+        # The task's own way out of where it stood (塔洛斯: a fight, left by
+        # ‖ → 离开 → 确认), where back, H and Esc do nothing.
+        try:
+            leave()
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception as error:
+            task.log_info(f"{name}：退出原来的画面时出错（{error}），直接回主页。")
     home_task = getattr(cls, "start_from_home", False) or getattr(
         cls, "recover_home_on_failure", False
     )
@@ -515,6 +525,12 @@ class BaseBD2Task(BaseTask):
         """Publish a completion popup unless this task is running as a batch child."""
 
         log_task_completion(self, message)
+
+    def done_already(self, note: str) -> None:
+        """The screen showed this chore was already done today (by hand, on
+        another PC or in another tool): 一键日常 lists it as 跳过 with ``note``
+        instead of 完成 (Leo 2026-10-28 「應該判定已跳過 已完成就好」)."""
+        self.done_already_note = note
 
     def _task_info_lock(self) -> threading.RLock:
         """The per-instance info lock, or a shared fallback for odd instances.
@@ -1118,7 +1134,11 @@ class BaseBD2Task(BaseTask):
             finally:
                 win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
 
-        self.operate(action, block=True, restore_cursor=True)
+        from src.utils import game_status_bar
+
+        # A real press: the in-game status bar's buttons let it through.
+        with game_status_bar.hold_clicks():
+            self.operate(action, block=True, restore_cursor=True)
         if not dragged:
             self.info_set("拖动", "未拖动：游戏窗口不在最前面或被其他窗口遮住")
             self.log_warning(
@@ -1136,7 +1156,10 @@ class BaseBD2Task(BaseTask):
 
         handles = self._game_window_handles()
         try:
-            hwnd = win32gui.WindowFromPoint(tuple(int(value) for value in point))
+            from src.utils import game_status_bar
+
+            # Through the in-game status bar: it never counts as covering.
+            hwnd = game_status_bar.window_at(tuple(int(value) for value in point))
             root = win32gui.GetAncestor(hwnd, 2)  # GA_ROOT
         except Exception:
             return False

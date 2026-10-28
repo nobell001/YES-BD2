@@ -30,6 +30,7 @@
   "fiend_hunt/real_cave_isometric_t1.png": "fiend_hunt",
   "fiend_hunt/shots_2k_a_t07.png": "fiend_hunt",
   "fiend_hunt/team2_planning_t13.png": "fiend_hunt",
+  "junk_gear/detail_r_ring_over_bag_leo_4k_at_1080.jpg": "bag_detail",
   "junk_gear/detail_sr_tall_hunter_bow_player_1440_at_1080.jpg": "bag_detail",
   "map_trade/home_return/update_notice.png": "home_notice",
   "map_trade/map_pages/auto_move_dialog_player_fhd.jpg": "field_map",
@@ -76,6 +77,7 @@
   "redemption_tower/result_screen_2k.jpg": "battle_result",
   "redemption_tower/tower_page_ticks_2k.jpg": "tower_levels",
   "square/square_area_map_2k.jpg": "square_map",
-  "square/square_field_nav_menu_2k.jpg": "field_nav_menu"
+  "square/square_field_nav_menu_2k.jpg": "field_nav_menu",
+  "talos/pause_menu_leo_4k_as_1080.jpg": "battle_pause_menu"
  }
 }

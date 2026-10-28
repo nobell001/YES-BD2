@@ -306,6 +306,8 @@ class Sidebar(QWidget):
         ("daily", "任务设定", "calendar-check"),
         ("trade", "跑商", "coins"),
         ("map", "跑图", "map"),
+        # Leo 2026-10-28 「放側邊欄 把放魔獸追蹤者上面」.
+        ("talos", "塔洛斯教材", "swords"),
         # Leo 2026-10-06: 魔兽战 back, on a page of its own.
         ("fiend", "魔兽追踪者", "skull"),
     )

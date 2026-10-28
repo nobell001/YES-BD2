@@ -249,23 +249,29 @@ def fake_vision():
         # the brackets as drawn: layout's grid unless the game zoomed it
         grid_on_screen=lambda f: (f.grid or vision.LAYOUT_GRID) if f.topdown else None,
         planning_visible=lambda f: not (f.end or f.fighting),
+        icons_lit=lambda f: getattr(f, "lit", True),
         battle_end_visible=lambda f: f.end,
+        victory_visible=lambda f: False,
+        lost_word=lambda f, ocr: None,
         # the fake battle never holds still
         still_picture=lambda f: object(),
         same_still=lambda earlier, now: False,
         is_topdown=lambda f: f.floor > 110,
         view_offset=lambda f: f.offset,
+        view_toggle_point=lambda f: None,
+        talos_layout=lambda f: False,
         floor_level=lambda f: f.floor,
         slot_count=lambda f: 0 if (f.end or f.fighting) else len(f.names),
         out_slots=lambda f, count: list(range(f.living, count)),
         selected_slots=lambda f, count=6: [] if f.selected is None else [f.selected],
         read_turn=lambda f, ocr: f.turn,
         read_team=lambda f, ocr: f.team if f.selected is None else None,
+        single_team=lambda f, ocr: False,
         read_name=lambda f, ocr: (
             "" if f.selected is None else f"S{f.names[f.selected]}ET"  # icon/letters around it
         ),
         read_dialog_title=lambda f, ocr: f.dialog,
-        cell_busy_score=lambda f, cell: 60.0 if cell in f.cells.values() else 10.0,
+        cell_busy_score=lambda f, cell, grid=None: 60.0 if cell in f.cells.values() else 10.0,
         card_count=lambda f: f.cards[0] if f.cards else 0,
         lit_card=lambda f: f.cards[1] if f.cards else None,
         card_label=vision.card_label,
@@ -275,6 +281,12 @@ def fake_vision():
             None if f.swept else f.entries[slot] == saved.entries[saved_slot]
         ),
         has_skill_icon=lambda f, slot: f.entries[slot][1] >= layout.FIRST_SKILL_ROW,
+        list_action=lambda f, slot: (
+            vision.SKILL_LABEL
+            if f.entries[slot][1] >= layout.FIRST_SKILL_ROW
+            else vision.card_label(f.entries[slot][1])
+        ),
+        SKILL_LABEL=vision.SKILL_LABEL,
         card_with_icon=lambda f, cards, saved, saved_slot, lenient=False: (
             row if (row := saved.entries[saved_slot][1]) < cards else None
         ),
@@ -284,7 +296,7 @@ def fake_vision():
         list_steady=lambda f, other, slots: (
             not (f.swept or other.swept) and f.entries[:slots] == other.entries[:slots]
         ),
-        cells_by_busy=lambda f: sorted(
+        cells_by_busy=lambda f, grid=None: sorted(
             ((r, c) for r in range(3) for c in range(4)),
             key=lambda cell: cell not in f.cells.values(),
         ),
@@ -393,6 +405,33 @@ class ReadStateTest(unittest.TestCase):
         self.assertEqual(START, state.cells)
         self.assertEqual(2, game.holds.count(game.holds[0]))
 
+    def test_a_missed_hold_in_a_fight_with_no_teams_is_held_again(self):
+        # 2K PC 2026-10-22 (塔洛斯战术教材): no TEAMn ever shows and the floor's
+        # grid lines passed for cards; a missed hold stopped the read with
+        # 「认不出左边选中的是第几位」.
+        class Missing(FakeGame):
+            missed = 1
+
+            def hold(self, point, seconds):
+                if self.missed:
+                    self.missed -= 1
+                    self.holds.append(self.cell_at(point))
+                    return
+                super().hold(point, seconds)
+
+        vision_now = screen_module.vision
+        count = vision_now.card_count
+        vision_now.card_count = lambda f: 5 if f.selected is None else count(f)
+        vision_now.read_team = lambda f, ocr: None
+        vision_now.single_team = lambda f, ocr: True
+        game = Missing()
+        screen = make_screen(game)
+        screen._keep_picture = lambda frame, kind: self.fail("no report picture for a miss")
+        state = screen.read_state(1)
+
+        self.assertEqual(START, state.cells)
+        self.assertEqual(2, game.holds.count(game.holds[0]))
+
     def test_unit_slow_to_select_on_a_bare_looking_cell_is_found(self):
         # 2K PC 2026-10-07: a unit's cell held nobody and, looking bare, was
         # never held again; the read stopped with 「找不到第 [2] 位」.
@@ -409,7 +448,7 @@ class ReadStateTest(unittest.TestCase):
                 super().hold(point, seconds)
 
         busy = screen_module.vision.cell_busy_score
-        screen_module.vision.cell_busy_score = lambda f, cell: (
+        screen_module.vision.cell_busy_score = lambda f, cell, grid=None: (
             10.0 if cell == slow else busy(f, cell)
         )
         game = Slow()
@@ -991,6 +1030,18 @@ class AutoSkillTest(unittest.TestCase):
             screen.set_auto_skill(False)
         self.assertEqual([layout.AUTO_SKILL], game.taps)  # only the first call's
 
+    def test_icon_still_fading_in_is_read_again(self):
+        # 4K PC clone 2026-10-28: the planning screen's BATTLE shows while the
+        # scenery and icons are still dark; the first read can't tell
+        game = self.Game(True)
+        screen = make_screen(game)
+        dark = [None, None]
+        real = screen.auto_skill_state
+        screen.auto_skill_state = lambda: dark.pop() if dark else real()
+        self.assertTrue(screen.set_auto_skill(False))
+        self.assertFalse(game.on)
+        self.assertEqual([layout.AUTO_SKILL], game.taps)
+
     def test_tap_that_does_not_take_is_reported(self):
         game = self.Game(False, stuck=True)
         self.assertFalse(make_screen(game).set_auto_skill(True))
@@ -1137,7 +1188,7 @@ class ViewOffsetTest(unittest.TestCase):
 class StillBattleTest(unittest.TestCase):
     """Leo 2026-10-06: a battle screen that doesn't move for 30 s is stuck."""
 
-    def wait(self, frames):
+    def wait(self, frames, won=lambda f: False, lost=lambda f: False):
         import numpy as np
 
         from src.tasks.fiend_hunt import screen as screen_module
@@ -1158,10 +1209,17 @@ class StillBattleTest(unittest.TestCase):
         with (
             mock.patch.object(screen_module.vision, "planning_visible", lambda f: f is None),
             mock.patch.object(screen_module.vision, "battle_end_visible", lambda f: False),
+            mock.patch.object(screen_module.vision, "victory_visible", won),
+            mock.patch.object(
+                screen_module.vision, "lost_word", lambda f, ocr: "DEFEAT" if lost(f) else None
+            ),
+            mock.patch.object(screen_module.vision, "end_word", lambda f, ocr: "DEFEAT"),
             mock.patch.object(screen_module.vision, "slot_count", lambda f: 1),
             mock.patch.object(screen_module.GameFightScreen, "_keep_stuck") as keep,
+            mock.patch.object(screen_module.GameFightScreen, "_keep_picture"),
         ):
             result = screen.wait_after_battle()
+        self.end_word = screen.end_word
         return result, clock[0], lines, keep, np
 
     def test_a_still_screen_stops_after_30_seconds(self):
@@ -1185,6 +1243,32 @@ class StillBattleTest(unittest.TestCase):
         self.assertGreater(seconds, 40)
         keep.assert_not_called()
 
+    def test_talos_victory_ends_the_fight_as_won(self):
+        # 塔洛斯战术教材 (2K PC 2026-10-28): VICTORY, not BATTLE END; the
+        # tool waited on it until the player moved the mouse.
+        import numpy as np
+
+        rng = np.random.default_rng(2)
+        moving = [rng.integers(0, 255, (1080, 1920, 3), np.uint8) for _ in range(20)]
+        won = moving[-1]
+        result, seconds, lines, keep, _ = self.wait(moving + [won] * 5, won=lambda f: f is won)
+        self.assertEqual("end", result)
+        self.assertEqual("victory", self.end_word)
+        self.assertLess(seconds, 10)
+        keep.assert_not_called()
+
+    def test_a_lost_fight_is_read_as_text_and_ends(self):
+        import numpy as np
+
+        rng = np.random.default_rng(3)
+        moving = [rng.integers(0, 255, (1080, 1920, 3), np.uint8) for _ in range(20)]
+        lost = moving[-1]
+        result, seconds, lines, _, _ = self.wait(moving + [lost] * 20, lost=lambda f: f is lost)
+        self.assertEqual("end", result)
+        self.assertEqual("lost", self.end_word)
+        self.assertLess(seconds, 15)
+        self.assertTrue(any("输了" in line for line in lines))
+
     def test_a_small_spinner_still_counts_as_still(self):
         import numpy as np
 
@@ -1196,6 +1280,192 @@ class StillBattleTest(unittest.TestCase):
         result, seconds, _, keep, _ = self.wait(frames)
         self.assertIsNone(result)
         keep.assert_called_once()
+
+
+class SizedGridTest(unittest.TestCase):
+    """塔洛斯战术教材: the grid at its usual size is pressed where drawn; another
+    size is zoomed back with the wheel (Leo 2026-10-28 「格子對就不動 … 有問題
+    就用滾輪調整」)."""
+
+    def screen(self, grids, percents=()):
+        from src.tasks.fiend_hunt import screen as screen_module
+
+        grids, percents = list(grids), list(percents)
+        wheels, lines = [], []
+        screen = GameFightScreen(
+            SimpleNamespace(),
+            ["克蕾西亚"],
+            screen_input=SimpleNamespace(),
+            capture=lambda: "frame",
+            ocr=lambda image: [],
+            sleep=lambda seconds: None,
+            log=lines.append,
+            grid_scales=screen_module.TALOS_GRID_SCALES,
+            wheel=wheels.append,
+        )
+        patches = (
+            mock.patch.object(screen_module.vision, "grid_on_screen", lambda f: grids.pop(0)),
+            mock.patch.object(
+                screen_module.vision,
+                "zoom_percent",
+                lambda f, ocr: percents.pop(0) if percents else None,
+            ),
+            mock.patch.object(GameFightScreen, "_settled_frame", lambda self: "frame"),
+            mock.patch.object(screen_module.vision, "talos_layout", lambda f: True),
+        )
+        return screen, wheels, lines, patches
+
+    def place(self, grids, percents=()):
+        screen, wheels, lines, patches = self.screen(grids, percents)
+        with patches[0], patches[1], patches[2], patches[3]:
+            screen._place_grid("frame")
+        return screen, wheels, lines
+
+    def test_usual_size_needs_no_wheel_and_no_view_toggle(self):
+        grid = vision.Grid(1.31, 499, 399)
+        screen, wheels, lines = self.place([grid, grid])
+        self.assertEqual(grid, screen._grid)
+        self.assertEqual([], wheels)
+        self.assertFalse(any("切换" in line for line in lines))
+
+    def test_same_place_next_turn_is_read_once(self):
+        grid = vision.Grid(1.31, 499, 399)
+        screen, wheels, lines, patches = self.screen([grid, grid, grid])
+        with patches[0], patches[1], patches[2], patches[3]:
+            screen._place_grid("frame")
+            screen._place_grid("frame")
+        self.assertEqual(grid, screen._grid)
+
+    def test_another_size_is_zoomed_back(self):
+        small = vision.Grid(1.08, 581, 424)
+        usual = vision.Grid(1.33, 492, 397)
+        screen, wheels, lines = self.place([small, usual, usual], percents=[101])
+        self.assertEqual([-8, 5], wheels)
+        self.assertEqual(usual, screen._grid)
+        self.assertTrue(any("101%" in line for line in lines))
+
+    def test_zoom_nudged_when_the_percent_is_off(self):
+        small = vision.Grid(1.08, 581, 424)
+        usual = vision.Grid(1.28, 511, 403)
+        screen, wheels, lines = self.place([small, usual, usual], percents=[92, 97])
+        self.assertEqual([-8, 5, 1], wheels)
+
+    def flips(self, grids, percents=()):
+        screen, wheels, lines, patches = self.screen(grids, percents)
+        taps = []
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            mock.patch.object(
+                GameFightScreen, "_flip_view", lambda self: taps.append("flip") or "frame"
+            ),
+        ):
+            screen._place_grid("frame")
+        return screen, wheels, taps
+
+    def test_no_grid_seen_tries_the_other_view_first(self):
+        # 2K PC 2026-10-28 stages 5 and 8: the view was read wrong on a dark floor
+        usual = vision.Grid(1.31, 499, 399)
+        screen, wheels, taps = self.flips([None, usual, usual])
+        self.assertEqual(["flip"], taps)
+        self.assertEqual([], wheels)
+        self.assertEqual(usual, screen._grid)
+
+    def test_other_view_without_a_grid_goes_back_then_wheels(self):
+        usual = vision.Grid(1.31, 499, 399)
+        screen, wheels, taps = self.flips([None, None, usual, usual], percents=[101])
+        self.assertEqual(["flip", "flip"], taps)
+        self.assertEqual([-8, 5], wheels)
+
+    def test_still_wrong_after_the_wheel_stops(self):
+        small = vision.Grid(1.08, 581, 424)
+        with self.assertRaises(ScreenReadError):
+            self.place([small, small], percents=[80])
+
+    def test_a_place_read_differently_each_time_stops(self):
+        # 2K PC 2026-10-28 stage 2 T5: one read 100 px lower than the others
+        reads = [
+            vision.Grid(1.31, 499, 399),
+            vision.Grid(1.31, 499, 498),
+            vision.Grid(1.31, 499, 300),
+        ]
+        with self.assertRaises(ScreenReadError):
+            self.place(reads)
+
+    def test_two_agreeing_reads_win_over_one_odd_read(self):
+        odd, good = vision.Grid(1.31, 499, 498), vision.Grid(1.31, 499, 399)
+        screen, _, _ = self.place([odd, good, good])
+        self.assertEqual(good, screen._grid)
+
+
+class HoldOrderTest(unittest.TestCase):
+    """Who stands where is held where the record put them last (Leo 2026-10-28
+    「應該會記憶每個回合每個角色占哪個格子吧 我看你常常一格一格點 找角色」)."""
+
+    def test_last_placed_cells_first_and_busy_read_on_the_drawn_grid(self):
+        from src.tasks.fiend_hunt import screen as screen_module
+
+        placed = {"甲": (1, 1), "乙": (1, 3)}
+        record = FightRecord(
+            turns={
+                1: TurnState(1, 1, ("甲", "乙"), placed),
+                3: TurnState(3, 1, ("甲", "乙"), {"甲": (0, 1), "乙": (2, 3)}),
+            }
+        )
+        screen = make_screen(
+            SimpleNamespace(capture=lambda: None), known=["甲", "乙"], record=record
+        )
+        screen._grid = vision.Grid(1.31, 499, 399)
+        grids = []
+
+        def busy(frame, cell, grid=None):
+            grids.append(grid)
+            return 60.0 if cell in placed.values() else 10.0
+
+        with (
+            mock.patch.object(screen_module.vision, "cell_busy_score", busy),
+            mock.patch.object(screen_module.vision, "cells_by_busy", lambda frame, grid=None: []),
+        ):
+            order = screen._hold_order("frame", team=1, turn=3)
+        self.assertEqual([(1, 1), (1, 3)], order)  # turn 1's places; turn 3's look empty
+        self.assertTrue(grids and all(grid is screen._grid for grid in grids))
+
+
+class PreemptSwitchTest(unittest.TestCase):
+    def test_tapped_until_it_shows_on_then_deselected(self):
+        from src.tasks.fiend_hunt import screen as screen_module
+
+        taps, cleared = [], []
+        shown = {"on": False}
+
+        def tap(point):
+            taps.append(point)
+            shown["on"] = True
+
+        screen = GameFightScreen(
+            SimpleNamespace(),
+            ["格兰希特"],
+            screen_input=SimpleNamespace(tap=tap),
+            capture=lambda: "frame",
+            ocr=lambda image: [],
+            sleep=lambda seconds: None,
+        )
+        with (
+            mock.patch.object(GameFightScreen, "_select_slot", lambda self, slot: ("frame", 3, 1)),
+            mock.patch.object(
+                GameFightScreen, "_clear_selection", lambda self, frame: cleared.append(1)
+            ),
+            mock.patch.object(screen_module.vision, "preempt_beside", lambda f, ocr, row: row == 2),
+            mock.patch.object(screen_module.vision, "preempt_on", lambda f, row: shown["on"]),
+        ):
+            self.assertTrue(screen.set_preempt(1, "技能1"))
+            self.assertEqual([layout.preempt_switch(2)], taps)
+            self.assertEqual([1], cleared)
+            with self.assertRaises(ScreenReadError):
+                screen.set_preempt(1, "技能2")  # no such card: nothing pressed
+            self.assertEqual(1, len(taps))
 
 
 class PostInputTest(unittest.TestCase):

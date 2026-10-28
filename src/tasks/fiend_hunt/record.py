@@ -46,6 +46,9 @@ class TurnState:
     (souseha costume id, costumes.py; Leo 2026-10-06): the card's row can
     differ between players, the costume can't.  Units whose costume isn't
     known are left out and go by ``skills``.
+    ``preempt`` maps a unit to the skill card (技能1, ...) whose 「先发制人」
+    switch beside it is turned on this turn (5 SP; the card then greys with
+    a clock).  塔洛斯 stage 7, 2K PC 2026-10-28: lost without it, won with it.
     """
 
     turn: int
@@ -56,6 +59,7 @@ class TurnState:
     skills: Mapping[str, str] = field(default_factory=dict)
     bursts: Mapping[str, int] = field(default_factory=dict)
     costumes: Mapping[str, str] = field(default_factory=dict)
+    preempt: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "order", tuple(self.order))
@@ -64,6 +68,7 @@ class TurnState:
         object.__setattr__(self, "skills", dict(self.skills))
         object.__setattr__(self, "bursts", dict(self.bursts))
         object.__setattr__(self, "costumes", dict(self.costumes))
+        object.__setattr__(self, "preempt", dict(self.preempt))
         _validate_turn(self)
 
     @property
@@ -101,6 +106,13 @@ def _validate_turn(state: TurnState) -> None:
     for unit in state.costumes:
         if unit not in state.living:
             raise TurnStateError(f"第 {state.turn} 回合：{unit} 不在场上或已阵亡，不该有服装技能")
+    for unit, skill in state.preempt.items():
+        if unit not in state.living:
+            raise TurnStateError(f"第 {state.turn} 回合：{unit} 不在场上或已阵亡，不该开先发制人")
+        if not skill.startswith("技能"):
+            raise TurnStateError(
+                f"第 {state.turn} 回合：{unit} 的先发制人要写在技能卡上（{skill}）"
+            )
 
 
 @dataclass
@@ -160,6 +172,8 @@ def record_to_dict(record: FightRecord) -> dict:
             entry["bursts"] = dict(state.bursts)
         if state.costumes:
             entry["costumes"] = dict(state.costumes)
+        if state.preempt:
+            entry["preempt"] = dict(state.preempt)
         if number in record.screenshots:
             entry["screenshot"] = record.screenshots[number]
         if record.edited.get(number):
@@ -207,6 +221,10 @@ def record_from_dict(data: object) -> FightRecord:
             costumes={
                 _str(unit, "costumes"): _costume_id(_str(costume, "costumes"))
                 for unit, costume in _dict(entry.get("costumes", {}), "costumes").items()
+            },
+            preempt={
+                _str(unit, "preempt"): _str(skill, "preempt")
+                for unit, skill in _dict(entry.get("preempt", {}), "preempt").items()
             },
         )
         if state.turn in turns:
