@@ -42,7 +42,6 @@ from src.tasks.map_trade.collector_constants import (
     SKILL_FAILURE_TEXT_LIMIT,
     SKILL_GROUP_RELATIVE_POINTS,
     SKILL_GROUP_SWITCH_SETTLE_SECONDS,
-    SKILL_OCR_FALLBACK_UPSCALE,
     SKILL_OCR_UPSCALE,
     SearchCountdownSession,
     SkillAction,
@@ -58,8 +57,8 @@ from src.tasks.map_trade.models import (
     MatchResult,
 )
 from src.tasks.map_trade import skill_layout
+from src.utils import ocr_count
 from src.utils.plain_text import DIAGNOSTIC_PREFIX
-from src.tasks.map_trade.vision import parse_used_limit
 
 # Used to split a count read without its slash ("7180" -> 7/80) until the
 # HUD has shown today's limit (see ``_known_limit``).
@@ -118,6 +117,8 @@ SEARCH_RETRY_PAUSE_SECONDS = 1.0
 SEARCH_TICK_CONFIRM_SECONDS = 1.2
 SEARCH_TICK_MAX_DROP = 3
 SLOT_ICON_SIZE = 70 / 1080
+# The stand-in detection for a washed-out icon pressed at its fixed slot.
+SLOT_REASON = "固定栏位：图标被背景干扰，以次数判断"
 
 
 def relative_roi_center(
@@ -615,6 +616,7 @@ class SkillExecutionMixin:
         expect: tuple[int, int] | None = None,
     ) -> tuple[int, int] | None:
         samples: list[tuple[int, int]] = []
+        self._last_count_samples: tuple[tuple[int, int], ...] = ()
         for attempt in range(ACTION_OCR_WINDOW_SAMPLES):
             count = self._read_count(action, detection)
             if count is not None:
@@ -641,6 +643,7 @@ class SkillExecutionMixin:
                 f"{action.name}次数窗口",
                 f"不稳定：{samples}",
             )
+            self._last_count_samples = tuple(samples)
             return None
         self._status(
             f"{action.name}次数窗口",
@@ -785,12 +788,16 @@ class SkillExecutionMixin:
     def _unproven_press_message(self, action, before, after, feedback, detection, post) -> str:
         """「按了吸收，次数没变……」: what was seen after the press, in player words."""
         after_text = f"{after[0]}/{after[1]}" if after is not None else "没读到"
+        before_text = f"{before[0]}/{before[1]}" if before is not None else "没读到"
         self._diagnose(
-            f"{action.name}执行证据不一致：count={before[0]}/{before[1]}->{after_text}, "
+            f"{action.name}执行证据不一致：count={before_text}->{after_text}, "
             f"icon={detection.state.value}->{post.state.value}, "
             f"feedback={feedback.outcome or 'unknown'}, text={feedback.text or '-'}"
         )
-        if after is None:
+        if before is None:
+            icon = "图标还亮着" if post.state is ActionIconState.AVAILABLE else "按后认不出图标"
+            seen = f"按之前没读到次数，{icon}"
+        elif after is None:
             seen = f"按之后没读到次数（之前 {before[0]}/{before[1]}）"
         elif tuple(after[:2]) == tuple(before[:2]):
             seen = f"次数没变（还是 {after_text}）"
@@ -862,10 +869,19 @@ class SkillExecutionMixin:
         """Leo 2026-10-05: with 吸收 already at its daily limit a map that
         still needs it is not started at all - no 探查, no 召集/压制 (ch.8
         battle 2 at 21/21 still got all three).  Only a stable count window
-        stops the map; an unreadable one leaves the old per-action checks."""
+        that the game agrees with stops the map (Leo 2026-10-28 「除非你確定跑
+        圖次數已經確實滿了」): 吸收 grey with 探查 running.  Before 探查 every
+        吸收 reads grey, so 探查 (it uses no count) goes first and 吸收's own
+        look decides (_prepare_action); a bright or unreadable 吸收 on a full
+        count is pressed alone and the game's answer decides
+        (_prepare_before_click, _finish_after_click).  A used-up result or
+        None, never another failure (that would end the run)."""
         self._map_absorb_count = None
         existing = self.progress.get_action_record(card_id, map_role, ABSORB_ACTION.name)
         if existing is not None and str(existing.get("state", "")) in LOCAL_DONE_STATES:
+            return None
+        if self._map_done_this_week(card_id, map_role):
+            # Its 吸收 is grey because the map is done: no word on the day.
             return None
         if not self._open_skill_menu((ABSORB_ICON,), allow_group_one_recovery=True):
             return None
@@ -875,12 +891,32 @@ class SkillExecutionMixin:
             # Only a 吸收 press changes this count: the press on this map
             # starts from it instead of reading it twice again (~0.5 s).
             self._map_absorb_count = tuple(count)
-        if count is None or count[0] < count[1]:
+        if count is None or count[0] < count[1] or not self._last_count_window_stable:
+            return None
+        if not self._search_running():
+            self._status(
+                "吸收次数", f"读到 {count[0]}/{count[1]}：先开探查，再看吸收图标是不是灰的"
+            )
+            return None
+        frame, icon = self._detect_action_icon(ABSORB_ICON, require_stable=True)
+        _frame, icon = self._wait_out_dim(ABSORB_ACTION, frame, icon)
+        if icon.state is not ActionIconState.USED or not icon.stable:
+            self._status(
+                "吸收次数",
+                f"读到 {count[0]}/{count[1]}，但吸收图标"
+                + ("还亮着" if icon.state is ActionIconState.AVAILABLE else "看不清")
+                + "：不算用完，照常做这张图，按了看游戏",
+            )
+            return None
+        if self._confirm_full_count(ABSORB_ACTION, count) is not True:
+            # One way of reading is not enough; the map's own 吸收 decides
+            # again (_absorb_limit_here) with the count kept.
             return None
         return SkillExecutionResult(
             False,
             True,
-            f"吸收今日已用完（{count[0]}/{count[1]}），{map_role.label}不探查、不按召集/压制，留待次日",
+            f"吸收今日已用完（次数 {count[0]}/{count[1]}，再读一次也是满的，吸收图标也是灰的），"
+            f"{map_role.label}不按吸收/召集/压制，留待次日",
         )
 
     def _ensure_search(
@@ -962,9 +998,14 @@ class SkillExecutionMixin:
         self._missed_presses = set()
         self._pressed_again = set()
         self._records_from_this_visit = False
+        self._full_reads = set()
         results = self._use_actions_pipelined(actions, card_id=card_id, map_role=map_role)
-        missed = next((result for result in results if not result.completed), None)
-        if missed is not None and missed.press_again:
+        # Any press the game answered with nothing: the map's other skills
+        # may have run after a skill that failed (_use_actions_pipelined).
+        missed = next(
+            (result for result in results if not result.completed and result.press_again), None
+        )
+        if missed is not None:
             # Done skills are skipped on the next pass by their records; the
             # bright one is pressed again (its record turns void first).
             self._status(
@@ -977,10 +1018,14 @@ class SkillExecutionMixin:
             results = self._use_actions_pipelined(actions, card_id=card_id, map_role=map_role)
         for result in results:
             if not result.completed:
+                # A skill the game showed used up outweighs a map problem
+                # before it.
+                used_up = next((other for other in results if other.depleted), None)
+                shown = used_up if used_up is not None and not used_up.completed else result
                 return SkillExecutionResult(
                     False,
-                    depleted or result.depleted,
-                    result.message,
+                    used_up is not None,
+                    shown.message,
                     tuple(pending_actions) + result.pending_actions,
                 )
             depleted = depleted or result.depleted
@@ -1012,10 +1057,11 @@ class SkillExecutionMixin:
         that cannot be prepared stops the batch before any later click.
         """
         results: list[SkillExecutionResult] = []
-        armed: list[tuple[SkillAction, object, ActionIconDetection, tuple[int, int]]] = []
+        armed: list[tuple[SkillAction, object, ActionIconDetection, tuple[int, int] | None]] = []
+        later: tuple[SkillAction, ...] = ()
         map_done = False
         self._snow_card = card_id in SNOW_CARD_IDS
-        for action in actions:
+        for position, action in enumerate(actions):
             if map_done and action.name == SUPPRESS_ACTION.name:
                 # Leo 2026-10-15 「活動卡帶記憶邊緣 戰鬥區 就算沒資源能吸收 也要按
                 # 壓制」, and 10-16 the same on 戏水女王 and 角色卡7: grey
@@ -1050,6 +1096,13 @@ class SkillExecutionMixin:
                     break
                 continue
             armed.append(prepared)
+            if action.name in getattr(self, "_full_reads", ()):
+                # Its count read full while the game shows it pressable: it is
+                # pressed alone and judged first, the map's other skills only
+                # once the game took it (Leo 2026-10-28 「除非你確定跑圖次數已經
+                # 確實滿了」; 2026-10-05: at 吸收's limit 召集/压制 stay unpressed).
+                later = tuple(actions[position + 1 :])
+                break
         stop_after = len(results) if results and not results[-1].completed else None
         clicked = []
         last_click_at = None
@@ -1096,9 +1149,18 @@ class SkillExecutionMixin:
                 post_detection=post_detection,
                 feedback=feedback,
             )
-            if not result.completed and action.name in getattr(self, "_pressed_again", ()):
+            if (
+                not result.completed
+                and not result.depleted
+                and action.name in getattr(self, "_pressed_again", ())
+                and action.name not in getattr(self, "_full_reads", ())
+            ):
                 # Leo 2026-10-09: a missed press is almost always fixed by
-                # the second one, so it is not checked again.
+                # the second one, so it is not checked again.  Not on a count
+                # read full: there the press may have met the day's limit, so
+                # an unproven press is left to the next visit, never recorded
+                # done (and both presses answered with nothing is the day used
+                # up, _finish_after_click).
                 self.progress.mark_action_seen_done(card_id, map_role, action.name)
                 self._status(f"{action.name}状态", "已补按一次，不再检查")
                 result = SkillExecutionResult(True, result.depleted, "已补按一次，不再检查")
@@ -1106,6 +1168,14 @@ class SkillExecutionMixin:
         if stop_after is not None:
             # Keep the order: verified clicks first, then the failure.
             return verified + results
+        if later and not any(result.depleted for result in verified):
+            # Taken, refused with this map's own toast, or not proven: the
+            # map's other skills are judged on their own icons (Leo 2026-10-15
+            # 「就算沒資源能吸收 也要按壓制」).  Only a day the game showed used
+            # up holds them back.
+            return results + verified + self._use_actions_pipelined(
+                later, card_id=card_id, map_role=map_role
+            )
         return results + verified
 
     def _click_interval(self) -> float:
@@ -1236,6 +1306,12 @@ class SkillExecutionMixin:
             )
             if failure is not None:
                 return failure, None
+        if detection.state is ActionIconState.USED and action.name == ABSORB_ACTION.name:
+            limit, frame, detection = self._absorb_limit_here(
+                frame, detection, card_id=card_id, map_role=map_role
+            )
+            if limit is not None:
+                return limit, None
         if detection.state is ActionIconState.USED:
             return (
                 self._resolve_preexisting_used(
@@ -1253,8 +1329,9 @@ class SkillExecutionMixin:
     def _slot_detection(self, action: SkillAction):
         """(frame, detection) at the action's fixed slot when its icon is
         washed out but the count under it reads steadily (Leo 2026-10-06:
-        decide by the text).  The press is then proven only by an exact +1
-        on that count; a full count stops before any click."""
+        decide by the text).  The press is then proven by an exact +1 on that
+        count or the game's toast; a full count is pressed once and judged
+        the same way (_finish_after_click)."""
         if action.fixed_count_relative_roi is None:
             return None
         self._last_count_window_stable = False
@@ -1276,7 +1353,7 @@ class SkillExecutionMixin:
         detection = ActionIconDetection(
             ActionIconState.AVAILABLE,
             match,
-            reason="固定栏位：图标被背景干扰，以次数判断",
+            reason=SLOT_REASON,
             stable=True,
         )
         return frame, detection
@@ -1287,6 +1364,12 @@ class SkillExecutionMixin:
         frame, detection = self._detect_action_icon(action.icon, require_stable=True)
         if existing is not None:
             return frame, detection
+        return self._wait_out_dim(action, frame, detection)
+
+    def _wait_out_dim(self, action: SkillAction, frame, detection):
+        """A grey icon soon after 探查 was pressed is looked at again after a
+        pause: the bar dims for a moment, and a dimmed icon is not the game
+        saying the skill is used."""
         # Only a 探查 pressed just now dims the bar, and the dim passes once
         # for the whole bar (Leo 2026-10-15 「切換地圖後 按技能前都要罰站很久」:
         # 2K, 探查 already running, 召集 then 压制 each still waited ~4 s).
@@ -1365,7 +1448,6 @@ class SkillExecutionMixin:
         )
         if failure is not None:
             return failure
-        assert before is not None
         self.vision.click_client(
             detection.match.center,
             frame.shape,
@@ -1486,7 +1568,68 @@ class SkillExecutionMixin:
         if isinstance(started, SkillExecutionResult):
             return frame, detection, started
         frame, detection = self._detect_action_icon(action.icon, require_stable=True)
+        # 探查 was just pressed: the dim after it is not "done this week".
+        frame, detection = self._wait_out_dim(action, frame, detection)
         return frame, detection, None
+
+    def _absorb_limit_here(self, frame, detection, *, card_id, map_role):
+        """(result or None, frame, detection) for a grey 吸收 with 探查 on
+        whose count read full on this map (_absorb_used_up).  The day's limit
+        only when the game and two ways of reading agree (Leo 2026-10-28
+        「除非你確定跑圖次數已經確實滿了」): still grey once the dim after 探查
+        passed, and the count read full again another way.  A map recorded
+        done this week greys for that reason.  When it cannot be told, the
+        map's skills are left for the next visit and the route goes on."""
+        full = getattr(self, "_map_absorb_count", None)
+        if full is None or full[0] < full[1]:
+            return None, frame, detection
+        self._map_absorb_count = None
+        if self._map_done_this_week(card_id, map_role):
+            return None, frame, detection
+        frame, detection = self._wait_out_dim(ABSORB_ACTION, frame, detection)
+        if detection.state is ActionIconState.AVAILABLE and detection.stable:
+            return None, frame, detection  # it was the dim: pressed as usual
+        seen = f"吸收次数读到 {full[0]}/{full[1]}"
+        if detection.state is not ActionIconState.USED or not detection.stable:
+            return (
+                SkillExecutionResult(
+                    False,
+                    False,
+                    f"{seen}，吸收图标看不清：不能确定今天用完了，这张图先不按，接着跑下一张图",
+                ),
+                frame,
+                detection,
+            )
+        confirmed = self._confirm_full_count(ABSORB_ACTION, full)
+        if confirmed is True:
+            return (
+                SkillExecutionResult(
+                    False,
+                    True,
+                    f"吸收今日已用完（次数 {full[0]}/{full[1]}，再读一次也是满的；"
+                    f"开了探查吸收图标仍是灰的），{map_role.label}不按召集/压制，留待次日",
+                ),
+                frame,
+                detection,
+            )
+        why = "再读一次没读出来" if confirmed is None else "再读一次读到的不一样"
+        return (
+            SkillExecutionResult(
+                False,
+                False,
+                f"吸收图标是灰的，{seen}，但{why}：不能确定是今天用完了还是这张图本周做过，"
+                "这张图先不按，接着跑下一张图",
+            ),
+            frame,
+            detection,
+        )
+
+    def _map_done_this_week(self, card_id: str, map_role: CollectionMapRole) -> bool:
+        """The map is recorded done this week (its grey 吸收 says so)."""
+        try:
+            return map_role.value in self.progress.state.completed_targets(card_id)
+        except AttributeError:
+            return False
 
     def _resolve_preexisting_used(
         self,
@@ -1522,37 +1665,49 @@ class SkillExecutionMixin:
         else:
             self._last_count_window_stable = False
             before = self._read_count_window(action, detection)
+        # Leo 2026-10-28 「除非你確定跑圖次數已經確實滿了」 (and 10-15 「要以遊戲為
+        # 主」): the count never holds a press back.  The game shows the skill
+        # pressable, so it is pressed and the game's answer decides
+        # (_finish_after_click); only a press it refuses on a full count ends
+        # the day.
         if before is None:
-            return None, SkillExecutionResult(
-                False,
-                message=f"{action.name}次数 OCR 失败",
+            self._status(
+                f"{action.name}次数",
+                f"没读出来（{self._count_failure_reason()}），图标亮着，照游戏按",
             )
-        self._status(f"{action.name}次数", f"{before[0]}/{before[1]}")
-        # Leo 2026-10-07: each map's 吸收/召集/压制 works once a week and a
-        # used one greys out, so a press can never be charged twice.  With
-        # 探查 running, a pressable icon is pressed; unsettled earlier counts
-        # are only tidied up here, they never hold a press back.
-        if self.progress.pending_count(action.name) and self._last_count_window_stable:
-            self.progress.reconcile_pending(action.name, before)
-            self.progress.settle_unconsumed_preexisting(
-                action.name, before, card_id=card_id, map_role=map_role
-            )
-        if detection.state is ActionIconState.AVAILABLE and before[0] >= before[1]:
-            return None, SkillExecutionResult(
-                False,
-                True,
-                f"{action.name}次数已达到 {before[0]}/{before[1]}，当前地图未完成",
-            )
+        else:
+            self._status(f"{action.name}次数", f"{before[0]}/{before[1]}")
+            # Leo 2026-10-07: each map's 吸收/召集/压制 works once a week and a
+            # used one greys out, so a press can never be charged twice.  With
+            # 探查 running, a pressable icon is pressed; unsettled earlier counts
+            # are only tidied up here, they never hold a press back.
+            if self.progress.pending_count(action.name) and self._last_count_window_stable:
+                self.progress.reconcile_pending(action.name, before)
+                self.progress.settle_unconsumed_preexisting(
+                    action.name, before, card_id=card_id, map_role=map_role
+                )
+            if before[0] >= before[1]:
+                # Full by the count, pressable by the game: one of the two is
+                # wrong.  It is pressed alone first (_use_actions_pipelined).
+                self._full_reads = getattr(self, "_full_reads", set()) | {action.name}
+                self._status(
+                    f"{action.name}次数",
+                    f"读到 {before[0]}/{before[1]}，但游戏显示还能按：先单独按一次，看游戏接不接受",
+                )
+        if before is None or before[0] < before[1]:
+            # This press's own read decides (a second pass may read it right).
+            self._full_reads = getattr(self, "_full_reads", set()) - {action.name}
         if not self.progress.arm_action(
             card_id,
             map_role,
             action.name,
             baseline=before,
         ):
+            # Only an earlier press still unsettled refuses this (the daily
+            # limit never does): not a used-up day.
             return None, SkillExecutionResult(
                 False,
-                True,
-                f"{action.name}每日额度或未决动作已阻止新点击",
+                message=f"{action.name}还有上一次没确认完的点击，这张图先不按",
             )
         return before, None
 
@@ -1562,16 +1717,23 @@ class SkillExecutionMixin:
         *,
         card_id: str,
         map_role: CollectionMapRole,
-        before: tuple[int, int],
+        before: tuple[int, int] | None,
         detection: ActionIconDetection,
         post_detection: ActionIconDetection,
         feedback: SkillFeedbackObservation,
     ) -> SkillExecutionResult:
         count_detection = post_detection if post_detection.present else detection
         self._last_count_window_stable = False
+        # ``before`` is None when the count did not read: the game's answer
+        # (icon, toast) decides alone.  A count read full on a pressable skill
+        # (_prepare_before_click) ends the day only when the game does not
+        # answer this press at all, twice (Leo 2026-10-28 「除非你確定跑圖次數
+        # 已經確實滿了」).
+        full_read = before is not None and action.name in getattr(self, "_full_reads", ())
         expect = None
         if (
-            feedback.outcome == "success"
+            before is not None
+            and feedback.outcome == "success"
             and post_detection.state is ActionIconState.USED
             and not self.progress.pending_count(action.name)
         ):
@@ -1594,10 +1756,12 @@ class SkillExecutionMixin:
         # misread is never trusted or reconciled; with the icon greyed it
         # counts as done and the count is checked again on a later frame.
         impossible_read = bool(
-            after is not None
+            before is not None
+            and after is not None
             and after[1] == before[1]
             and after[0] < before[0]
         )
+        raw_after = after
         if impossible_read:
             self._status(
                 f"{action.name}次数读错",
@@ -1606,7 +1770,8 @@ class SkillExecutionMixin:
             after = None
             post_window_stable = False
         exact_single_increment = bool(
-            after is not None
+            before is not None
+            and after is not None
             and after[1] == before[1]
             and after[0] == before[0] + 1
         )
@@ -1620,9 +1785,11 @@ class SkillExecutionMixin:
         # negative token is never converted into success.
         if (
             feedback.outcome == "failure"
+            and before is not None
             and after is not None
             and tuple(after) == tuple(before)
             and post_window_stable
+            and not full_read
         ):
             # "Nothing to absorb / summon / subdue here", with 探查 running
             # and the count unchanged: the map was already done, e.g. from
@@ -1632,19 +1799,30 @@ class SkillExecutionMixin:
                 card_id, map_role, action.name, pending=False, observed=tuple(after)
             )
             self._status(f"{action.name}状态", f"这张图已经做过（{feedback.text}），不扣次数")
-            return SkillExecutionResult(True, after[0] >= after[1], "这张图已经做过")
+            return SkillExecutionResult(True, False, "这张图已经做过")
         if feedback.outcome == "failure":
             # Never a block for the day: the next visit judges the icon
-            # (grey = done, bright = press) (Leo 2026-10-20).
+            # (grey = done, bright = press) (Leo 2026-10-20).  The toast
+            # speaks of this map (nothing around to take), not of the day's
+            # uses: on a count read full the map is not taken as done
+            # either, and the next map's 吸收 decides (Leo 2026-10-28).
             self.progress.mark_action_void(
                 card_id,
                 map_role,
                 action.name,
                 feedback.text or "失败反馈与图标状态冲突",
             )
+            if full_read:
+                return SkillExecutionResult(
+                    False,
+                    False,
+                    f"{action.name}次数读到 {before[0]}/{before[1]}，按了之后游戏显示"
+                    f"「{feedback.keyword or feedback.text or '-'}」：这张图先不记成做过，"
+                    "也不算今天用完，接着跑下一张图",
+                )
             return SkillExecutionResult(
                 False,
-                (after[0] >= after[1]) if after is not None else False,
+                False,
                 f"{action.name}执行反馈明确失败：{feedback.text or '-'}",
             )
 
@@ -1665,7 +1843,8 @@ class SkillExecutionMixin:
         # the previous one (live 2026-09-28: 吸收 3/21->4/21 while the toast
         # area still showed 探查's "在240秒内确认隐藏物品的位置").
         count_proves = (
-            after is not None
+            before is not None
+            and after is not None
             and after[1] == before[1]
             and after[0] == before[0] + 1
             and (post_window_stable or exact_single_increment)
@@ -1680,8 +1859,14 @@ class SkillExecutionMixin:
         # The game decides (Leo 2026-10-15: 「要以遊戲為主」): the icon
         # turning from bright to grey on this press is the game taking it,
         # whatever the count read or the toast showed.  The count is then
-        # checked on a later frame.
-        greyed_by_press = icon_used and detection.state is ActionIconState.AVAILABLE
+        # checked on a later frame.  The fixed slot's stand-in for a
+        # washed-out icon was never seen bright: on a count read full its
+        # grey after the press may be the limit's grey, not this press.
+        greyed_by_press = (
+            icon_used
+            and detection.state is ActionIconState.AVAILABLE
+            and not (full_read and detection.reason == SLOT_REASON)
+        )
         # The game's own success toast after pressing a bright icon that no
         # longer reads bright: the press took, even when the icon and the
         # count could not be read right then (Leo 2026-10-20 「為什麼還會有
@@ -1702,14 +1887,19 @@ class SkillExecutionMixin:
                 f"{action.name}状态",
                 f"游戏提示成功（{feedback.text}），按后图标一时没认出，次数稍后再对",
             )
+        # On a count read full no +1 can show, and 压制 stays bright after a
+        # press that took: the game's own success toast for this skill is
+        # its answer.
+        toast_answered = full_read and feedback.outcome == "success"
         if toast_took or (
             icon_used and (feedback_success or count_proves or impossible_read)
-        ) or greyed_by_press or (count_proves and post_window_stable):
+        ) or greyed_by_press or (count_proves and post_window_stable) or toast_answered:
             # A valid absolute snapshot is settled immediately; any
             # dim/bare/invalid post OCR remains a durable pending action.
             trusted_post = post_window_stable or exact_single_increment
             if (
-                after is not None
+                before is not None
+                and after is not None
                 and after[1] == before[1]
                 and after[0] >= before[0] + 1
                 and trusted_post
@@ -1731,19 +1921,61 @@ class SkillExecutionMixin:
                     observed=after,
                 )
                 pending = True
+            # Used up for the day only when this press is seen taking the
+            # last use: the count moved exactly +1 onto its limit.  Any other
+            # full read is left to the next map's icon and press.
             return SkillExecutionResult(
                 True,
-                (after[0] >= after[1]) if after is not None else False,
+                exact_single_increment and after[0] >= after[1],
                 "次数待后续明亮帧对账" if pending else "",
                 (action.name,) if pending else (),
             )
 
-        return SkillExecutionResult(
-            False,
-            (after[0] >= after[1]) if after is not None else False,
-            self._unproven_press_message(
-                action, before, after, feedback, detection, post_detection
-            ),
+        if full_read:
+            # The game answered nothing at all on a count read full: still
+            # steadily bright, no toast, the count as before (压制 stays
+            # bright after a press that took, so only its count can say).
+            # Pressed once more first (Leo 2026-10-13 「按東西沒反應一定要補按
+            # 吧」); the second silence is the day's uses gone.  Anything else
+            # (the icon unreadable, a count that moved) is not proof either
+            # way: the map is reported and the route goes on.
+            unanswered = (
+                post_detection.state is ActionIconState.AVAILABLE
+                and post_detection.stable
+                and feedback.outcome is None
+                and not feedback_success
+                and (
+                    tuple(raw_after) == tuple(before)
+                    if raw_after is not None
+                    else action.name != SUPPRESS_ACTION.name
+                )
+            )
+            if unanswered:
+                return SkillExecutionResult(
+                    False,
+                    True,
+                    self._used_up_message(action, before, feedback),
+                    press_again=self._note_missed_press(action, True),
+                )
+            return SkillExecutionResult(
+                False,
+                False,
+                self._unproven_press_message(
+                    action, before, raw_after, feedback, detection, post_detection
+                )
+                + "；次数读到满也不算今天用完，这张图先不记成做过，接着跑下一张图",
+            )
+        if before is None:
+            # No count to compare: still bright with no toast is a dropped
+            # press for the skills that grey once taken.  压制 stays bright
+            # after a press that took, and a second press costs a use.
+            missed = (
+                post_detection.state is ActionIconState.AVAILABLE
+                and feedback.outcome is None
+                and not feedback_success
+                and action.name != SUPPRESS_ACTION.name
+            )
+        else:
             # Pressed again only when every sign says the game never got the
             # press: icon still bright, no toast, and the count read steadily
             # at exactly its value before.  压制 stays bright after a press
@@ -1753,8 +1985,7 @@ class SkillExecutionMixin:
             # steadily: it greys out once it takes, so still bright means the
             # game dropped it (a slow PC, right after 吸收; two players
             # 2026-10-09).  压制 stays bright either way, so its count decides.
-            press_again=self._note_missed_press(
-                action,
+            missed = (
                 post_detection.state is ActionIconState.AVAILABLE
                 and feedback.outcome is None
                 and not feedback_success
@@ -1764,8 +1995,29 @@ class SkillExecutionMixin:
                         action.name == SUMMON_ACTION.name
                         and (after is None or tuple(after) == tuple(before))
                     )
-                ),
+                )
+            )
+        # Not proven either way: this map is reported and the route goes on;
+        # a count read here never ends the day.
+        return SkillExecutionResult(
+            False,
+            False,
+            self._unproven_press_message(
+                action, before, after, feedback, detection, post_detection
             ),
+            press_again=self._note_missed_press(action, missed),
+        )
+
+    def _used_up_message(self, action: SkillAction, count, feedback) -> str:
+        """The day's uses gone: a count read full and a press the game did
+        not answer at all."""
+        self._diagnose(
+            f"{action.name}次数用完：count={count[0]}/{count[1]}, "
+            f"feedback={feedback.outcome or 'unknown'}, text={feedback.text or '-'}"
+        )
+        return (
+            f"{action.name}次数是 {count[0]}/{count[1]}，按了之后游戏没有接受："
+            f"今天的{action.name}次数用完了，剩下的地图明天再跑"
         )
 
     def _known_limit(self, action_name: str) -> int | None:
@@ -1910,41 +2162,94 @@ class SkillExecutionMixin:
         action: SkillAction,
         detection: ActionIconDetection | None = None,
     ) -> tuple[int, int] | None:
-        # The calibrated fixed ROI is intentionally reused at 3x after a 2x
-        # miss.  This catches the reproduced dark ``2`` without widening the
-        # region into adjacent UI text.
-        scales = (
-            (SKILL_OCR_UPSCALE, SKILL_OCR_FALLBACK_UPSCALE)
-            if action.fixed_count_relative_roi is not None
-            else (SKILL_OCR_UPSCALE,)
-        )
-        for index, scale in enumerate(scales):
+        """The skill's "used/limit" by the shared count rules
+        (src/utils/ocr_count.py).  The calibrated fixed box is read again
+        another way on a fresh frame (``ocr_count.LOOKS``: 3x, then 3x inside
+        a border) until a read is a count; the box is never widened into the
+        UI text beside it.  ``_last_count_read`` keeps what was read, for the
+        skip reason."""
+        name = f"{action.name}次数"
+        roi = action.fixed_count_relative_roi
+
+        def fixed_box(look: ocr_count.Look):
+            return lambda: self._read_count_box(action, look)
+
+        def beside_icon() -> str:
             frame = self.vision.capture()
-            if action.fixed_count_relative_roi is not None:
-                text = self.vision.ocr_text(
-                    frame,
-                    f"{action.name}次数",
-                    relative_roi=action.fixed_count_relative_roi,
-                    target_height=1080,
-                    ocr_scale=scale,
-                )
-            elif detection is not None:
-                text = self.vision.ocr_text(
-                    frame,
-                    f"{action.name}次数",
-                    relative_roi=self._action_text_relative_roi(
-                        detection,
-                        frame.shape,
-                    ),
-                    target_height=1080,
-                )
-            else:
-                return None
-            count = parse_used_limit(text, self._known_limit(action.name))
-            if count is not None:
-                return count
-            if index + 1 < len(scales):
-                # No long stability wait before the fallback; it is a
-                # same-frame/next-frame best-effort read.
-                continue
-        return None
+            return self.vision.ocr_text(
+                frame,
+                name,
+                relative_roi=self._action_text_relative_roi(detection, frame.shape),
+                target_height=1080,
+            )
+
+        if roi is not None:
+            looks = [fixed_box(look) for look in ocr_count.LOOKS]
+        elif detection is not None:
+            looks = [beside_icon]
+        else:
+            looks = []
+        result = ocr_count.read_count(
+            looks,
+            limit=self._known_limit(action.name),
+            seen_limit=self._screen_limit(action.name),
+        )
+        self._last_count_read = result
+        return result.value
+
+    def _read_count_box(self, action: SkillAction, look: ocr_count.Look) -> str:
+        """The skill's calibrated count box read one way, on a fresh frame."""
+        return self.vision.ocr_text(
+            self.vision.capture(),
+            f"{action.name}次数",
+            relative_roi=action.fixed_count_relative_roi,
+            target_height=1080,
+            ocr_scale=look.scale,
+            **({"bordered": True} if look.bordered else {}),
+        )
+
+    def _read_count_again(self, action: SkillAction) -> tuple[int, int] | None:
+        """The count box read once more, the last way (inside a border)."""
+        return ocr_count.parse_count(
+            self._read_count_box(action, ocr_count.LOOKS[-1]),
+            limit=self._known_limit(action.name),
+            seen_limit=self._screen_limit(action.name),
+        )
+
+    def _confirm_full_count(self, action: SkillAction, count) -> bool | None:
+        """A full count read again another way before it may end the day:
+        True when it reads the same, False when another count, None when
+        nothing (or the skill has no fixed box).  One way's misread ("2/2"
+        for 2/21, its last digit lost) is then not enough."""
+        if action.fixed_count_relative_roi is None:
+            return None
+        again = self._read_count_again(action)
+        self._status(
+            f"{action.name}次数复核",
+            f"{count[0]}/{count[1]} → "
+            + (f"{again[0]}/{again[1]}" if again is not None else "没读出来"),
+        )
+        if again is None:
+            return None
+        return tuple(again) == tuple(count)
+
+    def _screen_limit(self, action_name: str) -> int | None:
+        """Today's limit as the HUD itself showed it (this run, else earlier
+        today), never the code's usual one: a player's 召集 is 7."""
+        seen = (getattr(self, "_seen_limits", None) or {}).get(action_name)
+        if seen:
+            return seen
+        try:
+            return self.progress.state.observed_limits.get(action_name) or None
+        except AttributeError:
+            return None
+
+    def _count_failure_reason(self) -> str:
+        """Why the count window gave nothing, in player words (Leo
+        2026-10-24 「錯誤要寫原因」); it was 「次数 OCR 失败」."""
+        samples = getattr(self, "_last_count_samples", ())
+        if samples:
+            seen = "、".join(f"{used}/{limit}" for used, limit in samples)
+            return f"几次读到的不一样：{seen}"
+        last = getattr(self, "_last_count_read", None)
+        return last.why() if last is not None else "没读到数字"

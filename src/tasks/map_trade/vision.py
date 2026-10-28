@@ -18,7 +18,7 @@ from src.tasks.map_trade.models import (
     MatchResult,
     TemplateSpec,
 )
-from src.utils import task_vision
+from src.utils import ocr_count, task_vision
 from src.utils.calibration import FHD_1080
 from src.utils.image_utils import (
     candidate_scales,
@@ -44,7 +44,6 @@ from src.utils.vision_models import FrameGeometry, MatchCandidateEvidence
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATE_DIR = PROJECT_ROOT / "recognition-assets" / "template-assets"
 EMPTY_MATCH = MatchResult(-1.0, (0, 0), (0, 0))
-COUNT_PATTERN = re.compile(r"(?<!\d)(\d+)\s*[/：:|\-~]\s*(\d+)(?!\d)")
 # New evidence matching uses the FHD template calibration.  Keep
 # ``reference_point``/``reference_roi`` on the historical HD calibration for
 # callers that still pass their explicit 1280x720 reference coordinates.
@@ -88,26 +87,10 @@ def normalize_text(value: str) -> str:
 
 
 def parse_used_limit(text: str, known_limit: int | None = None) -> tuple[int, int] | None:
-    match = COUNT_PATTERN.search(str(text))
-    if match is None:
-        # OCR can read the slash as "1" ("7/70" -> "7170", live 2026-09-28):
-        # with the skill's known daily limit the digits split before it.
-        # Anything else ("11775", live 4K 2026-10-14) is refused and read
-        # again, never guessed.
-        digits = re.sub(r"\D", "", str(text))
-        tail = str(known_limit) if known_limit else ""
-        if tail and len(digits) > len(tail) and digits.endswith(tail):
-            head = digits[: -len(tail)]
-            if len(head) >= 2 and head.endswith("1"):
-                head = head[:-1]
-            used = int(head)
-            if 0 <= used <= known_limit:
-                return used, known_limit
-        return None
-    used, limit = int(match.group(1)), int(match.group(2))
-    if limit <= 0 or used < 0 or used > limit:
-        return None
-    return used, limit
+    """A skill's "used/limit" by the shared count rules (src/utils/ocr_count.py):
+    a slash read as 1 or 7 ("7170", "11775", "0775") splits before the
+    limit seen on screen."""
+    return ocr_count.parse_count(text, limit=known_limit or None)
 
 
 def _ocr_takes_reread(task) -> bool:
@@ -1171,6 +1154,7 @@ class Vision:
         target_height: int = 720,
         minimum_threshold: float | None = None,
         ocr_scale: float = 1.0,
+        bordered: bool = False,
     ) -> list:
         offset_x = offset_y = 0
         target = frame
@@ -1192,6 +1176,10 @@ class Vision:
             return []
         if ocr_scale <= 0:
             raise ValueError("ocr_scale must be positive")
+        border = 0
+        if bordered:
+            # Inside a plain border (ocr_count.LOOKS).
+            target, border = ocr_count.bordered(target)
         if ocr_scale != 1.0:
             target = cv2.resize(
                 target,
@@ -1229,7 +1217,7 @@ class Vision:
         except Exception as exc:
             self._status(f"{name} OCR错误", str(exc))
             return []
-        if not offset_x and not offset_y and ocr_scale == 1.0:
+        if not offset_x and not offset_y and ocr_scale == 1.0 and not border:
             return list(boxes)
         adjusted = []
         for box in boxes:
@@ -1246,9 +1234,9 @@ class Vision:
                 if raw_box is not None and len(raw_box) >= 4:
                     values["x"], values["y"], values["width"], values["height"] = raw_box[:4]
             if values["x"] is not None:
-                values["x"] = float(values["x"]) / ocr_scale + offset_x
+                values["x"] = float(values["x"]) / ocr_scale - border + offset_x
             if values["y"] is not None:
-                values["y"] = float(values["y"]) / ocr_scale + offset_y
+                values["y"] = float(values["y"]) / ocr_scale - border + offset_y
             if values["width"] is not None:
                 values["width"] = float(values["width"]) / ocr_scale
             if values["height"] is not None:
@@ -1272,6 +1260,7 @@ class Vision:
         target_height: int = 720,
         minimum_threshold: float | None = None,
         ocr_scale: float = 1.0,
+        bordered: bool = False,
     ) -> str:
         values = [
             str(getattr(box, "name", ""))
@@ -1283,6 +1272,7 @@ class Vision:
                 target_height=target_height,
                 minimum_threshold=minimum_threshold,
                 ocr_scale=ocr_scale,
+                bordered=bordered,
             )
         ]
         text = " ".join(value for value in values if value)

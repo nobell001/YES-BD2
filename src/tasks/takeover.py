@@ -104,6 +104,7 @@ class TakeoverMonitor:
         self.executor = executor
         self._stopped_task = None
         self._listeners = []
+        self._hook_errors = set()
         try:
             from src.utils.clone_desktop import in_clone
 
@@ -158,8 +159,8 @@ class TakeoverMonitor:
                     front = front or bool(getattr(task, "paused", False))
                     if mouse_takeover(msg, data.flags, self._root_is_game(hwnd), front):
                         self._take_over(task, "鼠标")
-        except Exception:
-            pass
+        except Exception as exc:
+            self._note_hook_error("鼠标", exc)
         return False  # never hand the event to pynput callbacks (none are set)
 
     def on_key(self, msg, data) -> bool:
@@ -176,9 +177,20 @@ class TakeoverMonitor:
                         if not getattr(task, "paused", False):
                             logger.info(f"takeover: real key vk=0x{data.vkCode:02X} on the game")
                         self._take_over(task, "键盘")
+        except Exception as exc:
+            self._note_hook_error("键盘", exc)
+        return False
+
+    def _note_hook_error(self, source: str, exc: Exception) -> None:
+        # Once per kind of error and run: the hook sees every mouse move.
+        # Never raise from here: an error leaving the hook ends the listener.
+        try:
+            key = (source, type(exc).__name__)
+            if key not in self._hook_errors:
+                self._hook_errors.add(key)
+                logger.warning(f"takeover: {source}检测出错，玩家接手可能认不出：{exc!r}")
         except Exception:
             pass
-        return False
 
     def _take_over(self, task, source: str) -> None:
         if getattr(task, "paused", False):
@@ -209,6 +221,7 @@ class TakeoverMonitor:
         # start, even of the task stopped last time, is watched again.
         if getattr(task, "running", False):
             self._stopped_task = None
+            self._hook_errors.clear()
 
     # -- lifecycle ---------------------------------------------------------------
 

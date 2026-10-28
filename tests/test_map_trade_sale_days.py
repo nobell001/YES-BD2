@@ -423,6 +423,9 @@ class BuyFirstPressTest(unittest.TestCase):
         trader._purchase_dialog_partly_read = lambda: dialog_partly
         trader._wait_purchase_dialog_closed = lambda: True
         trader._sold_out_after_buy = lambda: sold_out
+        # Stars not read (the black frame): the gray-star stop stays out
+        # (tests/test_trade_buy_no_favorites.py).
+        trader._nothing_favorited = lambda: None
         return trader, frame, presses, warnings, waits
 
     def test_the_button_read_by_run_buy_is_pressed_without_reading_again(self):

@@ -510,7 +510,7 @@ class Collector(SkillExecutionMixin):
                     message=(
                         "当前卡带已完成并通过复核；实机技能次数显示已到上限"
                         if observed_depleted
-                        else "已完成今日7张卡带，达到每日21次吸取上限"
+                        else self._used_up_today()
                     )
                     + (
                         f"；另有{self.progress.pending_count()}条动作次数待后续明亮帧对账"
@@ -535,6 +535,15 @@ class Collector(SkillExecutionMixin):
                 + (f"；末图有{pending}条动作次数待后续明亮帧对账" if pending else "")
             ),
         )
+
+    def _used_up_today(self) -> str:
+        """Which skills the game showed used up today, in player words (it
+        said 「已完成今日7张卡带，达到每日21次吸取上限」 whatever the limit or
+        the cards done were)."""
+        used = [name for name in ("吸收", "召集", "压制") if self.progress.game_used_up(name)]
+        if not used:
+            return "今天的技能次数已用完，剩下的地图明天再跑"
+        return f"今天的{'、'.join(used)}次数游戏已显示用完，剩下的地图明天再跑"
 
     def _card_done_check(self, card, completed) -> CollectionCardSelectionResult:
         """The game's badges for the card (第6章 by its own badge rule)."""

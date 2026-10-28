@@ -229,15 +229,12 @@ STORY_BADGE_SPECS = tuple(
 )
 # The 角色游戏卡 tab draws the same number circles on blue card frames: the
 # story templates scored 0.43-0.76 there (live 2K 2026-09-30), so the tab has
-# its own, cut at the badge centres (93 + 180 x (n - 1), 936) of a 1080p
-# frame of the tab.
-# All ten character cards sit in view in fixed slots (1080p): the badge of
-# card n is looked for only in its own slot, and its template must beat the
-# other nine there.  Live 2K: the right one scored 0.92-0.96, the others
-# <= 0.86 at the same slot (not the story tab's 0.95 floor).
-CHARACTER_BADGE_FIRST_X = 93
-CHARACTER_BADGE_SPACING = 180
-CHARACTER_BADGE_Y = 936
+# its own, cut at the badge centres of a 1080p frame of the tab.
+# The badge of card n is looked for along the whole row (pinned cards come
+# first and the row slides once it holds more than fit, YES-BD2 #41), and at
+# that spot its template must beat the other nine.  Live 2K: the right one
+# scored 0.92-0.96, the others <= 0.86 at the same spot (not the story tab's
+# 0.95 floor).  The window is the half-width of that spot (1080p px).
 CHARACTER_BADGE_WINDOW = 34
 CHARACTER_BADGE_MIN_SCORE = 0.85
 CHARACTER_BADGE_MIN_MARGIN = 0.08
@@ -607,6 +604,9 @@ AREA_MAP_OPEN_SECONDS = 3.0
 AREA_MAP_KEY = "M"
 # The game's interaction key: talks to the merchant when his prompt is unread.
 MERCHANT_TALK_KEY = "F"
+# The merchant menu's own key for 商店, shown under its bag icon bottom right
+# (player frame 2026-10-28; Leo 「像這個就可以按f2」).
+MERCHANT_SHOP_KEY = "F2"
 # 箱庭内角色位置保持在上次离开处；不在商人旁时经小地图导航菜单的"商店"
 # 目的地传送到商人面前（已在商店区域内则改点区域地图上的商人图标）。
 MERCHANT_NAV_GUIDE_TEMPLATE = TemplateSpec(

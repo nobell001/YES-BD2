@@ -506,22 +506,27 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
 
         # 交互菜单也含仓库标题，直接落回共享分类会被商店分支命中；
         # 须先用同帧交互选项与技能卡确认商人身份。
+        if self._merchant_menu_in_frame(frame):
+            return ScreenState.MERCHANT_DIALOG
+        return self.classify(frame)
+
+    def _merchant_menu_in_frame(self, frame) -> bool:
+        """The merchant's 对话/商店 menu: its option bubbles and talent cards."""
         options_passed, _ = self._ocr_keywords_in_frame(
             frame,
             ("对话", "商店"),
             "跑商商人交互选项",
             relative_roi=TRADE_MERCHANT_OPTIONS_REGION,
         )
-        if options_passed:
-            talents_passed, _ = self._ocr_keywords_in_frame(
-                frame,
-                ("天赋技能", "选择"),
-                "跑商商人天赋技能",
-                relative_roi=TRADE_MERCHANT_TALENTS_REGION,
-            )
-            if talents_passed:
-                return ScreenState.MERCHANT_DIALOG
-        return self.classify(frame)
+        if not options_passed:
+            return False
+        talents_passed, _ = self._ocr_keywords_in_frame(
+            frame,
+            ("天赋技能", "选择"),
+            "跑商商人天赋技能",
+            relative_roi=TRADE_MERCHANT_TALENTS_REGION,
+        )
+        return bool(talents_passed)
 
     @staticmethod
     def _shop_page_text(text: str) -> bool:

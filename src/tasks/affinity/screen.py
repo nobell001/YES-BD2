@@ -4,6 +4,9 @@
 List page: one card per costume, 13 a row; under the picture three lines,
 costume name (白色猫咪), character name (鲁), 「Lv.20 (0%)」.  Top right
 「今日剩余谈心次数 | 3」: the talks left today for costumes below LV20.
+A costume the player does not own is greyed with 「未拥有」 across its
+picture, its level still 「LV.1 (0%)」; pressed, the game only shows
+「未拥有穿戴该服装的角色，拥有后即可进行谈心。」 (player frame 2026-10-28).
 
 Detail page (a card pressed): the white panel on the right shows the
 character and costume names, 「LV.20 MAX」 or 「LV.16」, 「谈心记录 3/15」 and
@@ -35,6 +38,13 @@ CARD_PRESS_RIGHT_OF_LEVEL = 40
 COSTUME_LINE_ABOVE = (35, 60)
 CHARACTER_LINE_ABOVE = (10, 34)
 CARD_COLUMN_SLACK = 45
+# 「未拥有」 sits across the picture, about 100 px above the level line.
+UNOWNED_WORDS = ("未拥有",)
+UNOWNED_LABEL_ABOVE = (65, 140)
+UNOWNED_LABEL_MAX_CHARS = 5
+# Where the game's 「未拥有穿戴该服装的角色…」 shows after such a press
+# (screen centre, above the first row; one player frame: a guess for others).
+UNOWNED_TOAST_ROI = (460, 195, 1000, 90)
 
 # -- detail page -------------------------------------------------------------
 DETAIL_HEADER_ROI = (900, 80, 740, 210)
@@ -63,6 +73,7 @@ class Card:
     character: str
     level: int | None
     press: tuple[int, int]  # reference point that opens it
+    owned: bool = True  # False: 「未拥有」 read on its picture
 
     @property
     def key(self) -> str:
@@ -107,9 +118,12 @@ def _text(box) -> str:
     return str(getattr(box, "name", "") or "")
 
 
-# Letters OCR gives for digits right after 「LV」 (「LV.2O」, 「LV.l5」).
-_DIGIT_LOOKALIKES = str.maketrans({"O": "0", "o": "0", "D": "0", "l": "1", "I": "1", "|": "1"})
-_LEVEL_DIGITS = re.compile(r"(lv\.?)([0-9OoDlI|]{1,2})", re.IGNORECASE)
+# Letters OCR gives for digits right after 「LV」 (「LV.2O」, 「LV.l5」);
+# 「LV.B(33%)」 for LV.8 (player frame 2026-10-28, 1080p at 125%).
+_DIGIT_LOOKALIKES = str.maketrans(
+    {"O": "0", "o": "0", "D": "0", "l": "1", "I": "1", "|": "1", "B": "8"}
+)
+_LEVEL_DIGITS = re.compile(r"(lv\.?)([0-9OoDlI|B]{1,2})", re.IGNORECASE)
 
 
 def read_level(text: str) -> int | None:
@@ -123,13 +137,31 @@ def read_level(text: str) -> int | None:
     return level if 1 <= level <= MAX_LEVEL else None
 
 
+def unowned_label(text: str) -> bool:
+    """The short 「未拥有」 on a greyed card (not the game's longer toast)."""
+    text = normalize(text)
+    return len(text) <= UNOWNED_LABEL_MAX_CHARS and any(w in text for w in UNOWNED_WORDS)
+
+
+def unowned_toast(text: str) -> bool:
+    """The game's answer to pressing a costume not owned."""
+    text = normalize(text)
+    return any(w in text for w in UNOWNED_WORDS) and ("谈心" in text or "穿戴" in text)
+
+
 def parse_cards(boxes: list) -> list[Card]:
     """The cards in reading order (rows top to bottom, left to right).
 
     ``boxes`` are in 1920x1080 reference coordinates.  A card is its level
-    line plus the two name lines above it in the same column."""
+    line plus the two name lines above it in the same column; a 「未拥有」
+    over its picture marks it not owned."""
     levels = [b for b in boxes if read_level(_text(b)) is not None]
-    names = [b for b in boxes if read_level(_text(b)) is None and normalize(_text(b))]
+    labels = [b for b in boxes if unowned_label(_text(b))]
+    names = [
+        b
+        for b in boxes
+        if read_level(_text(b)) is None and normalize(_text(b)) and not unowned_label(_text(b))
+    ]
     cards = []
     for level_box in levels:
         lx, ly = float(level_box.x), float(level_box.y)
@@ -144,6 +176,11 @@ def parse_cards(boxes: list) -> list[Card]:
             return min(found, key=lambda b: abs(float(b.x) - lx), default=None)
 
         costume = above(COSTUME_LINE_ABOVE)
+        low, high = UNOWNED_LABEL_ABOVE
+        owned = not any(
+            abs(float(b.x) - lx) <= CARD_COLUMN_SLACK and low <= ly - float(b.y) <= high
+            for b in labels
+        )
         character = above(CHARACTER_LINE_ABOVE)
         if costume is None:
             continue
@@ -156,6 +193,7 @@ def parse_cards(boxes: list) -> list[Card]:
                     round(lx + CARD_PRESS_RIGHT_OF_LEVEL),
                     round(ly - CARD_PRESS_ABOVE_LEVEL),
                 ),
+                owned=owned,
             )
         )
     cards.sort(key=lambda c: (round(c.press[1] / 60), c.press[0]))

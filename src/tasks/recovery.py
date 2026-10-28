@@ -404,10 +404,14 @@ def _keep_failure_picture(task, navigator) -> None:
         path = run_report.save_picture(navigator.vision.capture(), "recovery")
     except (TaskDisabledException, FinishedException):
         raise
-    except Exception:
-        return
+    except Exception as exc:
+        path, why = None, repr(exc)
+    else:
+        why = "保存失败"
     if path:
         task.log_info(f"恢复主页：回不到主页，已保存当时画面：{path}")
+    else:
+        task.log_info(f"恢复主页：回不到主页，当时画面没存下来：{why}")
 
 
 class ReturnHomeTask(BaseBD2Task):

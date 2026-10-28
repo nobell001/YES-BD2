@@ -14,6 +14,14 @@ Waits written as ``while monotonic() <= end_at:`` never look when the time is
 already up (timeout 0, or the step before overran) and then report "not
 there".  New waits use ``wait_for``, which always looks once; the same file
 counts how many old ones each file may keep.
+
+A wait with a deadline of its own (``end_at = monotonic() + t``) also has
+remedies of its own, which is how each task came to fail in its own way.  New
+waits use the shared tools (Leo 2026-10-28 「能不能有個統一的標準」): after a
+press ``press_next`` (src/utils/press_next.py: the screens that can follow,
+then the remedies in order), otherwise ``wait_for`` or ``load_wait``.  A wait
+that really needs its own deadline carries ``# 自己等：<reason>`` on that line.
+The baseline counts the old ones under ``hand_waits``; a file may only go down.
 """
 
 import ast
@@ -40,8 +48,17 @@ PRESS_CALLS = frozenset(
         "send_key",
     }
 )
-CONFIRMED_BY = frozenset({"press_and_confirm"})
+CONFIRMED_BY = frozenset({"press_and_confirm", "press_next"})
 REASON_MARK = "# 不用确认"
+OWN_WAIT_MARK = "# 自己等"
+# The shared wait tools themselves.
+WAIT_TOOLS = frozenset(
+    {
+        ROOT / "src" / "utils" / "press_confirm.py",
+        ROOT / "src" / "utils" / "press_next.py",
+        ROOT / "src" / "utils" / "wait_limits.py",
+    }
+)
 
 
 def _call_name(node: ast.Call) -> str:
@@ -98,6 +115,26 @@ def deadline_waits(path: Path) -> list[int]:
     return sorted(found)
 
 
+def hand_waits(path: Path) -> list[int]:
+    """Lines that set a deadline by hand (``end_at = monotonic() + t``)."""
+    if path in WAIT_TOOLS:
+        return []
+    source = path.read_text(encoding="utf-8")
+    lines = source.splitlines()
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        value = node.value
+        if not (isinstance(value, ast.BinOp) and isinstance(value.op, ast.Add)):
+            continue
+        if not (_is_clock_call(value.left) or _is_clock_call(value.right)):
+            continue
+        if OWN_WAIT_MARK not in lines[node.lineno - 1]:
+            found.append(node.lineno)
+    return sorted(found)
+
+
 def current_counts(finder=direct_presses) -> dict[str, int]:
     counts = {}
     for folder in SCANNED:
@@ -139,10 +176,22 @@ class PressGuardTest(unittest.TestCase):
             "(src/utils/press_confirm.py), which always looks at least once.",
         )
 
+    def test_no_file_writes_more_waits_of_its_own(self):
+        over = _over(self.allowed["hand_waits"], hand_waits)
+        self.assertEqual(
+            {},
+            over,
+            "New waits with a deadline of their own. After a press use press_next "
+            "(src/utils/press_next.py: the screens that can follow, then the shared "
+            "remedies), otherwise wait_for or load_wait; or put `# 自己等：<reason>` "
+            "on the line.",
+        )
+
     def test_the_scan_sees_presses_reasons_and_waits(self):
         sample = ROOT / "tests" / "fixtures" / "press_guard_sample.py"
         self.assertEqual([7], direct_presses(sample))
         self.assertEqual([9], deadline_waits(sample))
+        self.assertEqual([8], hand_waits(sample))
 
 
 if __name__ == "__main__":

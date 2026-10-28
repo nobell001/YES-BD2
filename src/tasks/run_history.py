@@ -307,12 +307,14 @@ def _log_single_run(task, info: dict, ok: bool, started, finished: float, folder
     try:
         from src.tasks import run_log, run_report
 
+        # The task's own notes first, then why it failed (as on a batch row).
+        notes = (run_report.loose_note(started, finished), "" if ok else str(info.get("状态", "")))
         run_log.add(
             str(task.name),
             run_log.DONE if ok else run_log.FAIL,
             started=started,
             finished=finished,
-            note="" if ok else str(info.get("状态", "")),
+            note="，".join(part for part in notes if part),
             images=run_report.loose_pictures(started, finished),
             trade=run_report.loose_trade(started, finished),
             folder=folder,

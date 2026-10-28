@@ -8,3 +8,5 @@ def run(task):
     end_at = monotonic() + 1
     while monotonic() <= end_at:
         pass
+    press_next("ok", lambda: task.click(7, 8), ())
+    end_at = monotonic() + 2  # 自己等：sample

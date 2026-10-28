@@ -103,8 +103,9 @@ class BD2Interaction(PostMessageInteraction):
                     # left button held down.
                     try:
                         self.post(win32con.WM_LBUTTONUP, 0, win32api.MAKELONG(*held))
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        # 「失败后」 keeps this cleanup line from standing as the step's reason.
+                        logger.warning(f"失败后放开左键也出错，游戏里左键可能还按着：{exc!r}")
                 time.sleep(0.03)
                 try:
                     SetCursorPos(old)

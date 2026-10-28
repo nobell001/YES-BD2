@@ -160,6 +160,25 @@ class CookingRestoresGroupTest(unittest.TestCase):
                 trader.run_cooking()
         self.assertEqual(2, state["group"])
 
+    def test_cooking_done_again_after_an_off_field_stop_puts_the_group_back(self):
+        # 每日跑商 does a failed 料理 again from home (Leo 2026-10-28 「失敗都要
+        # 有補救機制」).  The first try switched 2 -> 1 and could not reach the
+        # field to switch back; the second found cooking already shown, so
+        # it switched nothing and the player was left on group 1.
+        trader, task, state = _trader(groups=2, cooking_in=1)
+        trader._selected_cooking_recipes = lambda: ("x",)
+        exits = iter([False, True])
+        trader._leave_cooking_to_q_sp6 = lambda: next(exits)
+        with mock.patch.dict(
+            trader_cooking.COOKING_RECIPE_SPECS, {"x": SimpleNamespace(file_name="x")}
+        ):
+            with mock.patch.object(trader_cooking.Path, "is_file", lambda _self: True):
+                trader.run_cooking()
+                self.assertEqual(1, state["group"])  # off the field: nothing pressed
+                trader.run_cooking()
+        self.assertEqual(2, state["group"])
+        self.assertTrue(any("切回原本的第2组" in message for _kind, message in task.logs))
+
 
 if __name__ == "__main__":
     unittest.main()

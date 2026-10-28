@@ -146,7 +146,6 @@ PVP_MULTIPLIER_CONFIRM_SCREEN_POINT = (1383, 1007)  # 2560×1440 参考
 # 1080p); the main popup underneath has 取消 and 战斗开始 there, no 确认.
 PVP_SETTING_CONFIRM_REFERENCE_ROI = (700, 700, 600, 100)  # 1920×1080 参考
 PVP_SETTING_CONFIRM_PATTERNS = [r"^确[认定]$"]
-PVP_MAX_BATTLE_COUNT_SCREEN_POINT = (1650, 850)  # 2560×1440 参考
 PVP_AUTO_BATTLE_MENU_OCR_REFERENCE_ROI = (327, 165, 417, 156)  # 1280×720 参考
 PVP_BATTLE_ONGOING_OCR_REFERENCE_ROI = (50, 576, 203, 69)  # 1280×720 参考
 PVP_MULTIPLIER_SETTING_OCR_REFERENCE_ROI = (451, 101, 379, 184)  # 1280×720 参考
@@ -1629,7 +1628,10 @@ class PVPTask(BaseBD2Task):
             )
             count = capped
         if count <= 0:
-            self._select_max_battle_count()
+            reached = self._select_max_battle_count(multiplier)
+            if reached is None:
+                return False
+            count = reached
         else:
             reached = self._set_battle_count(count)
             if not reached or reached > count:
@@ -1751,9 +1753,77 @@ class PVPTask(BaseBD2Task):
         self.info_set("PVP 战斗开始 OCR", " | ".join(t or "-" for t in texts))
         return None
 
-    def _select_max_battle_count(self) -> None:
+    def _select_max_battle_count(self, multiplier: int) -> int | None:
+        """MAX: as many battles as the free cocktails on screen pay for, at
+        most 40 cocktails (Leo 2026-10-05), set and read back like a chosen
+        count.  The count reached, or None (nothing is started).
+
+        YES-BD2 #63 (2026-10-28): 1倍 with MAX fought one battle.  The game's
+        MAX was pressed once at its place and never read back, and the check
+        after it only asked that the cocktails cover the count shown, so the
+        dialog's 「自动战斗1次」 passed.  (Inferred: the press was swallowed;
+        the player sent no log.)  With more than 40 free cocktails the game's
+        MAX would also have gone past 40.
+        """
         self.info_set("当前阶段", "选择最大战斗次数")
-        self._click_screen_reference(*PVP_MAX_BATTLE_COUNT_SCREEN_POINT, after_sleep=0.8)
+        free_text = ""
+
+        def free_pool():
+            nonlocal free_text
+            free_text = self._ocr_text(
+                self.capture_frame(), name="PVP 免费鸡尾酒", roi=PVP_FREE_COCKTAIL_ROI
+            )
+            return parse_free_cocktails(free_text)
+
+        free = self._read_until(free_pool)
+        if free is None:
+            problem = free_cocktails_problem(free_text)
+            self.log_warning(
+                f"镜中之战：场数选了 MAX，要先看免费鸡尾酒有几杯，{problem}，取消本次战斗。",
+                notify=True,
+            )
+            return None
+        # The battles are set from this number and the day is done after
+        # them: one frame's dropped digit (40 -> 4) fights 4 instead of 40,
+        # or at 10倍 ends the day at once.  It counts once a second read
+        # agrees; a third look outvotes a glitch in either of the first two.
+        reads = [free]
+        agreed = None
+        for _ in range(2):
+            self.sleep(0.4)
+            again = self._read_until(free_pool)
+            if again is not None and again in reads:
+                agreed = again
+                break
+            reads.append(again)
+        seen = " / ".join("没读出" if value is None else str(value) for value in reads)
+        if agreed is None:
+            self.log_warning(
+                f"镜中之战：场数选了 MAX，要先看免费鸡尾酒有几杯，读了 {len(reads)} 次"
+                f"没有两次一样（{seen}），不知道该设几场，取消本次战斗。",
+                notify=True,
+            )
+            return None
+        free = agreed
+        if len(reads) > 1:
+            self.log_info(
+                f"镜中之战：免费鸡尾酒读了 {len(reads) + 1} 次（{seen} / {free}），按 {free} 杯算。"
+            )
+        target = min(free, FREE_COCKTAILS_PER_DAY) // max(1, int(multiplier))
+        if target < 1:
+            self._free_cocktails_short = True
+            self.log_info(f"镜中之战：免费鸡尾酒只剩 {free}，不够 {multiplier} 倍打一场。")
+            return None
+        self.log_info(
+            f"镜中之战：场数 MAX，免费鸡尾酒 {free} 杯、{multiplier} 倍，设为 {target} 场。"
+        )
+        reached = self._set_battle_count(target)
+        if not reached or reached > target:
+            self.log_info(f"镜中之战：未能把战斗次数设为 {target}（MAX）。")
+            return None
+        if reached < target:
+            self.log_info(f"镜中之战：免费鸡尾酒只够 {reached} 场（MAX 算出 {target} 场）。")
+        return reached
 
     def _multiplier_matches(self, multiplier: int, timeout: float = 2.0) -> bool:
         return self._multiplier_reads(

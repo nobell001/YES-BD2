@@ -91,6 +91,7 @@ from src.tasks.map_trade.trader_constants import (
 from src.tasks.map_trade.vision import normalize_text
 from src.utils.calibration import FHD_1080
 from src.utils.image_utils import relative_roi_frame, template_match_response, to_gray
+from src.utils.press_confirm import press_and_confirm, wait_for
 
 # 等待单个日历条目全部可售卡片 OCR 确认的总时长与轮询间隔。
 SALE_ITEM_CANDIDATES_WAIT_TIMEOUT = 8.0
@@ -227,6 +228,8 @@ class SellFlowMixin:
                 return False
         self._buy_completed_in_current_shop = False
         entries = self._keep_owned_at_max_rate(entries)
+        if getattr(self, "_price_list_left_open", False):
+            return False  # the 价目表 is still over the shop: from home once more
         if not entries:
             self._status("未出售商品", "无（背包里没有今天120%的清单商品）")
             self.task.log_info("卖：价目表显示背包里没有今天120%的清单商品，直接结束出售。")
@@ -1080,20 +1083,60 @@ class SellFlowMixin:
         return "拥有" in text or "可购买" in text
 
     def _close_sale_dialog(self) -> bool:
-        """Close the quantity dialog and prove it closed on two reads."""
+        """Close the quantity dialog and prove it closed on two reads.
 
-        self.task.operate_click(*SALE_CLOSE_POINT, after_sleep=0.5)
-        end_at = monotonic() + SALE_DIALOG_TIMEOUT
-        closed_hits = 0
-        while True:
+        A dropped ✕ used to stop the day's selling.  The remedies are steps 3
+        and 4 of docs/dev-notes/bug-prevention.md: ✕ once more, then Esc,
+        each only while the dialog still reads, so no press lands on the
+        shop list under it.
+        """
+
+        if press_and_confirm(
+            "卖：关闭出售弹窗",
+            lambda: self.task.operate_click(*SALE_CLOSE_POINT, after_sleep=0.5),
+            self._sale_dialog_closed_check(),
+            sleep=self.task.sleep,
+            log=self.task.log_info,
+            still_before=self._sale_dialog_shown,
+            timeout=SALE_DIALOG_TIMEOUT,
+            poll=SALE_OCR_INTERVAL,
+            clock=monotonic,
+        ):
+            return True
+        tap_escape = getattr(self.task, "tap_escape", None)
+        if not callable(tap_escape) or not self._sale_dialog_shown():
+            return False
+        # Leo 「關不掉 就按ESC做備案」: Esc closes only the dialog on top.
+        self.task.log_info("卖：出售弹窗按了两次✕还在，改按 Esc。")
+        if not tap_escape(after_sleep=0.5):
+            return False
+        if not wait_for(
+            self._sale_dialog_closed_check(),
+            SALE_DIALOG_TIMEOUT,
+            sleep=self.task.sleep,
+            poll=SALE_OCR_INTERVAL,
+            clock=monotonic,
+        ):
+            return False
+        # Esc must not have left the shop as well: the next presses are on its list.
+        title = normalize_text(self.vision.simplify(self._shop_mode_title(self.vision.capture())))
+        if "出售" not in title:
+            self.task.log_warning("卖：按 Esc 关掉出售弹窗后，没看到出售页的标题。")
+            return False
+        return True
+
+    def _sale_dialog_closed_check(self):
+        """A check that is true on the second read in a row without the dialog."""
+
+        hits = [0]
+
+        def closed() -> bool:
             text = self._sale_dialog_text()
-            closed = bool(text) and "拥有" not in text and "可购买" not in text
-            closed_hits = closed_hits + 1 if closed else 0
-            if closed_hits >= 2:
-                return True
-            if monotonic() >= end_at:
-                return False
-            self.task.sleep(SALE_OCR_INTERVAL)
+            gone = bool(text) and "拥有" not in text and "可购买" not in text
+            hits[0] = hits[0] + 1 if gone else 0
+            return hits[0] >= 2
+
+        return closed
 
     def _sale_date_changed(self) -> bool:
         started = getattr(self, "_sale_calendar_date", None)

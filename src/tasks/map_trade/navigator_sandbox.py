@@ -50,6 +50,7 @@ from src.tasks.map_trade.navigator_constants import (
     AREA_MAP_CHANGE_TIMEOUT,
     AREA_MAP_CLICK_SETTLE_SECONDS,
     AREA_MAP_EXIT_ICON_OFFSETS,
+    AREA_MAP_KEY,
     AUTO_MOVE_CANCEL_ATTEMPTS,
     AUTO_MOVE_CANCEL_REFERENCE_POINT,
     AUTO_MOVE_IDLE_READS,
@@ -163,7 +164,7 @@ from src.tasks.map_trade.navigator_constants import (
 from src.tasks.map_trade.vision import normalize_text
 from src.utils.calibration import FHD_1080
 from src.utils.field_followers import dismiss_once_per_run
-from src.utils.press_confirm import press_and_confirm
+from src.utils.press_confirm import press_and_confirm, wait_for
 from src.utils.wait_limits import STUCK_SECONDS, MotionWatch, StillTimer
 
 
@@ -181,8 +182,18 @@ NOT_BY_CIRCLE_MESSAGE = "人不在可用的传送阵上（右下 F 键的手势�
 # ≡-menu entries also found by a part of the name when one character is
 # misread (「狩猎扬」), on a box no longer than the name.
 NAV_ENTRY_NAMES = {"狩猎场": ("狩猎场", "狩猎", "猎场")}
+# Rows the ≡ menu lists besides the trips asked for (梦幻广场 at 2K
+# 2026-10-17; story towns in the tests): one read means the menu is open.
+NAV_MENU_WORDS = (
+    "旅馆", "招募", "商店", "酒馆", "码头", "领地", "餐厅", "虚拟角色", "脱离当前场景"
+)
+NAV_MENU_ROW_CHARS = 8
+# A ≡ press after which the menu lists nothing is made once more.
+NAV_MENU_PRESSES = 2
 # The game's interact key, as its hand prompt shows it in the field.
 INTERACT_KEY = "F"
+# A press on the area map's circle that opened nothing is made once more.
+TELEPORT_ICON_PRESSES = 2
 # Looks (0.5 s apart) for the large map to close by itself once a walk was
 # confirmed, before it is closed by its back button.
 MAP_SELF_CLOSE_LOOKS = 3
@@ -1571,11 +1582,26 @@ class SandboxNavigationMixin:
     def _click_sandbox_navigation_menu_teleport(self, frame: np.ndarray) -> bool:
         """Select a stacked navigation-map teleport submenu by OCR center."""
 
+        center = self._sandbox_navigation_menu_teleport_option(frame)
+        if center is None:
+            return False
+        self.vision.click_client(
+            center,
+            frame.shape,
+            after_sleep=SANDBOX_NAVIGATION_OCR_INTERVAL,
+        )
+        self._status("箱庭徒步导航传送阵菜单", f"点击魔法阵中心={center}")
+        return True
+
+    def _sandbox_navigation_menu_teleport_option(
+        self, frame: np.ndarray
+    ) -> tuple[int, int] | None:
+        """The centre of the stacked menu's 魔法阵 row, or None."""
         try:
             boxes = self.vision.ocr_boxes(frame, "箱庭徒步导航传送阵菜单")
         except Exception as exc:
             self._status("箱庭徒步导航传送阵菜单 OCR错误", str(exc))
-            return False
+            return None
         for box in boxes:
             label = normalize_text(
                 self.vision.simplify(str(getattr(box, "name", "")))
@@ -1585,16 +1611,9 @@ class SandboxNavigationMixin:
             if "魔法阵" not in label or "自动移动" in label:
                 continue
             center = self._ocr_box_center(box)
-            if center is None:
-                continue
-            self.vision.click_client(
-                center,
-                frame.shape,
-                after_sleep=SANDBOX_NAVIGATION_OCR_INTERVAL,
-            )
-            self._status("箱庭徒步导航传送阵菜单", f"点击魔法阵中心={center}")
-            return True
-        return False
+            if center is not None:
+                return center
+        return None
 
     def _click_sandbox_navigation_destination_confirmation(
         self,
@@ -1725,42 +1744,25 @@ class SandboxNavigationMixin:
                 map_page_mode=MapPageMode.SANDBOX_LARGE_MAP,
             )
 
-        self.vision.click_client(
-            teleport.center,
-            teleport_frame.shape,
-            after_sleep=SANDBOX_NAVIGATION_TELEPORT_SETTLE_SECONDS,
-        )
-        menu_end_at = monotonic() + SANDBOX_NAVIGATION_CONFIRM_TIMEOUT
-        destination_confirmed = False
-        caught_early = False
-        while monotonic() <= menu_end_at:
-            menu_frame = self.vision.capture()
-            walk_text = self._walk_text(menu_frame)
-            if self._walk_caught(walk_text):
-                # Caught before the banner was ever read (live 2K: "被发现了！！"
-                # 3 s after the click): the walk itself was under way.
-                caught_early = destination_confirmed = True
+        destination_confirmed = caught_early = False
+        for press in range(1, TELEPORT_ICON_PRESSES + 1):
+            self.vision.click_client(
+                teleport.center,
+                teleport_frame.shape,
+                after_sleep=SANDBOX_NAVIGATION_TELEPORT_SETTLE_SECONDS,
+            )
+            destination_confirmed, caught_early = self._follow_teleport_icon_press()
+            if destination_confirmed or press == TELEPORT_ICON_PRESSES:
                 break
-            if self._auto_move_question_shown(walk_text):
-                # 「是否自动移动前往所选目的地？」 (YES-BD2 #24): its title
-                # 自动移动 is not the walk banner; its 确认 starts the walk.
-                if self._click_sandbox_navigation_destination_confirmation(menu_frame):
-                    destination_confirmed = True
-                    break
-                self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
-                continue
-            if "自动移动" in walk_text:
-                # One click on the map icon already started the walk: no
-                # menu and no confirm button follow.
-                destination_confirmed = True
+            # Nothing the press opens showed (remedy 3,
+            # docs/dev-notes/bug-prevention.md): the circle once more, only
+            # while the map still shows it and nothing else.
+            teleport_frame = self.vision.capture()
+            teleport = self._circle_press_left_nothing(teleport_frame)
+            if teleport is None:
                 break
-            if self._click_sandbox_navigation_menu_teleport(menu_frame):
-                self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
-                continue
-            if self._click_sandbox_navigation_destination_confirmation(menu_frame):
-                destination_confirmed = True
-                break
-            self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
+            self._status("导航状态", "点了区域地图上的传送阵没反应，再点一次")
+            self.task.log_info("跑图：点了区域地图上的传送阵没反应，再点一次。")
         if not destination_confirmed:
             frame = self.vision.capture()
             if self._sandbox_navigation_page_has_keyword(frame):
@@ -1798,6 +1800,10 @@ class SandboxNavigationMixin:
                 "走向传送阵时两次撞到怪进了战斗，都已逃跑，没走到传送阵",
             )
         if not self._click_sandbox_teleport_interaction(timeout=self._loading_timeout()):
+            if walked == "done" and self._press_interact_key_on_circle():
+                # The walk ended on the circle: its hand may just not read
+                # (player 1080p 125% 2026-10-17 at the hunting ground's).
+                return self._open_circle_page(f"走到传送阵后快捷键{INTERACT_KEY}")
             # A walk still going (resumed after an unseen catch) would fight
             # the caller's next step (the ≡ menu).
             self._cancel_walk()
@@ -1807,6 +1813,61 @@ class SandboxNavigationMixin:
                 "徒步回退后仍未识别到传送阵交互按钮",
             )
         return self._open_circle_page("徒步回退交互")
+
+    def _follow_teleport_icon_press(self) -> tuple[bool, bool]:
+        """After the circle on the area map was pressed: its 魔法阵 menu, its
+        确认, or the 自动移动 question, until the walk is confirmed.
+        (confirmed, caught before the banner was read)."""
+        menu_end_at = monotonic() + SANDBOX_NAVIGATION_CONFIRM_TIMEOUT
+        while monotonic() <= menu_end_at:
+            menu_frame = self.vision.capture()
+            walk_text = self._walk_text(menu_frame)
+            if self._walk_caught(walk_text):
+                # Caught before the banner was ever read (live 2K: "被发现了！！"
+                # 3 s after the click): the walk itself was under way.
+                return True, True
+            if self._auto_move_question_shown(walk_text):
+                # 「是否自动移动前往所选目的地？」 (YES-BD2 #24): its title
+                # 自动移动 is not the walk banner; its 确认 starts the walk.
+                if self._click_sandbox_navigation_destination_confirmation(menu_frame):
+                    return True, False
+                self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
+                continue
+            if "自动移动" in walk_text:
+                # One click on the map icon already started the walk: no
+                # menu and no confirm button follow.
+                return True, False
+            if self._click_sandbox_navigation_menu_teleport(menu_frame):
+                self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
+                continue
+            if self._click_sandbox_navigation_destination_confirmation(menu_frame):
+                return True, False
+            self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
+        return False, False
+
+    def _circle_press_left_nothing(self, frame: np.ndarray) -> MatchResult | None:
+        """The circle to press again: the area map still shows it, and none of
+        what its press opens (the 魔法阵 menu, 确认, the 自动移动 question).
+        None once anything else shows; a press could land on it."""
+        if not self._sandbox_navigation_page_has_keyword(frame):
+            return None
+        if self._sandbox_navigation_destination_button(frame) is not None:
+            return None
+        if self._auto_move_question_shown(self._walk_text(frame)):
+            return None
+        if self._sandbox_navigation_menu_teleport_option(frame) is not None:
+            return None
+        return self._sandbox_navigation_teleport(frame)
+
+    def _press_interact_key_on_circle(self) -> bool:
+        """The game's interact key F, sent only on a confirmed field (on 主页
+        it opens the recent cartridge).  True when it was sent."""
+        tap_key = getattr(self.task, "tap_key", None)
+        if not callable(tap_key) or not self._field_keycaps_shown():
+            return False
+        self._status("导航状态", f"走到传送阵后没认出交互手势，改按快捷键 {INTERACT_KEY}")
+        self.task.log_info(f"跑图：走到传送阵后没认出交互手势，改按快捷键 {INTERACT_KEY}。")
+        return bool(tap_key(INTERACT_KEY, after_sleep=TELEPORT_INTERACTION_CLICK_DELAY))
 
     def open_teleport_map_from_sandbox(self) -> NavigationResult:
         """Open the teleport map through the circle's 交互 button."""
@@ -2691,15 +2752,26 @@ class SandboxNavigationMixin:
             self._nav_failure = f"没按到小地图的≡按钮：{why}"
             self.task.log_warning(f"跑图：未识别到小地图导航按钮，无法前往{wanted}。")
             return None
-        choice = self._nav_menu_choice(entries)
-        if choice is None and HUNTING_GROUND_NAV_ENTRY in entries and self._hunting_ground_panel(
-            getattr(self, "_nav_menu_texts", ())
-        ):
-            # The bar showed up only after the press (read too early above).
-            self._status("导航状态", "读到狩猎场的栏，人已在狩猎场，直接去按传送阵")
-            self.task.log_info("跑图：人已经在狩猎场，直接去按传送阵。")
-            self._already_in_hunting_ground = True
-            return HUNTING_GROUND_NAV_ENTRY
+        for press in range(1, NAV_MENU_PRESSES + 1):
+            choice = self._nav_menu_choice(entries)
+            texts = getattr(self, "_nav_menu_texts", ())
+            if choice is None and HUNTING_GROUND_NAV_ENTRY in entries and (
+                self._hunting_ground_panel(texts)
+            ):
+                # The bar showed up only after the press (read too early above).
+                self._status("导航状态", "读到狩猎场的栏，人已在狩猎场，直接去按传送阵")
+                self.task.log_info("跑图：人已经在狩猎场，直接去按传送阵。")
+                self._already_in_hunting_ground = True
+                return HUNTING_GROUND_NAV_ENTRY
+            if choice is not None or press == NAV_MENU_PRESSES or self._nav_menu_listed(texts):
+                break
+            # Nothing the menu lists was read: the ≡ press may not have taken
+            # (remedy 3, docs/dev-notes/bug-prevention.md).  On a menu that was
+            # open after all, the press closes it and the read below says so.
+            self._status("导航状态", "按了≡按钮没看到菜单，再按一次")
+            self.task.log_info("跑图：按了≡按钮没看到菜单，再按一次。")
+            if not self._open_minimap_nav_menu():
+                break
         if choice is None:
             seen = getattr(self, "_nav_menu_seen", "")
             self._nav_failure = f"≡菜单里没读到{wanted}" + (f"，读到：{seen}" if seen else "，什么字都没读到")
@@ -2766,6 +2838,16 @@ class SandboxNavigationMixin:
                 return None
             seen = bool(listed)
             self.task.sleep(MERCHANT_NAV_MENU_OCR_INTERVAL)
+
+    @staticmethod
+    def _nav_menu_listed(texts) -> bool:
+        """The texts read where the ≡ menu opens hold a row it lists.  A row
+        is short: the 珍藏集 page's 「可体验广场钓鱼领地等…」 is not 领地."""
+        return any(
+            len(text) <= NAV_MENU_ROW_CHARS and word in text
+            for text in texts
+            for word in NAV_MENU_WORDS
+        )
 
     @staticmethod
     def _hunting_ground_panel(texts) -> bool:
@@ -2876,12 +2958,34 @@ class SandboxNavigationMixin:
             self._close_field_map()
 
     def _open_field_map(self) -> str | None:
-        """Open the field's area map (as M does); return its header text."""
+        """Open the field's area map (as M does); return its header text.
+
+        A minimap press that opened nothing is followed by the game's own
+        key M, only on a confirmed field (remedy 4,
+        docs/dev-notes/bug-prevention.md); 跑商's walk to the merchant does
+        the same (Leo 2026-10-20: every step has a second way)."""
         self.task.operate_click(
             MINIMAP_CENTER_REFERENCE[0] / 1920,
             MINIMAP_CENTER_REFERENCE[1] / 1080,
             after_sleep=1.0,
         )
+        header = self._field_map_opened()
+        if header is None and self._press_area_map_key():
+            header = self._field_map_opened()
+        return header
+
+    def _press_area_map_key(self) -> bool:
+        """M, sent only while the field's key caps show (the map, a page or
+        主页 is not up).  True when it was sent."""
+        tap_key = getattr(self.task, "tap_key", None)
+        if not callable(tap_key) or not self._field_keycaps_shown():
+            return False
+        self._status("区域地图", f"点小地图没打开地图，改按快捷键 {AREA_MAP_KEY}")
+        self.task.log_info(f"跑图：点小地图没打开区域地图，改按快捷键 {AREA_MAP_KEY}。")
+        return bool(tap_key(AREA_MAP_KEY, after_sleep=1.0))
+
+    def _field_map_opened(self) -> str | None:
+        """The area map's header once it shows, within WALK_MAP_OPEN_TIMEOUT."""
         end_at = monotonic() + WALK_MAP_OPEN_TIMEOUT
         while True:
             header = self._field_map_header()
@@ -2894,10 +2998,14 @@ class SandboxNavigationMixin:
             self.task.sleep(0.4)
 
     def _close_field_map(self) -> None:
-        """Close the area map; press again only while its header is still read.
+        """Close the area map; press again only while its header is still read,
+        then the game's back key Esc.
 
         One blind press assumed the field was back: a swallowed press left the
-        map open and the next field step clicked on the map instead.
+        map open and the next field step clicked on the map instead.  A map
+        still open after both presses covered the ≡ button and the rest of the
+        card failed behind it (player 1080p 2026-10-23, 第9章); Esc is the next
+        remedy (docs/dev-notes/bug-prevention.md; Leo 「關不掉 就按ESC做備案」).
         """
         self.task.operate_click(*SANDBOX_LARGE_MAP_RETURN_RELATIVE_POINT, after_sleep=1.0)
         end_at = monotonic() + FIELD_MAP_CLOSE_TIMEOUT
@@ -2911,8 +3019,7 @@ class SandboxNavigationMixin:
                 return
             open_hits += 1
             if monotonic() >= end_at:
-                self.task.log_warning(f"跑商：区域地图关闭后标题仍在：{header}。")
-                return
+                break
             if not reclicked and open_hits >= 2:
                 reclicked = True
                 open_hits = 0
@@ -2920,6 +3027,21 @@ class SandboxNavigationMixin:
                 self.task.operate_click(*SANDBOX_LARGE_MAP_RETURN_RELATIVE_POINT, after_sleep=0.5)
                 continue
             self.task.sleep(0.4)
+        escaped = False
+        tap_escape = getattr(self.task, "tap_escape", None)
+        if callable(tap_escape):
+            self._status("区域地图", "按两次返回都没关，改按 Esc")
+            self.task.log_info("跑图：区域地图按两次返回都没关，改按 Esc。")
+            escaped = bool(tap_escape(after_sleep=0.5))
+            if escaped and wait_for(
+                lambda: not self._area_map_open(),
+                FIELD_MAP_CLOSE_TIMEOUT,
+                sleep=self.task.sleep,
+                clock=monotonic,
+            ):
+                return
+        how = "按返回和 Esc 都没关掉" if escaped else "按两次返回都没关掉"
+        self.task.log_warning(f"跑图：区域地图{how}，标题还在：{header}。")
 
     def _walk_to_collection_map(
         self,

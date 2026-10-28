@@ -1502,7 +1502,7 @@ class PVPTaskHelperTest(unittest.TestCase):
         task._ensure_free_ap_enabled = lambda: True
         starts = []
         task._ensure_multiplier = lambda multiplier: starts.append(multiplier) or True
-        task._select_max_battle_count = lambda: None
+        task._select_max_battle_count = lambda _multiplier: 1
         counts = []
         task._set_battle_count = lambda count: counts.append(count) or count
         task._verify_free_cost = lambda *_args: True
@@ -2769,7 +2769,7 @@ class PVPTaskHelperTest(unittest.TestCase):
         task._click_template_until = fake_click_template_until
         task._ensure_free_ap_enabled = lambda: True
         task._ensure_multiplier = lambda _multiplier: True
-        task._select_max_battle_count = lambda: None
+        task._select_max_battle_count = lambda _multiplier: 1
         task._verify_free_cost = lambda *_args: True
         auto_clicks = []
         task._click_ocr_pattern_center = lambda *args, **kwargs: (
@@ -2821,7 +2821,7 @@ class PVPTaskHelperTest(unittest.TestCase):
         task._click_template_until = lambda *_args, **_kwargs: True
         task._ensure_free_ap_enabled = lambda: True
         task._ensure_multiplier = lambda _multiplier: True
-        task._select_max_battle_count = lambda: None
+        task._select_max_battle_count = lambda _multiplier: 1
         task._verify_free_cost = lambda *_args: True
         auto_clicks = []
         task._click_ocr_pattern_center = lambda *args, **kwargs: (
@@ -2932,7 +2932,7 @@ class PVPTaskHelperTest(unittest.TestCase):
         )
         task._ensure_free_ap_enabled = lambda: True
         task._ensure_multiplier = lambda _multiplier: True
-        task._select_max_battle_count = lambda: None
+        task._select_max_battle_count = lambda _multiplier: 1
         task._verify_free_cost = lambda *_args: True
         reference_clicks = []
         task._click_screen_reference = (
@@ -3007,7 +3007,7 @@ class PVPTaskHelperTest(unittest.TestCase):
         task._click_template_until = lambda *_args, **_kwargs: True
         task._ensure_free_ap_enabled = lambda: True
         task._ensure_multiplier = lambda _multiplier: True
-        task._select_max_battle_count = lambda: None
+        task._select_max_battle_count = lambda _multiplier: 1
         task._verify_free_cost = lambda *_args: True
         task._click_screen_reference = lambda x, y, after_sleep=0.0: None
         task._click_ocr_pattern_center = lambda *args, **kwargs: True
@@ -3041,7 +3041,7 @@ class PVPTaskHelperTest(unittest.TestCase):
         task._click_template_until = lambda *_args, **_kwargs: True
         task._ensure_free_ap_enabled = lambda: True
         task._ensure_multiplier = lambda _multiplier: True
-        task._select_max_battle_count = lambda: None
+        task._select_max_battle_count = lambda _multiplier: 1
         task._verify_free_cost = lambda *_args: True
         reference_clicks = []
         task._click_screen_reference = (
@@ -3158,7 +3158,7 @@ class PVPTaskHelperTest(unittest.TestCase):
         task._ensure_multiplier = (
             lambda multiplier: multiplier_calls.append(multiplier) or False
         )
-        task._select_max_battle_count = lambda: self.fail(
+        task._select_max_battle_count = lambda _multiplier: self.fail(
             "battle count must not be selected when multiplier is unconfirmed"
         )
         task.capture_frame = lambda: self.fail("start window must not run on failure")
@@ -3367,6 +3367,39 @@ class PVPTaskHelperTest(unittest.TestCase):
             2,
             state["clicks"].count(PVP_MULTIPLIER_1_OPTION_SCREEN_POINT),
         )
+
+    def test_low_multiplier_never_read_in_the_dialog_still_starts(self):
+        # YES-BD2 #59 (v0.2.14, 1920x1080 full 125%): 1倍 and 2倍 stopped at
+        # 未能开始战斗 after 「倍率选项第3/3次点击后设置值未回读到 1」, while the
+        # dialog showed 1倍; 40倍 worked only because it was set already.
+        # From v0.2.15 the run goes on and 战斗开始's cost decides.
+        from src.tasks.PVPTask import PVP_MULTIPLIER_STEP_POINTS
+
+        moves = {"big_plus": 5, "big_minus": -5, "plus": 1, "minus": -1}
+        by_point = {point: name for name, point in PVP_MULTIPLIER_STEP_POINTS.items()}
+        for target in (1, 2):
+            with self.subTest(target=target):
+                task, state = self._make_multiplier_harness()
+                task.sleep = lambda *_args: None
+                task._read_until = lambda _reader: None
+                # Nothing the dialog or the main popup shows is ever read.
+                task._setting_multiplier_matches = lambda _value: False
+                task._multiplier_matches = lambda _value, timeout=2.0: False
+
+                def step(x, y, after_sleep=0.0, state=state):
+                    state["setting"] = max(1, min(40, state["setting"] + moves[by_point[(x, y)]]))
+
+                task._click_reference = step
+                press = task._click_screen_reference
+
+                def press_and_close(x, y, after_sleep=0.0, state=state, press=press):
+                    press(x, y, after_sleep)
+                    if (x, y) == PVP_MULTIPLIER_CONFIRM_SCREEN_POINT:
+                        state["dialog_open"] = False
+
+                task._click_screen_reference = press_and_close
+                self.assertTrue(PVPTask._ensure_multiplier(task, target))
+                self.assertEqual(target, state["main"])
 
     def test_open_multiplier_setting_fails_after_retry_budget(self):
         task = object.__new__(PVPTask)
@@ -3756,6 +3789,146 @@ class PvpFreeCocktailGuardTest(unittest.TestCase):
         # MIN, +1, the same +1 once more (it may have been swallowed), then stop.
         self.assertLessEqual(len(presses), 3)
 
+
+
+class MaxBattleCountTest(unittest.TestCase):
+    """YES-BD2 #63 (2026-10-28): 1倍 with 场数 MAX fought one battle.  The
+    game's MAX was pressed once at its place and never read back; the check
+    after it only asked that the cocktails cover the count shown, so the
+    dialog's 「自动战斗1次」 passed."""
+
+    def _dialog(self, free_text, multiplier=1, game_cap=None, free_reads=()):
+        """``free_reads``: what the free-cocktail box reads first, one per
+        look (a glitch on a frame); ``free_text`` after them (what is there)."""
+        from src.tasks.PVPTask import PVP_COUNT_MIN_POINT, PVP_COUNT_STEP_POINTS
+        from src.utils.pvp_dialog import parse_free_cocktails, step_moves
+
+        task = object.__new__(PVPTask)
+        task.config = {"战斗场数": "MAX"}
+        task.info_set = lambda *_a, **_k: None
+        task.log_info = Mock()
+        task.log_warning = Mock()
+        task.sleep = lambda *_a: None
+        task.close_known_popup = lambda *_a, **_k: False
+        task.capture_frame = lambda: np.zeros((1080, 1920, 3), dtype=np.uint8)
+        task._free_ap_switch_on = lambda: True
+        task._free_cocktails_short = False
+        free = parse_free_cocktails(free_text) or 0
+        # With 仅使用免费 on the game goes no higher than the free cocktails pay for.
+        cap = game_cap if game_cap is not None else free // multiplier
+        # The dialog opens on 「自动战斗1次」; the game's own MAX press is swallowed.
+        game = SimpleNamespace(count=1, steps=[])
+        points = {PVP_COUNT_MIN_POINT: "min"}
+        points.update({point: step for step, point in PVP_COUNT_STEP_POINTS.items()})
+
+        def click_reference(x, y, after_sleep=0.0):
+            step = points.get((x, y))
+            game.steps.append(step)
+            if step == "min":
+                game.count = 1
+            elif step is not None:
+                game.count = max(1, min(cap, game.count + step_moves(step, 10)))
+
+        task._click_reference = click_reference
+        task._click_screen_reference = lambda *_a, **_k: None
+        texts = {
+            "PVP 战斗开始": f"{multiplier}倍战斗开始{multiplier}",
+            "PVP 免费鸡尾酒": free_text,
+        }
+        glitches = list(free_reads)
+        game.free_reads = 0
+
+        def ocr_text(_frame, name, roi=None, ocr_scale=1.0):
+            if name == "PVP 战斗次数":
+                return f"自动战斗 {game.count}次"
+            if name == "PVP 免费鸡尾酒":
+                game.free_reads += 1
+                if glitches:
+                    return glitches.pop(0)
+            return texts.get(name, "")
+
+        task._ocr_text = ocr_text
+        return task, game
+
+    def _select(self, task, multiplier):
+        with patch("src.tasks.PVPTask.PVP_COUNT_CONFIRM_SECONDS", 0.0):
+            return PVPTask._select_battle_count(task, multiplier)
+
+    def test_max_at_1x_fights_what_the_free_cocktails_pay_for(self):
+        task, game = self._dialog("40/40 +1.42K")
+        self.assertTrue(self._select(task, 1))
+        self.assertEqual(40, game.count)
+        self.assertEqual(40, task._verified_battles)
+
+    def test_max_never_goes_past_40_cocktails(self):
+        # Rewards can pile free cocktails past the daily 40 (player 2026-10-18).
+        task, game = self._dialog("50/40 +1.42K")
+        self.assertTrue(self._select(task, 1))
+        self.assertEqual(40, task._verified_battles)
+
+    def test_max_at_10x_is_what_the_free_cocktails_cover(self):
+        task, game = self._dialog("36/40 +1.42K", multiplier=10)
+        self.assertTrue(self._select(task, 10))
+        self.assertEqual(3, task._verified_battles)
+
+    def test_max_with_not_even_one_battle_free_is_the_day_done(self):
+        task, game = self._dialog("5/40 +1.42K", multiplier=10)
+        self.assertFalse(self._select(task, 10))
+        self.assertTrue(task._free_cocktails_short)
+        self.assertEqual([], game.steps)
+
+    def test_max_with_the_free_cocktails_unread_starts_nothing(self):
+        task, game = self._dialog("+1.42K")
+        self.assertFalse(self._select(task, 1))
+        self.assertEqual([], game.steps)
+        message = task.log_warning.call_args.args[0]
+        self.assertIn("MAX", message)
+        self.assertIn("右上角读到「+1.42K」", message)
+
+    def test_max_stops_where_the_game_stops(self):
+        task, game = self._dialog("40/40 +1.42K", game_cap=38)
+        self.assertTrue(self._select(task, 1))
+        self.assertEqual(38, task._verified_battles)
+
+    def test_max_a_dropped_digit_on_one_look_is_outvoted(self):
+        # One frame reads 40 as 4: 4 battles would be fought and the day
+        # called done.  Whichever look has the glitch, two others agree on 40.
+        for glitches in (["4/40 +1.42K"], ["40/40 +1.42K", "4/40 +1.42K"]):
+            with self.subTest(glitches=glitches):
+                task, game = self._dialog("40/40 +1.42K", free_reads=glitches)
+                self.assertTrue(self._select(task, 1))
+                self.assertEqual(40, game.count)
+                self.assertEqual(40, task._verified_battles)
+
+    def test_max_a_dropped_digit_at_10x_does_not_end_the_day(self):
+        # 40 read as 4 at 10倍 is "not even one battle": the day would end.
+        task, game = self._dialog("40/40 +1.42K", multiplier=10, free_reads=["4/40 +1.42K"])
+        self.assertTrue(self._select(task, 10))
+        self.assertFalse(task._free_cocktails_short)
+        self.assertEqual(4, task._verified_battles)
+
+    def test_max_reads_that_never_agree_start_nothing_and_say_what_was_read(self):
+        task, game = self._dialog("39/40 +1.42K", free_reads=["40/40 +1.42K", "4/40 +1.42K"])
+        self.assertFalse(self._select(task, 1))
+        self.assertEqual([], game.steps)
+        # Not the day done: the next run reads again.
+        self.assertFalse(task._free_cocktails_short)
+        message = task.log_warning.call_args.args[0]
+        self.assertIn("MAX", message)
+        self.assertIn("40 / 4 / 39", message)
+
+    def test_max_two_agreeing_reads_are_enough(self):
+        task, game = self._dialog("40/40 +1.42K")
+        steps = []
+        set_count = PVPTask._set_battle_count
+
+        def set_battle_count(count):
+            steps.append(game.free_reads)
+            return set_count(task, count)
+
+        task._set_battle_count = set_battle_count
+        self.assertTrue(self._select(task, 1))
+        self.assertEqual([2], steps)
 
 
 class BattleCountSettingTest(unittest.TestCase):

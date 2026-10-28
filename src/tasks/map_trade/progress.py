@@ -698,10 +698,14 @@ class ProgressStore:
         return not self.game_used_up("吸收")
 
     def game_used_up(self, action: str = "吸收") -> bool:
-        """The game's count read today shows the action used up."""
+        """The game showed the action used up today: its count read full and
+        the game agreed (a press it refused, its icon grey, or the press that
+        took the last use), which alone sets ``depleted_today``.  A full read
+        by itself never ends the day (Leo 2026-10-28 「除非你確定跑圖次數已經確
+        實滿了」: players with uses left were kept from 跑图 by misreads)."""
         state = self._require_state()
         seen = state.game_counts.get(self._action_name(action))
-        return seen is not None and seen[0] >= seen[1]
+        return bool(state.depleted_today) and seen is not None and seen[0] >= seen[1]
 
     def forget_unproven_depletion(self) -> None:
         """A 'used up for today' the game's count does not show is let go:
@@ -1002,10 +1006,9 @@ class ProgressStore:
         ):
             return 0
         # Kept as the game shows it, before any of the settling rules below
-        # (they refuse reads under this PC's tally or an older read).
+        # (they refuse reads under this PC's tally or an older read).  A full
+        # read is not the day used up by itself (``game_used_up``).
         state.game_counts[action_name] = (used, observed_limit)
-        if used >= observed_limit:
-            state.depleted_today = True
         previous = state.observed_counts.get(action_name)
         if previous is not None and (
             previous[1] != observed_limit or used < previous[0]
@@ -1062,8 +1065,6 @@ class ProgressStore:
         )
         if update_observed:
             state.observed_counts[action_name] = (used, observed_limit)
-            if used >= observed_limit:
-                state.depleted_today = True
         settled = 0
         if previous is not None:
             for _key, record in pending_records:

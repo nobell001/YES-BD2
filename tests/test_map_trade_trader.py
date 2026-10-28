@@ -133,6 +133,7 @@ from src.tasks.map_trade.navigator_trade import MERCHANT_BACK_LOOK_SECONDS
 from src.tasks.map_trade.vision import Vision
 from src.tasks.MapTradeTask import MapTradeTask
 from src.utils.calibration import FHD_1080, reference_rect_to_relative_roi
+from src.utils.frozen_screen import FrozenScreen
 from src.utils.home_confirmation import HOME_ANNOUNCEMENT_CLEAR_RELATIVE_POINT
 from src.utils.image_utils import relative_roi_frame, scale_reference_roi
 from src.utils.template_resolution import offline_template_scale
@@ -2587,6 +2588,8 @@ class BuyEntryTest(unittest.TestCase):
             log_warning=lambda message: warnings.append(message),
         )
         vision = SimpleNamespace(
+            # Not his open menu: its bubbles and talent cards read nothing.
+            ocr_text=lambda *_a, **_k: "",
             capture=lambda: frame,
             ocr_boxes=lambda captured, name, roi: (
                 ocr_calls.append((captured, name, roi))
@@ -2747,6 +2750,8 @@ class BuyEntryTest(unittest.TestCase):
             info_set=lambda key, value: statuses.append((key, value)),
         )
         vision = SimpleNamespace(
+            # Not his open menu: its bubbles and talent cards read nothing.
+            ocr_text=lambda *_a, **_k: "",
             capture=lambda: frame,
             ocr_boxes=lambda *_args: [
                 SimpleNamespace(name="F 对话", x=900, y=300, width=80, height=40),
@@ -2774,6 +2779,8 @@ class BuyEntryTest(unittest.TestCase):
         sleeps = []
         task = SimpleNamespace(config={}, sleep=sleeps.append, log_warning=lambda *_args: None)
         vision = SimpleNamespace(
+            # Not his open menu: its bubbles and talent cards read nothing.
+            ocr_text=lambda *_a, **_k: "",
             capture=lambda: frame,
             ocr_boxes=lambda *_args: next(results),
             simplify=lambda value: value,
@@ -2944,6 +2951,7 @@ class TradeMerchantNavigationTest(unittest.TestCase):
         probed = []
         navigator = self._navigator(SimpleNamespace(capture=lambda: frame))
         navigator._merchant_prompt_box = lambda captured: probed.append(captured) or object()
+        navigator._merchant_menu_in_frame = lambda _captured: False
         navigator._enter_trade_card = lambda: self.fail("prompt visible: no cartridge entry")
         navigator._walk_to_merchant = lambda: self.fail("prompt visible: no walking")
 
@@ -2953,6 +2961,20 @@ class TradeMerchantNavigationTest(unittest.TestCase):
         self.assertEqual(ScreenState.SANDBOX, result.state)
         self.assertEqual(1, len(probed))
         self.assertIs(frame, probed[0])
+
+    def test_go_to_trade_merchant_with_his_menu_open_is_beside_him_not_the_field(self):
+        # His open menu's 「洛兹 欢迎光临!」 reads like the prompt (2026-10-28).
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        navigator = self._navigator(SimpleNamespace(capture=lambda: frame))
+        navigator._merchant_prompt_box = lambda _captured: object()
+        navigator._merchant_menu_in_frame = lambda captured: captured is frame
+        navigator._enter_trade_card = lambda: self.fail("beside him: no cartridge entry")
+        navigator._walk_to_merchant = lambda: self.fail("beside him: no walking")
+
+        result = navigator.go_to_trade_merchant()
+
+        self.assertTrue(result.success)
+        self.assertEqual(ScreenState.MERCHANT_DIALOG, result.state)
 
     def test_go_to_trade_merchant_enters_card_and_stops_when_prompt_shows(self):
         events = []
@@ -4118,6 +4140,87 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
             self.assertTrue(outcomes["买"])
             self.assertTrue(ledger.done("制作料理"))
 
+    def _run_trade(self, *, buy=(True,), cook=(True,), sell=(True,), home=True):
+        """Each phase answers from its tuple in turn (an exception is raised)."""
+        from src.tasks.map_trade.phase_ledger import PhaseLedger
+
+        calls = []
+
+        def phase(name, answers):
+            answers = iter(answers)
+
+            def run():
+                calls.append(name)
+                answer = next(answers)
+                if isinstance(answer, Exception):
+                    raise answer
+                return answer
+
+            return run
+
+        trader = object.__new__(Trader)
+        trader.run_buy = phase("buy", buy)
+        trader.run_cooking = phase("cook", cook)
+        trader.run_sell = phase("sell", sell)
+        trader.left_shop = lambda: calls.append("left shop")
+        task = object.__new__(MapTradeTask)
+        task.config = {"启用": True}
+        task.log_info = lambda *_a, **_k: None
+        task.log_warning = lambda *_a, **_k: None
+        task._return_home_after_phases = lambda _navigator: calls.append("home") or home
+        outcomes = {}
+
+        def run_phases(_navigator, phases, after_home=None):
+            for name, _key, action in phases:
+                outcomes[name] = action()
+            return True
+
+        task._run_phases = run_phases
+        with TemporaryDirectory() as folder:
+            ledger = PhaseLedger(Path(folder) / "phases.json")
+            with (
+                patch("src.tasks.MapTradeTask.Vision"),
+                patch("src.tasks.MapTradeTask.Navigator"),
+                patch("src.tasks.MapTradeTask.ProgressStore"),
+                patch("src.tasks.MapTradeTask.PhaseLedger", return_value=ledger),
+                patch("src.tasks.MapTradeTask.Trader", return_value=trader),
+            ):
+                task.run()
+            done = {name for name in ("买", "制作料理", "卖") if ledger.done(name)}
+        return calls, outcomes, done
+
+    def test_failed_cooking_and_selling_are_done_once_more_from_home(self):
+        # Leo 2026-10-28 「失敗都要有補救機制」: like 买 since 10-19.
+        calls, outcomes, done = self._run_trade(cook=(False, True), sell=(False, True))
+
+        self.assertEqual(
+            ["buy", "cook", "home", "left shop", "cook", "sell", "home", "left shop", "sell"],
+            calls,
+        )
+        self.assertTrue(outcomes["制作料理"])
+        self.assertTrue(outcomes["卖"])
+        self.assertEqual({"买", "制作料理", "卖"}, done)
+
+    def test_a_phase_that_fails_again_is_not_tried_a_third_time(self):
+        calls, outcomes, done = self._run_trade(cook=(False, False))
+
+        self.assertEqual(["buy", "cook", "home", "left shop", "cook", "sell"], calls)
+        self.assertFalse(outcomes["制作料理"])
+        self.assertEqual({"买", "卖"}, done)
+
+    def test_no_second_try_when_home_is_not_reached(self):
+        calls, outcomes, _done = self._run_trade(sell=(False,), home=False)
+
+        self.assertEqual(["buy", "cook", "sell", "home"], calls)
+        self.assertFalse(outcomes["卖"])
+
+    def test_a_stuck_screen_on_the_first_try_is_tried_once_more(self):
+        calls, outcomes, done = self._run_trade(cook=(FrozenScreen("画面卡住"), True))
+
+        self.assertEqual(["buy", "cook", "home", "left shop", "cook", "sell"], calls)
+        self.assertTrue(outcomes["制作料理"])
+        self.assertIn("制作料理", done)
+
     def test_cooking_after_a_failed_buy_is_not_recorded_as_done(self):
         from src.tasks.map_trade.phase_ledger import PhaseLedger
 
@@ -4426,6 +4529,9 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         trader._wait_for_purchase_confirmation = lambda *_a, **_k: False
         trader._purchase_dialog_partly_read = lambda: False
         trader._sold_out_after_buy = lambda: False
+        # Stars not read (the black frame): the gray-star stop stays out
+        # (tests/test_trade_buy_no_favorites.py).
+        trader._nothing_favorited = lambda: None
 
         self.assertFalse(trader.buy_all_favorites())
         # Pressed once more after the first press opened nothing, then 确认
@@ -5515,7 +5621,7 @@ class BargainUpgradeTest(unittest.TestCase):
         trader._status = lambda *a: None
         trader._current_market_time = lambda: datetime(2026, 9, 28, 10, 0, tzinfo=UTC_PLUS_8)
         trader.navigator = SimpleNamespace(
-            enter_q_sp6_buy_flow=lambda: NavigationResult(
+            enter_q_sp6_buy_flow=lambda **_kw: NavigationResult(
                 False, ScreenState.SANDBOX, BARGAIN_UPGRADE_MESSAGE
             )
         )

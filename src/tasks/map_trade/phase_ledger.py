@@ -88,11 +88,17 @@ class PhaseSkipped:
 
 class PhaseDeferred:
     """Nothing done yet, but the later phases may go on; not recorded, so the
-    next run tries this phase again (e.g. bargain waiting for its star-up)."""
+    next run tries this phase again (e.g. bargain waiting for its star-up).
+
+    ``skipped``: the phase did nothing for a reason the player fixes in the
+    game; the run lists it under 跳过 (not 完成) and the report carries the
+    reason (Leo 2026-10-28 「沒有設最愛商品就跳過 然後要在報告說 請玩家去設定」
+    「買跳過 不要整個跑商跳過」)."""
 
     success = True
     record = False
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, skipped: bool = False) -> None:
         self.message = message
+        self.skipped = skipped
 

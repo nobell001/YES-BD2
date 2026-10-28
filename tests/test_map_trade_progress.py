@@ -628,7 +628,8 @@ class ProgressTest(unittest.TestCase):
             store.reconcile_pending("召集", (3, 19))
             self.assertEqual(19, store.limit_of("召集"))
             store.reconcile_pending("召集", (19, 19))
-            self.assertTrue(store.state.depleted_today)
+            # A full read alone is not the day used up (Leo 2026-10-28).
+            self.assertFalse(store.state.depleted_today)
             store.reconcile_pending("压制", (5, 90))
             store.reconcile_pending("压制", (5, 90))
             self.assertEqual(90, store.limit_of("压制"))
@@ -653,8 +654,12 @@ class ProgressTest(unittest.TestCase):
             # still shows an 吸收 left; the game's count ends the day.
             self.assertTrue(store.can_plan_collection(["a", "b", "c", "d", "e"]))
             store.reconcile_pending("吸收", (24, 24))
+            # Leo 2026-10-28 「除非你確定跑圖次數已經確實滿了」: the read alone
+            # does not end the day; the game agreeing does.
+            self.assertTrue(store.can_plan_collection(["a"]))
+            self.assertFalse(store.state.depleted_today)
+            store.mark_depleted_today()
             self.assertFalse(store.can_plan_collection(["a"]))
-            self.assertTrue(store.state.depleted_today)
 
     def test_the_game_count_is_kept_even_below_this_pcs_tally(self):
         # Three grey maps passed through raised the tally to 3 while the game

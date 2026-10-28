@@ -57,6 +57,8 @@ _active: dict | None = None
 _loose: list[tuple[float, str, str]] = []
 # What a single trade run (outside a batch) sold and cooked.
 _loose_trade: list[tuple[float, dict]] = []
+# Notes a single run's task left (outside a batch), for its run-log entry.
+_loose_notes: list[tuple[float, str]] = []
 _report_file: str | None = None
 
 
@@ -191,10 +193,29 @@ def add_note(key: str, note: str) -> None:
 
 
 def add_current_note(note: str) -> None:
-    """A note on the running row, from the task itself (no-op outside a batch)."""
+    """A note on the running row, from the task itself.  Outside a batch the
+    single run's run-log entry picks it up when it ends, as with add_trade
+    (Leo 2026-10-28: the 买 skipped for no favourites says so in the report
+    whichever way 每日跑商 was started)."""
     with _lock:
-        if _active is not None and _active.get("current"):
-            add_note(_active["current"], note)
+        if _active is not None:
+            if _active.get("current"):
+                add_note(_active["current"], note)
+            return
+        if note:
+            _loose_notes.append((time.time(), str(note)))
+            del _loose_notes[:-8]
+
+
+def loose_note(started: float | None, finished: float) -> str:
+    """The notes a single run left between ``started`` and ``finished``."""
+    with _lock:
+        found = [
+            note
+            for ts, note in _loose_notes
+            if (started is None or ts >= started - 1) and ts <= finished + 1
+        ]
+    return "，".join(dict.fromkeys(found))
 
 
 def set_notice(text: str) -> None:

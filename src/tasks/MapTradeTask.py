@@ -8,7 +8,7 @@ from ok.task.exceptions import FinishedException, TaskDisabledException
 from ok.util.file import get_relative_path
 from qfluentwidgets import FluentIcon
 
-from src.tasks import problem_report
+from src.tasks import problem_report, run_report
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.map_trade import trade_detail
 from src.tasks.map_trade.models import OPTIONAL_COOKING_RECIPES
@@ -117,6 +117,8 @@ class MapAutomationTaskBase(BaseBD2Task):
         completed: list[str] = []
         failed: list[str] = []
         skipped: list[str] = []
+        # Skipped for a reason the player fixes in the game (on the report).
+        held: list[str] = []
         # Home was not reached after a failed phase: nothing more is tried.
         stranded = False
         self.info_set("状态", f"{self.task_log_name}启动。")
@@ -142,7 +144,15 @@ class MapAutomationTaskBase(BaseBD2Task):
                     message = str(getattr(result, "message", ""))
                     if message:
                         self.log_info(f"{name}：{message}")
-                    (completed if success else failed).append(name)
+                    if success and getattr(result, "skipped", False):
+                        # Nothing done, for a reason the player fixes in the
+                        # game (no favourites to buy, 砍价 to star up): 跳过,
+                        # with the reason on the report (Leo 2026-10-28).
+                        skipped.append(name)
+                        held.append(name)
+                        run_report.add_current_note(f"{name}跳过：{message}")
+                    else:
+                        (completed if success else failed).append(name)
                     if not success:
                         self._note_phase_problem("fail", f"{name}：{message}" if message else name)
                         self._save_diagnostic(f"{self.diagnostic_prefix}_{name}_failed")
@@ -191,6 +201,14 @@ class MapAutomationTaskBase(BaseBD2Task):
         if failed:
             self.info_set("状态", f"{self.task_log_name}部分流程未完成。")
             return False
+        if held:
+            # Not 「所有已开启流程完成」: something the player turned on was not
+            # done (Leo 2026-10-28 「買跳過」 is told, not hidden).
+            self.info_set("状态", f"{self.task_log_name}完成，{'、'.join(held)}跳过。")
+            self.log_completion(
+                f"{self.task_log_name}：{'、'.join(held)}跳过（原因见报告），其他已开启流程完成。"
+            )
+            return True
         self.info_set("状态", f"{self.task_log_name}完成。")
         self.log_completion(f"{self.task_log_name}：所有已开启流程完成。")
         return True
@@ -374,6 +392,33 @@ class MapTradeTask(MapAutomationTaskBase):
             if new_key not in legacy and old_key in legacy:
                 self.config[new_key] = legacy[old_key]
 
+    def _once_more_from_home(self, navigator, trader, name, run, again):
+        """Run a phase; a failed one goes home and runs once more.
+
+        Leo 2026-10-28 「失敗都要有補救機制」: whatever screen the failure left,
+        home leads back to the phase's start, and the phase is done again from
+        there.  Only once: a second failure is reported as it is.
+        """
+        try:
+            result = run()
+        except FrozenScreen as exc:
+            # str(exc): the exception itself is always true, so an empty
+            # one logged 「买：。」 (player v0.2.13 2026-10-25).
+            why = str(exc) or (
+                f"画面 {FROZEN_SCREEN_SECONDS:.0f} 秒没有变化（点了没反应或认不出画面）"
+            )
+            self.log_warning(f"{name}：{why}。")
+            if getattr(self, "_frozen_watch", None) is not None:
+                self._frozen_watch = FrozenWatch()
+            result = False
+        if bool(getattr(result, "success", result)):
+            return result
+        self.log_info(f"{name}：没有成功，回主页{again}。")
+        if self._return_home_after_phases(navigator):
+            trader.left_shop()
+            result = run()
+        return result
+
     def run(self):
         if not bool(self.config.get("启用", True)):
             self.info_set("状态", "跑商已禁用。")
@@ -392,37 +437,38 @@ class MapTradeTask(MapAutomationTaskBase):
         bought = {"ok": True}
 
         def buy():
+            # Make sure the day's stock is bought (Leo 2026-10-19 「確保買到」).
+            # A purchase that went through shows 售罄 and is not bought again.
             bought["ok"] = False
-            try:
-                result = trader.run_buy()
-            except FrozenScreen as exc:
-                self.log_warning(f"买：{exc or '画面卡住'}。")
-                if getattr(self, "_frozen_watch", None) is not None:
-                    self._frozen_watch = FrozenWatch()
-                result = False
-            if not bool(getattr(result, "success", result)):
-                # Make sure the day's stock is bought (Leo 2026-10-19 「確保買到」):
-                # once more from home.  A purchase that went through shows
-                # 售罄 and is not bought again.
-                self.log_info("买：没有成功，回主页再买一次。")
-                if self._return_home_after_phases(navigator):
-                    trader.left_shop()
-                    result = trader.run_buy()
-            bought["ok"] = bool(getattr(result, "success", result))
+            result = self._once_more_from_home(navigator, trader, "买", trader.run_buy, "再买一次")
+            # A skipped 买 bought nothing either: the run after the player
+            # set favourites cooks the new stock too.
+            bought["ok"] = bool(getattr(result, "success", result)) and not getattr(
+                result, "skipped", False
+            )
+            bought["skipped"] = bool(getattr(result, "skipped", False))
             return result
 
         def cook():
+            # Dishes already cooked have no ingredients left and are skipped.
+            result = self._once_more_from_home(
+                navigator, trader, "制作料理", trader.run_cooking, "再做一次"
+            )
             # 买 failed: cook what the bag holds before 卖, but do not record
             # 料理 as done, so the retry that buys also cooks the new stock.
-            result = trader.run_cooking()
             if bought["ok"] or not bool(getattr(result, "success", result)):
                 return result
-            return PhaseDeferred("买没有成功，先用现有材料做了料理；补买后会再做一次。")
+            why = "买这次跳过了" if bought.get("skipped") else "买没有成功"
+            return PhaseDeferred(f"{why}，先用现有材料做了料理；补买后会再做一次。")
+
+        def sell():
+            # The 价目表 shows only what is still in the bag at 120%.
+            return self._once_more_from_home(navigator, trader, "卖", trader.run_sell, "再卖一次")
 
         steps = (
             ("买", buy),
             ("制作料理", cook),
-            ("卖", trader.run_sell),
+            ("卖", sell),
         )
         phases = tuple(
             (name, name, ledger.once(name, action, skip_done=skip_done)) for name, action in steps

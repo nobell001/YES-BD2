@@ -7,6 +7,8 @@
   new costumes; Leo agreed 02:11Z), costumes found locked at LV15 last (no
   affinity until the costume's potential is released).
 - A card whose level is not read is not owned (Leo 02:12Z): never opened.
+- A card marked 「未拥有」 (greyed, still 「LV.1 (0%)」) is never opened
+  either (Leo 2026-10-28 「看到未擁有就不要點 純浪費時間」).
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ def make_plan(cards: list[Card], record: TalkRecord, today: str, talks_left: int
     seen = set()
     unique = []
     for card in cards:
-        if card.key not in seen and card.level is not None:
+        if card.key not in seen and card.level is not None and card.owned:
             seen.add(card.key)
             unique.append(card)
     finish = [c for c in unique if c.level >= MAX_LEVEL and c.key not in record.done]

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import unittest
 import unittest.mock
+from difflib import SequenceMatcher
 from pathlib import Path
 from types import SimpleNamespace
 
 import cv2
 
-from src.tasks.affinity import answers, screen
+from src.tasks.affinity import answers, plan, record, screen
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "affinity"
 
@@ -457,7 +458,113 @@ class NotOwnedTest(unittest.TestCase):
         task._settled_detail = lambda *a: None
         task.capture_frame = lambda: None
         task._list_visible = lambda frame: True
+        task._unowned_toast = lambda: False  # the game's toast unread
         task._back_to_list = lambda: True
         self.assertEqual(NO_PANEL, task._open_card(card))
         task._back_to_list = lambda: False
         self.assertIsNone(task._open_card(card))
+
+
+class UnownedLabelTest(unittest.TestCase):
+    """Leo 2026-10-28 「看到未擁有就不要點 純浪費時間」: a player's v0.2.15
+    summary showed 暗黑圣女 pressed twice and waited on, though the list
+    marks it 「未拥有」 (greyed, still 「LV.1 (0%)」)."""
+
+    def test_real_list_with_unowned_costumes(self):
+        # The game picture of that summary, scaled back to 1920x1080.
+        cards = screen.parse_cards(
+            real_reference_boxes(FIXTURES / "list_unowned_1080p_summary.jpg", screen.LIST_GRID_ROI)
+        )
+        by_key = {c.key: c for c in cards}
+        self.assertFalse(by_key["暗黑圣女/黎维塔"].owned)
+        self.assertFalse(by_key["白雷/尤里"].owned)
+        self.assertTrue(by_key["白色猫咪/鲁"].owned)
+        self.assertTrue(by_key["被封印的欲望/阿奇拉"].owned)
+        owned = sorted(c.key for c in cards if c.owned)
+        expected = [
+            "白色猫咪/鲁", "沙漠之花/席比雅", "澄心无邪兔女郎/提尔",
+            "白缕轻缠木乃伊/内肯达莉亚", "玄夜/马莫尼勒", "客栈晴晖/海伦娜",
+            "恶作剧幽灵/格兰希特", "被封印的欲望/阿奇拉",
+        ]
+        # Which cards are owned is what is tested, not every glyph of their
+        # names: the same picture reads 澄心 as 温心 on one machine (2026-10-28
+        # cloud, score 0.93), and answers.find_costume takes such a misread.
+        self.assertEqual(len(expected), len(owned), owned)
+        for name in expected:
+            alike = [key for key in owned if SequenceMatcher(None, name, key).ratio() >= 0.85]
+            self.assertEqual(1, len(alike), (name, owned))
+        self.assertGreaterEqual(sum(1 for c in cards if not c.owned), 14)
+        work = plan.make_plan(cards, record.TalkRecord(), "2026-10-28", 3)
+        self.assertEqual(sorted(c.key for c in work.daily), owned)
+
+    def test_label_over_the_picture_marks_the_card(self):
+        boxes = [
+            box("白色猫咪", 181, 311), box("鲁", 188, 339), box("LV.10(0%)", 184, 357),
+            box("未拥有", 1125, 260), box("暗黑圣女", 1103, 312), box("黎维塔", 1103, 334),
+            box("LV.1(0%)", 1108, 360),
+        ]
+        cards = screen.parse_cards(boxes)
+        self.assertEqual(
+            [(c.costume, c.owned) for c in cards], [("白色猫咪", True), ("暗黑圣女", False)]
+        )
+        work = plan.make_plan(cards, record.TalkRecord(), "2026-10-28", 3)
+        self.assertEqual([c.costume for c in work.daily], ["白色猫咪"])
+
+    def test_the_games_toast_is_not_a_card_label(self):
+        toast = "未拥有穿戴该服装的角色，拥有后即可进行谈心。"
+        self.assertFalse(screen.unowned_label(toast))
+        self.assertTrue(screen.unowned_toast(toast))
+        self.assertTrue(screen.unowned_label("未擁有"))
+        boxes = [box(toast, 600, 230, 500, 24), box("白色猫咪", 181, 311), box("鲁", 188, 339),
+                 box("LV.10(0%)", 184, 357)]
+        self.assertTrue(screen.parse_cards(boxes)[0].owned)
+
+    def test_level_eight_read_as_b(self):
+        self.assertEqual(screen.read_level("LV.B(33%)"), 8)
+
+    def test_the_games_toast_ends_the_press_at_once(self):
+        from src.tasks.AffinityTalkTask import NO_PANEL, AffinityTalkTask
+
+        task = AffinityTalkTask.__new__(AffinityTalkTask)
+        card = screen.Card("暗黑圣女", "黎维塔", 1, (1503, 283))
+        task._scrolled = 0
+        task._grid_cards = lambda: [card]
+        task.info_set = lambda *a, **k: None
+        task.logs = []
+        task.log_info = task.logs.append
+        presses = []
+        task._click_reference = lambda *a, **k: presses.append(a)
+        task.capture_frame = lambda: None
+        toast = "未拥有穿戴该服装的角色，拥有后即可进行谈心。"
+        task._roi_boxes = lambda frame, roi, label: [box(toast)]
+        task._settled_detail = lambda *a: self.fail("waited for a panel")
+        task._back_to_list = lambda: self.fail("left the list")
+        self.assertEqual(NO_PANEL, task._open_card(card))
+        self.assertEqual(1, len(presses))
+        self.assertIn("还没拥有「暗黑圣女」", task.logs[-1])
+
+    def test_unowned_costumes_are_told_once_and_never_pressed(self):
+        from src.tasks.AffinityTalkTask import AffinityTalkTask
+
+        task = AffinityTalkTask.__new__(AffinityTalkTask)
+        task.config = {}
+        task.info_set = lambda *a, **k: None
+        task.logs = []
+        task.log_info = task.logs.append
+        task._open_list = lambda: True
+        cards = [
+            screen.Card("回归偶像", "尤里", 15, (0, 0)),
+            screen.Card("暗黑圣女", "黎维塔", 1, (0, 0), owned=False),
+        ]
+        task._read_list = lambda: (cards, 3)
+        pressed = []
+        task._daily_talk = lambda card, allow_locked: pressed.append(card.costume) or "talked"
+        task._report_keys = lambda: None
+        task._go_home = lambda: True
+        task._note_why = lambda *a: None
+        task._claim_fail = lambda step: False
+        with unittest.mock.patch.object(record, "load", return_value=record.TalkRecord()), \
+                unittest.mock.patch.object(record, "save", return_value=True):
+            self.assertTrue(task.run_claim())
+        self.assertEqual(pressed, ["回归偶像"])
+        self.assertIn("列表上标着「未拥有」的服装不点：暗黑圣女。", " ".join(task.logs))

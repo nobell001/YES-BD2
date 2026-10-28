@@ -8,6 +8,11 @@ most 0.75 there.  The bar is not strictly in number order: pinned cards
 come first (fixture native_720_q6_visible: 6, 18, 20, then 1, 2, 3...), so
 the target's art is looked for along the whole bar and must clearly beat
 every other card's art at that spot.
+
+The 角色游戏卡 tab works the same way (YES-BD2 #41, v0.2.19, 1080p): pinned
+cards 2-5 sat in front of card 1, so a card is never in "its" slot; each
+character card's own art scored 0.77-0.84 where it was and any other
+character art at most 0.57 there.
 """
 
 from __future__ import annotations
@@ -30,6 +35,12 @@ ART_TEMPLATE_DIR = (
 )
 ART_FILE = "story_cartridge_art_{:02d}.png"
 ART_NUMBERS = tuple(range(1, 20))
+# Per quick bar tab: (file name pattern, card numbers with a picture).  The
+# pictures are assets/ui/cartridges/S*.png and R*.png, unchanged.
+ART_SETS = {
+    "story": (ART_FILE, ART_NUMBERS),
+    "character": ("character_cartridge_art_{:02d}.png", tuple(range(1, 8))),
+}
 # Template pixels to 1080p client pixels (best fit 1.70 on Leo's frame).
 ART_SCALE_1080 = 1.7
 ART_SCALE_STEPS = (0.97, 1.0, 1.03)
@@ -75,22 +86,22 @@ class SlotCheck:
 
 
 @lru_cache(maxsize=None)
-def _template(number: int) -> np.ndarray | None:
-    path = ART_TEMPLATE_DIR / ART_FILE.format(number)
+def _template(number: int, kind: str = "story") -> np.ndarray | None:
+    path = ART_TEMPLATE_DIR / ART_SETS[kind][0].format(number)
     if not path.is_file():
         # A card newer than the shipped pictures goes by its badge.
         return None
     return image_io.read(path, cv2.IMREAD_COLOR)
 
 
-def has_art(number: int) -> bool:
+def has_art(number: int, kind: str = "story") -> bool:
     """A picture ships for this card (cards newer than them go by badge)."""
-    return _template(number) is not None
+    return kind in ART_SETS and _template(number, kind) is not None
 
 
 @lru_cache(maxsize=64)
-def _scaled_template(number: int, scale: float) -> np.ndarray | None:
-    template = _template(number)
+def _scaled_template(number: int, scale: float, kind: str = "story") -> np.ndarray | None:
+    template = _template(number, kind)
     if template is None:
         return None
     return cv2.resize(
@@ -123,10 +134,11 @@ def _best(
     band: np.ndarray,
     number: int,
     x_range: tuple[float, float] | None = None,
+    kind: str = "story",
 ) -> ArtMatch | None:
     best: ArtMatch | None = None
     for step in ART_SCALE_STEPS:
-        template = _scaled_template(number, round(ART_SCALE_1080 * step, 3))
+        template = _scaled_template(number, round(ART_SCALE_1080 * step, 3), kind)
         if template is None:
             return None
         th, tw = template.shape[:2]
@@ -217,14 +229,14 @@ def check_slot(frame: np.ndarray, target: int, badge_x: float) -> SlotCheck:
     return SlotCheck(True, "", target_match, other)
 
 
-def find_card(frame: np.ndarray, target: int) -> SlotCheck:
+def find_card(frame: np.ndarray, target: int, kind: str = "story") -> SlotCheck:
     """The target's art anywhere on the bar, clearly ahead of every other
-    card's art at that spot."""
+    card's art (of the same tab) at that spot."""
 
-    if _template(target) is None:
+    if not has_art(target, kind):
         return SlotCheck(False, f"没有卡带{target}的图片")
     band = _band_1080(frame)
-    target_match = _best(band, target)
+    target_match = _best(band, target, kind=kind)
     if target_match is None:
         return SlotCheck(False, f"卡带{target}的图片超出画面")
     if target_match.score < ART_MIN_SCORE:
@@ -236,10 +248,10 @@ def find_card(frame: np.ndarray, target: int) -> SlotCheck:
     window = ART_SLOT_TOLERANCE * CARD_SPACING_1080
     x_range = (target_match.left - window, target_match.left + window)
     other: ArtMatch | None = None
-    for number in ART_NUMBERS:
+    for number in ART_SETS[kind][1]:
         if number == target:
             continue
-        match = _best(band, number, x_range)
+        match = _best(band, number, x_range, kind)
         if match is not None and (other is None or match.score > other.score):
             other = match
     if other is not None and target_match.score - other.score < ART_MIN_LEAD:

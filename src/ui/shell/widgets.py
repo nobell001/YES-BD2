@@ -361,21 +361,26 @@ class Button(QPushButton):
             painter.drawControl(QStyle.CE_PushButtonBevel, hot)
             painter.setOpacity(1.0)
         label = hot if hover >= 0.5 else rest
-        if label.icon.isNull() or not label.text:
+        # The icon, text, size and box come from the button, the same values
+        # initStyleOption copied into the option: reading them back from the
+        # option's fields can return a stale object of another type (UI check
+        # 2026-10-28: label.rect was a QWidgetItem, and the paint failed).
+        icon, text = self.icon(), self.text()
+        if icon.isNull() or not text:
             painter.drawControl(QStyle.CE_PushButtonLabel, label)
             return
         # 2026-10-22 check: 「▷一键完成日常」 looked glued, so the icon and
         # the text are placed here with ICON_GAP, centred together as Qt would.
-        icon_size = label.iconSize
-        text_width = self.fontMetrics().horizontalAdvance(label.text)
+        icon_size = self.iconSize()
+        text_width = self.fontMetrics().horizontalAdvance(text)
         shift = (icon_size.width() + self.ICON_GAP) / 2
         left = (self.width() - icon_size.width() - self.ICON_GAP - text_width) / 2
         mode = QIcon.Normal if self.isEnabled() else QIcon.Disabled
-        pixmap = label.icon.pixmap(icon_size, self.devicePixelRatioF(), mode)
+        pixmap = icon.pixmap(icon_size, self.devicePixelRatioF(), mode)
         top = (self.height() - icon_size.height()) / 2
         painter.drawPixmap(QPointF(left, top), pixmap)
         label.icon = QIcon()
-        label.rect = label.rect.translated(round(shift), 0)
+        label.rect = self.rect().translated(round(shift), 0)
         painter.drawControl(QStyle.CE_PushButtonLabel, label)
 
     def sizeHint(self) -> QSize:

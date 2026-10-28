@@ -20,6 +20,7 @@ stays unchanged (STUCK_SECONDS).
 
 from __future__ import annotations
 
+from dataclasses import replace
 from time import monotonic
 
 import cv2
@@ -106,6 +107,12 @@ def no_panel_note(costumes: list[str]) -> str:
     return f"点了{names}没出现谈心面板（可能还没拥有这件服装），跳过了，其他服装照常谈心。"
 
 
+def unowned_note(costumes: list[str]) -> str:
+    """The costumes the list marks 「未拥有」: never pressed."""
+    names = "、".join(dict.fromkeys(costumes))
+    return f"列表上标着「未拥有」的服装不点：{names}。"
+
+
 def locked_note(costumes: list[str]) -> str:
     """Why LV15 costumes waiting for 潜力释放 were not talked to today."""
     names = "、".join(dict.fromkeys(costumes))
@@ -146,6 +153,10 @@ class AffinityTalkTask(_ClaimTaskBase):
             self._go_home()
             return self._claim_fail("读取服装列表")
         work = plan.make_plan(cards, self._record, self._today, talks_left)
+        unowned = [c.costume for c in cards if not c.owned]
+        if unowned:
+            # Leo 2026-10-28 「看到未擁有就不要點 純浪費時間」.
+            self.log_info(f"{LABEL}：{unowned_note(unowned)}")
         self._probe = bool(self.config.get("_试跑只谈一次", False))
         self._probe_frames = 0
         self._keep_frames = self._probe or bool(self.config.get("_存每个画面", False))
@@ -347,7 +358,10 @@ class AffinityTalkTask(_ClaimTaskBase):
         again = self._grid_cards()
         if len(again) > len(cards):
             self.log_info(f"{LABEL}：第二次读列表多读到 {len(again) - len(cards)} 件。")
-            cards = again
+            cards, again = again, cards
+        # 「未拥有」 read on either frame counts.
+        unowned = {c.key for c in cards + again if not c.owned}
+        cards = [replace(c, owned=False) if c.key in unowned else c for c in cards]
         self._scrolled = 0
         known = {c.key for c in cards}
         for _round in range(GRID_SCROLL_ROUNDS):
@@ -424,6 +438,10 @@ class AffinityTalkTask(_ClaimTaskBase):
         detail = None
         for attempt in range(2):
             self._click_reference(*target.press, after_sleep=1.0)  # 不用确认：下一行读面板
+            if self._unowned_toast():
+                # 「未拥有」 unread on the list, the game says it: no second press.
+                self.log_info(f"{LABEL}：游戏提示还没拥有「{card.costume}」，跳过。")
+                return NO_PANEL
             detail = self._settled_detail(card.key, f"{card.costume}详情")
             if detail or not self._list_visible(self.capture_frame()):
                 break
@@ -434,6 +452,11 @@ class AffinityTalkTask(_ClaimTaskBase):
             # Back on the list: skip this one and go on with the others.
             return NO_PANEL if self._back_to_list() else None
         return detail
+
+    def _unowned_toast(self) -> bool:
+        """The game's 「未拥有穿戴该服装的角色…」 after a press, still on the list."""
+        boxes = self._roi_boxes(self.capture_frame(), screen.UNOWNED_TOAST_ROI, "未拥有提示")
+        return screen.unowned_toast(self._boxes_text(boxes))
 
     # -- detail page --------------------------------------------------------------------
 

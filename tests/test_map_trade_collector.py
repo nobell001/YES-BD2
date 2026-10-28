@@ -41,7 +41,6 @@ from src.tasks.map_trade.collector_constants import (
     SKILL_GROUP_REFERENCE_POINTS,
     SKILL_GROUP_RELATIVE_POINTS,
     SKILL_GROUP_SWITCH_SETTLE_SECONDS,
-    SKILL_OCR_FALLBACK_UPSCALE,
     SKILL_OCR_UPSCALE,
     SUMMON_ACTION,
     SUPPRESS_ACTION,
@@ -64,6 +63,7 @@ from src.tasks.map_trade.progress import (
     UTC_PLUS_8,
     ProgressStore,
 )
+from src.utils import ocr_count
 from src.utils.plain_text import DIAGNOSTIC_PREFIX
 from tests.helpers.map_trade import _seed_action_records, _seed_battle_supplements
 
@@ -327,9 +327,12 @@ class CollectionRunTest(unittest.TestCase):
             )
             progress.load()
             # Only the game's count stops the day (Leo 2026-10-20): this PC's
-            # tally alone no longer does.
+            # tally alone no longer does.  And the count only with the game
+            # agreeing earlier today (Leo 2026-10-28; a stored 21/21 alone
+            # lets the run in: tests/test_map_count_never_blocks.py).
             progress.state.daily_submaps = 19
             progress.state.game_counts["吸收"] = (21, 21)
+            progress.state.depleted_today = True
             progress.save()
             task = SimpleNamespace(
                 config={"卡带单步重试次数": 1},
@@ -1165,14 +1168,16 @@ class CollectorSkillTest(unittest.TestCase):
         # Leo 2026-10-07: grey = done this week; nothing waits for a count.
         self.assertEqual((), tuple(result.pending_actions))
 
-    def test_skill_ocr_failure_is_not_reported_as_completed(self):
+    def test_skill_ocr_failure_still_presses_by_the_icon(self):
+        # Leo 2026-10-28 「除非你確定跑圖次數已經確實滿了」: an unread count no
+        # longer leaves the skill unpressed; the icon greying decides.
         collector, clicks, _statuses, _progress = self._skill_collector(
             {
                 "探查": ActionIconState.AVAILABLE,
                 "吸收": ActionIconState.AVAILABLE,
                 "召集": ActionIconState.AVAILABLE,
             },
-            {"吸收": (None,)},
+            {"吸收": (None, None), "召集": ((2, 21), (3, 21))},
         )
 
         search = collector._start_search(map_role=CollectionMapRole.MAIN_AREA)
@@ -1183,19 +1188,21 @@ class CollectorSkillTest(unittest.TestCase):
             map_role=CollectionMapRole.MAIN_AREA,
         )
 
-        self.assertFalse(result.completed)
+        self.assertTrue(result.completed)
         self.assertFalse(result.depleted)
-        self.assertIn("OCR 失败", result.message)
-        self.assertEqual(1, len(clicks))
+        self.assertEqual(3, len(clicks))
 
-    def test_pre_exhausted_available_skill_does_not_complete_current_map(self):
+    def test_full_read_on_a_pressable_skill_is_pressed_and_the_game_decides(self):
+        # Read 21/21 while the game shows 吸收 pressable: pressed alone first;
+        # the game took it (its icon greyed), so the count was misread and
+        # 召集 follows (Leo 2026-10-28).
         collector, clicks, _statuses, _progress = self._skill_collector(
             {
                 "探查": ActionIconState.AVAILABLE,
                 "吸收": ActionIconState.AVAILABLE,
                 "召集": ActionIconState.AVAILABLE,
             },
-            {"吸收": ((21, 21),)},
+            {"吸收": ((21, 21), (21, 21)), "召集": ((2, 21), (3, 21))},
         )
 
         search = collector._start_search(map_role=CollectionMapRole.MAIN_AREA)
@@ -1206,11 +1213,11 @@ class CollectorSkillTest(unittest.TestCase):
             map_role=CollectionMapRole.MAIN_AREA,
         )
 
-        self.assertFalse(result.completed)
-        self.assertTrue(result.depleted)
-        self.assertEqual(1, len(clicks))
+        self.assertTrue(result.completed)
+        self.assertFalse(result.depleted)
+        self.assertEqual(3, len(clicks))
 
-    def test_mid_sequence_exhaustion_waits_for_all_three_skills(self):
+    def test_exhausted_skill_the_game_refuses_stops_before_the_next_skill(self):
         collector, clicks, _statuses, _progress = self._skill_collector(
             {
                 "探查": ActionIconState.AVAILABLE,
@@ -1218,12 +1225,14 @@ class CollectorSkillTest(unittest.TestCase):
                 "召集": ActionIconState.AVAILABLE,
             },
             {
-                "吸收": ((21, 21),),
+                "吸收": ((21, 21),) * 4,
             },
         )
 
         search = collector._start_search(map_role=CollectionMapRole.MAIN_AREA)
         self.assertIsInstance(search, SearchCountdownSession)
+        # The game takes no 吸收 press: no toast, its icon stays bright.
+        collector._read_action_feedback = lambda _action: SkillFeedbackObservation("", None, 0.0)
         result = collector._use_actions(
             (ABSORB_ACTION, SUMMON_ACTION),
             card_id="Q_sp1",
@@ -1232,7 +1241,8 @@ class CollectorSkillTest(unittest.TestCase):
 
         self.assertFalse(result.completed)
         self.assertTrue(result.depleted)
-        self.assertEqual(1, len(clicks))
+        # 探查, then 吸收 twice (once more when nothing showed); 召集 never.
+        self.assertEqual(3, len(clicks))
 
     def test_all_three_completed_can_report_depleted_after_completion(self):
         collector, clicks, _statuses, _progress = self._skill_collector(
@@ -1477,7 +1487,7 @@ class CollectorSkillTest(unittest.TestCase):
             SUPPRESS_ACTION.fixed_count_relative_roi,
             calls[0][1]["relative_roi"],
         )
-        self.assertEqual(SKILL_OCR_UPSCALE, calls[0][1]["ocr_scale"])
+        self.assertEqual(ocr_count.LOOKS[0].scale, calls[0][1]["ocr_scale"])
 
     def test_post_click_count_ocr_uses_manual_region_after_icon_refresh(self):
         before_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
@@ -1582,7 +1592,7 @@ class CollectorSkillTest(unittest.TestCase):
                 ),
                 kwargs["relative_roi"],
             )
-            self.assertEqual(SKILL_OCR_UPSCALE, kwargs["ocr_scale"])
+            self.assertEqual(ocr_count.LOOKS[0].scale, kwargs["ocr_scale"])
 
     def test_battle_arrival_checks_search_countdown_without_matching_search_icon(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
@@ -1824,14 +1834,14 @@ class CollectorSkillTest(unittest.TestCase):
         self.assertIn("未识别到吸收图标", result.message)
         self.assertEqual([], clicks)
 
-    def test_fixed_count_ocr_uses_immediate_three_x_fallback(self):
+    def test_fixed_count_ocr_reads_again_inside_a_border(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         calls = []
         vision = SimpleNamespace(
             capture=lambda: frame,
             ocr_text=lambda _frame, name, **kwargs: (
                 calls.append((name, kwargs))
-                or ("2" if kwargs.get("ocr_scale") == SKILL_OCR_UPSCALE else "1/21")
+                or ("1/21" if kwargs.get("bordered") else "2")
             ),
         )
         collector = Collector(
@@ -1843,8 +1853,8 @@ class CollectorSkillTest(unittest.TestCase):
 
         self.assertEqual((1, 21), collector._read_count(ABSORB_ACTION))
         self.assertEqual(
-            [SKILL_OCR_UPSCALE, SKILL_OCR_FALLBACK_UPSCALE],
-            [kwargs["ocr_scale"] for _name, kwargs in calls],
+            [(3.0, False), (3.0, True)],
+            [(kwargs["ocr_scale"], bool(kwargs.get("bordered"))) for _name, kwargs in calls],
         )
 
     def test_formal_bare_post_count_keeps_local_success_pending(self):
@@ -2061,8 +2071,7 @@ class CollectorSkillTest(unittest.TestCase):
                 SimpleNamespace(
                     capture=lambda: frame,
                     click_client=lambda *args, **kwargs: clicks.append((args, kwargs)),
-                    # The count cannot be read, so nothing proves the earlier
-                    # click cost nothing: still blocked.
+                    # The count cannot be read.
                     ocr_text=lambda *_a, **_k: "",
                 ),
                 SimpleNamespace(),
@@ -2076,12 +2085,14 @@ class CollectorSkillTest(unittest.TestCase):
                 map_role=CollectionMapRole.MAIN_AREA,
             )
 
-            # Leo 2026-10-07: a bright icon is not blocked by an old record;
-            # it waits only for a readable count (the proof after a press).
+            # Leo 2026-10-07: a bright icon is not blocked by an old record,
+            # and since 2026-10-28 not by an unread count either: pressed,
+            # and with the icon still bright and no toast it stays unproven.
             self.assertFalse(result.completed)
+            self.assertFalse(result.depleted)
             self.assertNotIn("禁止重复点击", result.message)
-            self.assertIn("OCR", result.message)
-            self.assertEqual([], clicks)
+            self.assertIn("按之前没读到次数", result.message)
+            self.assertEqual(1, len(clicks))
 
     def test_battle_two_bright_checkpoint_settles_battle_one_before_click(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2442,19 +2453,36 @@ class CollectorSkillTest(unittest.TestCase):
 
 
 class AbsorbUsedUpTest(unittest.TestCase):
-    """Leo 2026-10-05 「不開新章」: 吸收 at its limit -> the map is not started."""
+    """Leo 2026-10-05 「不開新章」: 吸收 at its limit -> the map is not started.
+    Since 2026-10-28 the limit counts only with the game agreeing: 吸收 grey
+    with 探查 running (tests/test_map_count_never_blocks.py)."""
 
     def _collector(self, count, record=None):
         collector = object.__new__(Collector)
         collector.progress = SimpleNamespace(get_action_record=lambda *_a: record)
         collector._open_skill_menu = lambda *a, **k: True
+        collector._status = lambda *_a: None
+        collector._search_running = lambda: True
+        collector._detect_action_icon = lambda icon, **_k: (
+            None,
+            ActionIconDetection(
+                ActionIconState.USED,
+                MatchResult(0.98, (100, 100), (40, 40), 0.70, 0.90),
+                0.65,
+                stable=True,
+                sample_count=2,
+            ),
+        )
         reads = []
 
         def read(action, *_a, **_k):
             reads.append(action.name)
+            collector._last_count_window_stable = count is not None
             return count
 
         collector._read_count_window = read
+        # The second way of reading (inside a border) agrees.
+        collector._read_count_again = lambda _action: count
         return collector, reads
 
     def test_limit_reached_stops_the_map_as_depleted(self):
@@ -3122,6 +3150,39 @@ class SlotPressTest(unittest.TestCase):
         self.assertIsNone(self._collector((12, 21), stable=False)._slot_detection(ABSORB_ACTION))
         self.assertIsNone(self._collector(None)._slot_detection(ABSORB_ACTION))
 
+class CountSkipReasonTest(unittest.TestCase):
+    """A count that could not be read says what was read (Leo 2026-10-24
+    「錯誤要寫原因」); it was 「吸收次数 OCR 失败」."""
+
+    @staticmethod
+    def _collector(reads):
+        texts = iter(reads)
+        vision = SimpleNamespace(
+            capture=lambda: np.zeros((1080, 1920, 3), dtype=np.uint8),
+            ocr_text=lambda _frame, _name, **_kwargs: next(texts),
+        )
+        task = SimpleNamespace(config={}, sleep=lambda *_args: None, info_set=lambda *_args: None)
+        return Collector(task, vision, SimpleNamespace(), SimpleNamespace())
+
+    def test_what_was_read_is_in_the_reason(self):
+        collector = self._collector(["V21", ""] * 3)
+        self.assertIsNone(collector._read_count_window(SUMMON_ACTION))
+        self.assertEqual("读到「V21」，看不出是多少", collector._count_failure_reason())
+
+    def test_reads_that_disagree_are_named(self):
+        collector = self._collector(["1/21", "2/21", "3/21"])
+        self.assertIsNone(collector._read_count_window(SUMMON_ACTION))
+        self.assertEqual(
+            "几次读到的不一样：1/21、2/21、3/21", collector._count_failure_reason()
+        )
+
+    def test_a_steady_read_leaves_no_old_reason(self):
+        collector = self._collector(["1/21", "2/21", "3/21", "4/21", "4/21"])
+        self.assertIsNone(collector._read_count_window(SUMMON_ACTION))
+        self.assertEqual((4, 21), collector._read_count_window(SUMMON_ACTION))
+        self.assertEqual((), collector._last_count_samples)
+
+
 class SlashlessCountTest(unittest.TestCase):
     """Live 2026-09-28: the 压制 count 7/70 was read as "7170"."""
 
@@ -3133,11 +3194,13 @@ class SlashlessCountTest(unittest.TestCase):
         self.assertEqual((11, 21), parse_used_limit("11121", 21))
         self.assertEqual((7, 70), parse_used_limit("7/70", 70))
 
-    def test_a_five_digit_read_is_refused_not_guessed(self):
-        """Live 4K 2026-10-14: 压制 11/75 was read as "11775"."""
+    def test_a_five_digit_read_splits_only_one_way(self):
+        """Live 4K 2026-10-14: 压制 11/75 was read as "11775".  With its
+        slash read as 7 it can only be 11/75; a read that fits no count is
+        still refused."""
         from src.tasks.map_trade.vision import parse_used_limit
 
-        self.assertIsNone(parse_used_limit("11775", 75))
+        self.assertEqual((11, 75), parse_used_limit("11775", 75))
         self.assertIsNone(parse_used_limit("80/75", 75))
 
     def test_without_a_known_limit_or_a_fit_nothing_is_guessed(self):
@@ -3146,6 +3209,8 @@ class SlashlessCountTest(unittest.TestCase):
         self.assertIsNone(parse_used_limit("7170"))
         self.assertIsNone(parse_used_limit("9999", 70))
         self.assertIsNone(parse_used_limit("70", 70))
+        # Real 0/21 boxes read "121" (its 0 lost, 2026-10-28): not 1/21.
+        self.assertIsNone(parse_used_limit("121", 21))
 
     def test_a_limit_read_steadily_this_run_splits_a_slashless_read(self):
         """2K 2026-10-15: 压制 read 0/75 … 6/75 steadily, but its default 80

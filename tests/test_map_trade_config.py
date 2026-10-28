@@ -94,10 +94,14 @@ class MapTradeLegacyConfigTest(unittest.TestCase):
             self.assertEqual(["buy", "sell", "home"], actions)
             actions.clear()
             task.config["制作料理"] = True
-            with patch.object(FakeTrader, "run_cooking", lambda _: False):
+            with patch.object(FakeTrader, "run_cooking", lambda _: actions.append("cook") or False):
                 self.assertFalse(MapTradeTask.run(task))
-            # Audit #14: a failed 料理 no longer costs the day's 卖.
-            self.assertEqual(["buy", "home", "left shop", "sell", "home"], actions)
+            # Audit #14: a failed 料理 no longer costs the day's 卖.  Since
+            # 2026-10-28 it is done once more from home before that.
+            self.assertEqual(
+                ["buy", "cook", "home", "left shop", "cook", "home", "left shop", "sell", "home"],
+                actions,
+            )
 
 
 class _NoLedger:

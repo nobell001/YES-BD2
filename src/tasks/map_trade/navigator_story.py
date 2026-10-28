@@ -26,13 +26,10 @@ from src.tasks.map_trade.models import (
     ScreenState,
 )
 from src.tasks.map_trade.navigator_constants import (
-    CHARACTER_BADGE_FIRST_X,
     CHARACTER_BADGE_MIN_MARGIN,
     CHARACTER_BADGE_MIN_SCORE,
-    CHARACTER_BADGE_SPACING,
     CHARACTER_BADGE_SPECS,
     CHARACTER_BADGE_WINDOW,
-    CHARACTER_BADGE_Y,
     CHARACTER_CATEGORY_HIGHLIGHT_REGION,
     CHARACTER_CATEGORY_POINT,
     EVENT_CARD_SCAN_SECONDS,
@@ -122,9 +119,13 @@ from src.utils.cartridge_quick_switch import (
     LIFE_GAMEPLAY_CATEGORY_POINT,
     QUICK_SWITCH_STABLE_FRAMES,
 )
+from src.utils.ocr_utils import keyword_read
+from src.utils.press_confirm import RETRY_AFTER_SECONDS
 
 # 从箱庭点击快速切换按钮的统一识别窗口与点击后停顿。
 QUICK_SWITCH_CLICK_TIMEOUT = 10.0
+# A tab click the game did not take is made once more (remedy 3).
+STORY_CATEGORY_PRESSES = 2
 # A confirmed quick-switch tab is trusted this long (checked lit again).
 MENU_CONFIRM_REUSE_SECONDS = 8.0
 # The badge's neighbourhood (badge sizes around it) must be this still
@@ -275,10 +276,12 @@ class StoryCardNavigationMixin:
             window_samples=window_samples,
         )
 
-    def _field_keycaps_shown(self) -> bool:
+    def _field_keycaps_shown(self, frame: np.ndarray | None = None) -> bool:
         """The opaque C/H/P key caps of the field HUD (the screen is a field,
-        not 主页)."""
-        frame = self.vision.capture()
+        not 主页): the guard for every field key (F, M, P).  Checked on real
+        pictures in tests/test_page_lookalikes.py."""
+        if frame is None:
+            frame = self.vision.capture()
         return (
             sum(
                 self.vision.passes(self.vision.match(frame, spec), spec)
@@ -365,38 +368,74 @@ class StoryCardNavigationMixin:
         category: str = "story",
         warn: bool = True,
     ) -> bool:
-        label, _point, region = self._card_category(category)
+        label = self._card_category(category)[0]
         end_at = monotonic() + max(0.0, timeout)
         last_text = ""
         last_highlight_ratio = 0.0
-        wanted = normalize_text(label)
         while monotonic() <= end_at:
-            frame = self.vision.capture()
-            text = self.vision.simplify(self.vision.ocr_text(frame, f"{label}类别"))
+            lit, _page, text, last_highlight_ratio = self._story_category_read(
+                self.vision.capture(), category
+            )
             last_text = text or last_text
-            last_highlight_ratio = self.vision.bright_neutral_ratio(frame, region)
-            self._status(f"{label}类别高亮", f"{last_highlight_ratio:.3f}")
-            if (
-                wanted in normalize_text(text)
-                and last_highlight_ratio >= STORY_CATEGORY_HIGHLIGHT_MIN_RATIO
-            ):
+            if lit:
                 self._menu_confirmed = (monotonic(), category)
                 return True
             self.task.sleep(interval)
         if warn:
-            self.task.log_warning(
-                f"跑商：未确认{label}类别高亮，"
-                f"highlight={last_highlight_ratio:.3f}, OCR={last_text or '-'}。"
-            )
+            self._warn_category_unlit(label, last_highlight_ratio, last_text)
         return False
 
+    def _story_category_read(self, frame, category: str) -> tuple[bool, bool, str, float]:
+        """One frame of the quick-switch bar: (``category``'s tab is the lit
+        one, the bar's tab names all show, the text read, the tab's
+        highlight)."""
+        label, _point, region = self._card_category(category)
+        text = self.vision.simplify(self.vision.ocr_text(frame, f"{label}类别"))
+        ratio = self.vision.bright_neutral_ratio(frame, region)
+        self._status(f"{label}类别高亮", f"{ratio:.3f}")
+        read = normalize_text(text)
+        lit = normalize_text(label) in read and ratio >= STORY_CATEGORY_HIGHLIGHT_MIN_RATIO
+        page = all(
+            keyword_read(normalize_text(self.vision.simplify(name)), read)
+            for name in QUICK_SWITCH_PAGE_KEYWORDS
+        )
+        return lit, page, text, ratio
+
+    def _warn_category_unlit(self, label: str, ratio: float, text: str) -> None:
+        self.task.log_warning(
+            f"卡带选择页：未确认{label}类别高亮，highlight={ratio:.3f}, OCR={text or '-'}。"
+        )
+
     def _select_story_category(self, category: str = "story") -> bool:
-        """Click and confirm the category before any quick-bar focus or scroll."""
+        """Click and confirm the category before any quick-bar focus or scroll.
+
+        A click the game did not take leaves another tab lit: it is made once
+        more while the bar still shows with the tab unlit, as 女神像 and 末日之书
+        do (remedy 3 in docs/dev-notes/bug-prevention.md).  After a card this
+        step failing ended the whole 跑图 run (Leo 2026-10-28
+        「失敗都要有補救機制」)."""
 
         label, point, _region = self._card_category(category)
         self._status("导航状态", f"选择{label}")
-        self.task.operate_click(*point, after_sleep=0.5)
-        return self._wait_for_story_category(category=category)
+        for press in range(1, STORY_CATEGORY_PRESSES + 1):
+            self.task.operate_click(*point, after_sleep=0.5)
+            last = press == STORY_CATEGORY_PRESSES
+            if self._wait_for_story_category(category=category, warn=last):
+                return True
+            if last:
+                return False
+            # A slow game may still light it (press_confirm's 1.5 s).
+            self.task.sleep(RETRY_AFTER_SECONDS)
+            lit, page, text, ratio = self._story_category_read(self.vision.capture(), category)
+            if lit:
+                self._menu_confirmed = (monotonic(), category)
+                return True
+            if not page:
+                # The bar moved on: a second click could land on something else.
+                self._warn_category_unlit(label, ratio, text)
+                return False
+            self.task.log_info(f"卡带选择页：点了{label}没切过去，再点一次。")
+        return False
 
     def _focus_quick_switch_for_scroll(self) -> None:
         """Focus the selected cartridge bar at the user-calibrated safe point."""
@@ -1102,17 +1141,35 @@ class StoryCardNavigationMixin:
         frame: np.ndarray,
         target_number: int,
     ) -> tuple[StoryBadgeDetection | None, str]:
-        """The 角色游戏卡 tab: card n's number circle in its own fixed slot."""
+        """The 角色游戏卡 tab: card n's number circle anywhere on the row, and
+        at that spot its template must beat the other numbers'.
 
-        x = (CHARACTER_BADGE_FIRST_X + CHARACTER_BADGE_SPACING * (target_number - 1)) / FHD_1080.width
-        y = CHARACTER_BADGE_Y / FHD_1080.height
-        half_x = CHARACTER_BADGE_WINDOW / FHD_1080.width
-        half_y = CHARACTER_BADGE_WINDOW / FHD_1080.height
-        window = (max(0.0, x - half_x), max(0.0, y - half_y), min(1.0, x + half_x), min(1.0, y + half_y))
+        YES-BD2 #41 (v0.2.19, 1080p): pinned (置顶) cards 2-5 sat in front of
+        card 1 and the row was slid left, so the old fixed slot of card n
+        (93 + 180 x (n - 1)) held no badge at all and every card was
+        skipped with 「领先0.000」.  On that frame each badge's own template
+        scored 0.97-0.99 where it was and the best other one 0.88 there."""
+
+        specs = dict(CHARACTER_BADGE_SPECS)
+        spec = specs.get(target_number)
+        if spec is None:
+            return None, f"角色卡{target_number}没有角标图片"
+        found = self.vision.match(frame, spec)
+        if found.score < CHARACTER_BADGE_MIN_SCORE:
+            return None, f"角色卡{target_number}的角标不在画面内"
+        height, width = frame.shape[:2]
+        center_x, center_y = found.center
+        half = CHARACTER_BADGE_WINDOW * height / FHD_1080.height
+        window = (
+            max(0.0, (center_x - half) / width),
+            max(0.0, (center_y - half) / height),
+            min(1.0, (center_x + half) / width),
+            min(1.0, (center_y + half) / height),
+        )
         ranked = sorted(
             (
-                StoryBadgeCandidate(number, self.vision.match(frame, replace(spec, relative_roi=window)))
-                for number, spec in CHARACTER_BADGE_SPECS
+                StoryBadgeCandidate(number, self.vision.match(frame, replace(other, relative_roi=window)))
+                for number, other in CHARACTER_BADGE_SPECS
             ),
             key=lambda candidate: candidate.result.score,
             reverse=True,
@@ -1122,18 +1179,17 @@ class StoryCardNavigationMixin:
         self._status(
             "角色角标",
             (
-                f"{target_number}: 最像{best.number} m={best.result.score:.3f}, "
+                f"{target_number}: x={center_x:.0f} 最像{best.number} m={best.result.score:.3f}, "
                 f"p={best.result.pixel_score:.3f}, z={best.result.zncc_score:.3f}; "
                 f"次像{runner_up.number} m={runner_up.result.score:.3f}"
             ),
         )
         if best.number != target_number:
-            return None, f"角色卡{target_number}位置上最像的是{best.number}"
-        if best.result.score < CHARACTER_BADGE_MIN_SCORE or gap < CHARACTER_BADGE_MIN_MARGIN:
+            return None, f"角色卡{target_number}角标处最像的是{best.number}"
+        if gap < CHARACTER_BADGE_MIN_MARGIN:
             return None, (
-                f"角色卡{target_number}角标不够确定：m={best.result.score:.3f}"
-                f"（需>={CHARACTER_BADGE_MIN_SCORE:.2f}），领先{gap:.3f}"
-                f"（需>={CHARACTER_BADGE_MIN_MARGIN:.2f}）"
+                f"角色卡{target_number}角标不够确定：m={best.result.score:.3f}，"
+                f"领先{gap:.3f}（需>={CHARACTER_BADGE_MIN_MARGIN:.2f}）"
             )
         return StoryBadgeDetection(best, runner_up), ""
 
@@ -1151,7 +1207,9 @@ class StoryCardNavigationMixin:
 
         if getattr(self, "_badge_category", "story") == "event":
             return self._find_event_card_by_art(frame, target_number)
-        if getattr(self, "_badge_category", "story") == "story":
+        if getattr(self, "_badge_category", "story") in story_card_art.ART_SETS:
+            # Character cards too (YES-BD2 #41): pinned cards go first, so
+            # neither tab is in number order.
             detection, reason = self._find_story_card_by_art(frame, target_number)
             if detection is not None:
                 return detection, ""
@@ -1164,7 +1222,9 @@ class StoryCardNavigationMixin:
         target_number: int,
     ) -> tuple[StoryBadgeDetection | None, str]:
         try:
-            check = story_card_art.find_card(frame, target_number)
+            check = story_card_art.find_card(
+                frame, target_number, getattr(self, "_badge_category", "story")
+            )
         except (cv2.error, ValueError) as exc:
             return None, f"图片比对异常：{exc}"
         if not check.ok or check.target is None:
@@ -1963,6 +2023,8 @@ class StoryCardNavigationMixin:
         """Find one story badge, using the quick bar's mouse-wheel direction."""
 
         last_reason = "未执行识别"
+        # The tab's own name in the log (YES-BD2 #41 said 剧情 for 角色 cards).
+        tab = self._card_category(getattr(self, "_badge_category", "story"))[0]
         near_badge_looks = 0
 
         def scan_current_page() -> tuple[np.ndarray, StoryBadgeDetection] | None:
@@ -2023,9 +2085,8 @@ class StoryCardNavigationMixin:
                 )
             return found
 
-        by_art = (
-            getattr(self, "_badge_category", "story") == "story"
-            and story_card_art.has_art(target_number)
+        by_art = story_card_art.has_art(
+            target_number, getattr(self, "_badge_category", "story")
         )
         # A card clearly off screen skips the slow full look (1.5-9 s at 2K).
         offset = self._story_bar_offset(self.vision.capture())
@@ -2044,7 +2105,7 @@ class StoryCardNavigationMixin:
                 return found
             if self._story_badge_reason_is_ambiguous(last_reason):
                 self.task.log_warning(
-                    f"跑图跑商：剧情游戏卡{target_number}角标存在歧义：{last_reason}。"
+                    f"跑图跑商：{tab}{target_number}角标存在歧义：{last_reason}。"
                 )
                 return None
         else:
@@ -2067,7 +2128,7 @@ class StoryCardNavigationMixin:
             # Leo 2026-09-29: the wheel ran the wrong way and kept hitting the
             # front of the bar; with swiping available it is not used at all.
             self.task.log_warning(
-                f"跑图跑商：左右滑动快速选择栏后仍未确认剧情游戏卡{target_number}角标：{last_reason}。"
+                f"跑图跑商：左右滑动快速选择栏后仍未确认{tab}{target_number}角标：{last_reason}。"
             )
             return None
 
@@ -2091,7 +2152,7 @@ class StoryCardNavigationMixin:
                 return found
             if self._story_badge_reason_is_ambiguous(last_reason):
                 self.task.log_warning(
-                    f"跑图跑商：剧情游戏卡{target_number}角标存在歧义：{last_reason}。"
+                    f"跑图跑商：{tab}{target_number}角标存在歧义：{last_reason}。"
                 )
                 return None
             if step >= steps:
@@ -2106,7 +2167,7 @@ class StoryCardNavigationMixin:
             )
 
         self.task.log_warning(
-            f"跑图跑商：滚动快速选择栏后仍未确认剧情游戏卡{target_number}角标：{last_reason}。"
+            f"跑图跑商：滚动快速选择栏后仍未确认{tab}{target_number}角标：{last_reason}。"
         )
         return None
 
@@ -2374,7 +2435,7 @@ class StoryCardNavigationMixin:
             return NavigationResult(
                 False,
                 self.classify(),
-                f"未唯一确认剧情游戏卡{card.number}角标",
+                f"未唯一确认{label}{card.number}角标",
             )
         badge_frame, badge = badge_match
         self._menu_confirmed = (monotonic(), category)

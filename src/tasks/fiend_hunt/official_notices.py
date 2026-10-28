@@ -66,6 +66,7 @@ def simplify(text: str) -> str:
 
 
 ISSUE_SECTION = re.compile(r"^=+\s*(zh-tw|zh-cn|en-us|ja-jp|ko-kr)\s*=*\s*$", re.M | re.I)
+# 不是次数：公告日期 2026/10/28
 ISSUE_DATE = re.compile(r"(?:日期|date)\s*[:：]\s*(20\d\d)[-/.](\d{1,2})[-/.](\d{1,2})", re.I)
 ISSUE_ID = re.compile(r"[?&]id=([0-9A-Za-z]{10,40})")
 

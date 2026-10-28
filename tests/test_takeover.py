@@ -132,6 +132,22 @@ class MonitorTest(unittest.TestCase):
         self._click(monitor, 100)
         self.assertEqual(2, executor.stop_current_task.call_count)
 
+    def test_a_broken_hook_says_so_once(self):
+        # A crash in the hook used to vanish: the stop-on-touch guard could
+        # quietly stop working and no player log showed why.
+        monitor, executor, _task = self._monitor()
+        monitor.in_clone = False
+        data = SimpleNamespace(flags=0, pt=SimpleNamespace(x=10, y=10))
+        with (
+            mock.patch("win32gui.WindowFromPoint", side_effect=OSError("denied")),
+            mock.patch.object(takeover.logger, "warning") as warning,
+        ):
+            for _ in range(3):
+                self.assertIs(False, monitor.on_mouse(LBUTTONDOWN, data))
+        warning.assert_called_once()
+        self.assertIn("鼠标检测出错", warning.call_args[0][0])
+        executor.stop_current_task.assert_not_called()
+
 
 class PausedRunTest(unittest.TestCase):
     """The plan's default for decision 8: 暂停 is there so the player can

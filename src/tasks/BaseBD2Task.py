@@ -1,4 +1,5 @@
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -399,8 +400,8 @@ class BaseBD2Task(BaseTask):
                             self._leave_home_after_failed_run()
                         except (TaskDisabledException, FinishedException):
                             raise
-                        except Exception:
-                            pass
+                        except Exception as home_exc:
+                            logger.warning(f"{self.name}：失败后回主页也出错：{home_exc!r}")
                     raise
                 if result is False:
                     if keep and not getattr(self, "child_tasks", None):
@@ -1210,9 +1211,15 @@ class BaseBD2Task(BaseTask):
         mouse press or a read failed (Leo 2026-10-11 「不可以說認不到辨識不到就
         卡住 你可以用快捷鍵」).  Sent only with the game in the foreground."""
         letter = key.strip().upper()
-        if len(letter) != 1 or not letter.isalnum():
+        function = re.fullmatch(r"F([1-9]|1[0-2])", letter)
+        if function:
+            # F1-F12, as the game shows them under field buttons (F2 商店).
+            code = 0x6F + int(function.group(1))
+        elif len(letter) == 1 and letter.isalnum():
+            code = ord(letter)
+        else:
             raise ValueError(f"not a single shortcut key: {key!r}")
-        if not self._send_game_key(ord(letter), KEY_TAP_SECONDS):
+        if not self._send_game_key(code, KEY_TAP_SECONDS):
             self.info_set("快捷键", f"{letter} 未发送：游戏窗口不在最前面")
             self.log_warning(f"游戏窗口不在最前面，快捷键 {letter} 没有发送。")
             return False

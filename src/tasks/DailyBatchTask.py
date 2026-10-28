@@ -969,7 +969,8 @@ class ChildBatchTask(BaseTask):
             return recover_to_home(task)
         except (TaskDisabledException, FinishedException):
             raise
-        except Exception:
+        except Exception as exc:
+            task.log_info(f"恢复主页：出错，回不到主页：{exc!r}")
             return False
 
     def _all_done_today(

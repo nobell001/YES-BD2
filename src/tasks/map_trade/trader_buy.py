@@ -11,7 +11,8 @@ from src.tasks.map_trade.calendar import (
 from src.tasks.map_trade.models import (
     ScreenState,
 )
-from src.tasks.map_trade.navigator_trade import BARGAIN_UPGRADE_MESSAGE
+from src.tasks.map_trade.navigator_trade import BARGAIN_PAID_MESSAGE, BARGAIN_UPGRADE_MESSAGE
+from src.tasks.map_trade.data import SHOP_FAVORITE_POINTS
 from src.tasks.map_trade.phase_ledger import PhaseDeferred
 from src.tasks.map_trade.trader_constants import (
     BUY_ALL_FAVORITES_INTERVAL,
@@ -40,6 +41,14 @@ from src.tasks.map_trade.vision import normalize_text
 
 # 点击"购买全部收藏"后等待确认弹窗出现前的停顿。
 BUY_ALL_FAVORITES_CLICK_AFTER_SLEEP = 0.3
+# What the report tells a player with no favourites (Leo 2026-10-28 「要在報告
+# 說 請玩家去設定」): why nothing was bought and where to click in the game,
+# step by step (player help is where to click).
+NO_FAVORITES_MESSAGE = (
+    "商店里的商品全是灰星（没有收藏），所以没买。"
+    "请在游戏里进入梦幻广场，找商人洛兹，点「商店」，"
+    "把要买的商品图片右上角的星星点成黄色，下次跑商就会买"
+)
 
 
 class BuyFlowMixin:
@@ -50,10 +59,16 @@ class BuyFlowMixin:
             f"买：按{stock_date.isoformat()}库存批次执行（每日"
             f"{PURCHASE_STOCK_REFRESH_HOUR:02d}:00刷新）。"
         )
-        entered = self.navigator.enter_q_sp6_buy_flow()
+        # Never spend paid currency: a 砍价 popup that names one is not
+        # confirmed (as 循环砍价 does); 买 then fails with that reason and
+        # goes home.
+        entered = self.navigator.enter_q_sp6_buy_flow(refuse_paid=True)
+        if not entered.success and entered.message == BARGAIN_PAID_MESSAGE:
+            self.task.log_warning(f"买：{entered.message}", notify=True)
+            return False
         if not entered.success and entered.message == BARGAIN_UPGRADE_MESSAGE:
             self.task.log_warning(f"买：{entered.message}", notify=True)
-            return PhaseDeferred(f"买：{entered.message}")
+            return PhaseDeferred(entered.message, skipped=True)
         if not entered.success:
             self.task.log_warning(f"买：{entered.message}")
             return False
@@ -66,7 +81,7 @@ class BuyFlowMixin:
         purchase_state = self._wait_for_buy_all_favorites_state()
         if purchase_state is None:
             completed = self._buy_all_favorites_at_fixed_point()
-            self._buy_completed_in_current_shop = completed
+            self._buy_completed_in_current_shop = completed is True
             return completed
         if purchase_state[0] is None:
             self._buy_completed_in_current_shop = True
@@ -86,7 +101,7 @@ class BuyFlowMixin:
         # took a slow 1080p PC past the 10 s stuck guard on the still page
         # (player 问题摘要 2026-10-16, two days in a row).
         completed = self.buy_all_favorites(located=purchase_state)
-        self._buy_completed_in_current_shop = completed
+        self._buy_completed_in_current_shop = completed is True
         return completed
 
     def _switch_from_completed_buy_to_sell(
@@ -168,7 +183,10 @@ class BuyFlowMixin:
             # A swallowed press leaves the shop as it was: press the button
             # once more, only while it is still read and no part of the
             # dialog shows.  It only opens the confirm dialog; buying needs
-            # that dialog's 确认.
+            # that dialog's 确认.  Only then are the stars looked at: this
+            # page's can all be gray while favourites sit on another
+            # cartridge's page (the button buys them all).  Each wait stays
+            # under the 10 s stuck guard.
             if self._purchase_dialog_partly_read():
                 confirmed = self._wait_for_purchase_confirmation()
             else:
@@ -179,27 +197,71 @@ class BuyFlowMixin:
                     self.task.log_info(
                         "买：点了一键购买全部收藏没有出现确认弹窗，也读不到按钮，改按它的固定位置。"
                     )
-                    return self._buy_all_favorites_at_fixed_point()
+                    return self._buy_all_favorites_at_fixed_point(pressed_before=True)
                 self.task.log_info("买：点了一键购买全部收藏没有出现确认弹窗，再点一次。")
                 self.vision.click_client(  # 不用确认：the dialog is waited for below
                     again[0], again[1].shape, after_sleep=BUY_ALL_FAVORITES_CLICK_AFTER_SLEEP
                 )
-                confirmed = self._wait_for_purchase_confirmation(log_timeout=False)
+                confirmed = self._wait_for_purchase_confirmation(
+                    BUY_CONFIRM_FIRST_TIMEOUT, log_timeout=False
+                )
             if not confirmed:
+                if (nothing := self._nothing_favorited()) is not None:
+                    return nothing
                 return self._confirm_unread_purchase_dialog()
         return self._press_purchase_confirm()
 
-    def _buy_all_favorites_at_fixed_point(self) -> bool:
-        """The 一键购买全部收藏 words were not read: press where it sits."""
+    def _buy_all_favorites_at_fixed_point(self, *, pressed_before: bool = False) -> bool:
+        """The 一键购买全部收藏 words were not read: press where it sits,
+        twice in all when nothing answers (a swallowed press), then decide."""
         self.task.log_info("买：读不到「一键购买全部收藏」，按它的固定位置。")
-        self.task.operate_click(  # 不用确认：the dialog is waited for below
-            *BUY_ALL_FAVORITES_POINT, after_sleep=BUY_ALL_FAVORITES_CLICK_AFTER_SLEEP
-        )
-        if self._wait_for_purchase_confirmation(
-            BUY_CONFIRM_FIRST_TIMEOUT, log_timeout=False
-        ) or self._purchase_dialog_partly_read():
-            return self._press_purchase_confirm()
+        for press in range(1 if pressed_before else 2):
+            if press:
+                self.task.log_info("买：按了固定位置没有出现确认弹窗，再按一次。")
+            self.task.operate_click(  # 不用确认：the dialog is waited for below
+                *BUY_ALL_FAVORITES_POINT, after_sleep=BUY_ALL_FAVORITES_CLICK_AFTER_SLEEP
+            )
+            if self._wait_for_purchase_confirmation(
+                BUY_CONFIRM_FIRST_TIMEOUT, log_timeout=False
+            ) or self._purchase_dialog_partly_read():
+                return self._press_purchase_confirm()
+        if (nothing := self._nothing_favorited()) is not None:
+            return nothing
         return self._confirm_unread_purchase_dialog()
+
+    def _nothing_favorited(self):
+        """No confirm dialog came and every item on the page has a gray star:
+        the player has no favourites to buy, so nothing more is pressed
+        (player v0.2.13 2026-10-25: all 7 gray, then the fixed 确认 and a
+        10 s stuck stop; Leo chose 「先看星星」).  None = some star is yellow,
+        none was read, or 售罄 shows: the usual fallbacks go on."""
+        if self._purchase_dialog_partly_read():
+            return None
+        frame = self.vision.capture()
+        # 售罄 covers the bought favourites' stars, so only the gray ones of
+        # the rest are read: that page is a done buy, not "no favourites".
+        if self.vision.passes(
+            self.vision.match(frame, BUY_TO_SELL_SOLD_OUT_TEMPLATE),
+            BUY_TO_SELL_SOLD_OUT_TEMPLATE,
+        ):
+            return None
+        states = [
+            state
+            for slot, point in SHOP_FAVORITE_POINTS.items()
+            if (state := self._star_state(frame, slot, point)) is not None
+        ]
+        if not states or "yellow" in states:
+            return None
+        self.task.log_info("买：按了两次「一键购买全部收藏」都没有跳出确认窗，这页商品也全是灰星。")
+        self.task.log_warning(f"买：{NO_FAVORITES_MESSAGE}。", notify=True)
+        # Nothing bought: leave the shop so 料理 and 卖 start from the
+        # merchant as when 买 is off (卖 would wait for 售罄 here).
+        left = self.navigator.leave_shop_to_merchant()
+        if not left.success:
+            self.task.log_warning(f"买：{left.message}")
+            return False
+        # Only 买 is skipped; 料理 and 卖 go on (Leo 2026-10-28).
+        return PhaseDeferred(NO_FAVORITES_MESSAGE, skipped=True)
 
     def _confirm_unread_purchase_dialog(self) -> bool:
         """No confirm dialog was read: press 确认 where it sits, then the

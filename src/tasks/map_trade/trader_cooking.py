@@ -226,7 +226,8 @@ def _has_positive_quantity(text: str) -> bool:
 
 
 class CookingFlowMixin:
-    """Mouse-only cooking flow next to the trade merchant, one proven step at a time."""
+    """Cooking flow next to the trade merchant, one proven step at a time
+    (mouse first; Esc only where two 返回 presses did not leave a page)."""
 
     def run_cooking(self) -> bool:
         selected = self._selected_cooking_recipes()
@@ -267,8 +268,12 @@ class CookingFlowMixin:
         pending = selected
 
         self._cooking_opened = False
-        self._group_before_cooking = None
-        self._group_switched = False
+        if not getattr(self, "_group_switched", False):
+            self._group_before_cooking = None
+        # else: an earlier try switched the player's group and could not put
+        # it back off the field; this one does (每日跑商 does a failed 料理
+        # again from home, which found cooking already shown and left the
+        # player on the cooking group).
         flow_success = False
         unavailable: list[str] = []
         absent: list[str] = []
@@ -393,17 +398,18 @@ class CookingFlowMixin:
 
         if not getattr(self, "_group_switched", False):
             return
-        self._group_switched = False
         before = getattr(self, "_group_before_cooking", None)
         if not on_field:
             # The group buttons' places are pressed only on the field: off
-            # it they may land on whatever page is still open.
+            # it they may land on whatever page is still open.  Still
+            # switched: a 料理 done again puts it back.
             self.task.log_warning(
                 "料理：没确认回到箱庭，技能组没有切回"
                 + (f"（原本是第{before}组）" if before is not None else "")
                 + "，请检查技能栏。"
             )
             return
+        self._group_switched = False
         if stopped:
             # Stop (or the player's own mouse) means no more presses.
             if before is not None:
@@ -891,7 +897,26 @@ class CookingFlowMixin:
             self.task.log_info(f"料理：{context}按返回后详情页还在，再按一次返回。")
             self._click_cooking_back(still, context=f"{context}补按")
         remaining = max(COOKING_RECLICK_AFTER, end_at - monotonic())
-        return self._wait_for_cooking_list(remaining) is not None
+        if self._wait_for_cooking_list(remaining) is not None:
+            return True
+        if self._escape_cooking_page(self._detail_still_shown, f"{context}按返回后详情页还在"):
+            return self._wait_for_cooking_list(COOKING_RECLICK_AFTER) is not None
+        return False
+
+    def _escape_cooking_page(self, still_shown, seen: str) -> bool:
+        """Esc once while the page still shows after its 返回 presses.
+
+        Step 4 of docs/dev-notes/bug-prevention.md (Leo 「關不掉 就按ESC做
+        備案」): Esc steps back one page wherever 返回 is, also when the 返回
+        template did not match and the fixed point missed.  Only while the
+        page is read on two frames: Esc on the field opens the game's quit
+        dialog.
+        """
+        tap_escape = getattr(self.task, "tap_escape", None)
+        if not callable(tap_escape) or still_shown() is None:
+            return False
+        self.task.log_info(f"料理：{seen}，改按 Esc。")
+        return bool(tap_escape(after_sleep=0.5))
 
     def _back_on_field(self, seconds: float) -> bool:
         """The field next to the merchant within ``seconds`` (single probes, no warning)."""
@@ -961,7 +986,10 @@ class CookingFlowMixin:
             if still is not None:
                 self.task.log_info("料理：按返回后料理列表还在，再按一次返回。")
                 self._click_cooking_back(still, context="料理列表补按")
-        if not self.navigator.wait_for_q_sp6_sandbox(COOKING_EXIT_TIMEOUT):
+        if not self.navigator.wait_for_q_sp6_sandbox(COOKING_EXIT_TIMEOUT) and not (
+            self._escape_cooking_page(self._list_still_shown, "按返回后料理列表还在")
+            and self.navigator.wait_for_q_sp6_sandbox(COOKING_EXIT_TIMEOUT)
+        ):
             self.task.log_warning("料理：退出后未确认回到商人旁的箱庭。")
             return False
         self._cooking_opened = False

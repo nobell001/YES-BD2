@@ -46,6 +46,7 @@ from src.tasks.map_trade.navigator_constants import (
     MERCHANT_PROMPT_OCR_ROI,
     MERCHANT_PROMPT_PATTERN,
     MERCHANT_QUICK_ARRIVAL_TIMEOUT,
+    MERCHANT_SHOP_KEY,
     MERCHANT_TALK_KEY,
     MERCHANT_TRAVEL_DIALOG_KEYWORDS,
     MERCHANT_TRAVEL_DIALOG_OCR_ROI,
@@ -92,11 +93,16 @@ from src.utils.fantasia_square import (
 )
 from src.utils.field_followers import dismiss_once_per_run
 from src.utils.press_confirm import wait_for
+from src.utils.press_next import Next, per_frame, press_next
 from src.utils.wait_limits import STUCK_SECONDS, ProgressWait, StillTimer, scene_at_press
 
 # After closing a shop with no discount-close dialog, how long the merchant
 # menu (or the field) is looked for.
 MERCHANT_BACK_LOOK_SECONDS = 2.0
+# The merchant's 对话/商店 menu left open (player summary v0.2.15 2026-10-28:
+# its 「洛兹 欢迎光临!」 passed for the prompt beside him, cooking then waited
+# 10 s on the field and failed): its top-left control, then Esc.
+MERCHANT_MENU_CLOSE_LOOK_SECONDS = 2.0
 
 # The skill is full and must be starred up by the player (user choice,
 # 2026-09-28: skip buying and say so, never buy at full price).
@@ -331,8 +337,14 @@ class TradeNavigationMixin:
                 self.vision.click_client(center, frame.shape, after_sleep=1.0)
                 return True
             if monotonic() >= end_at:
-                return False
+                break
             self.task.sleep(0.3)
+        # The bubble unread: the menu's own key; the shop page is confirmed next.
+        tap_key = getattr(self.task, "tap_key", None)
+        if callable(tap_key) and tap_key(MERCHANT_SHOP_KEY, after_sleep=1.0):
+            self._status("商店进入", f"没读到「商店」，改按 {MERCHANT_SHOP_KEY}")
+            return True
+        return False
 
     def _plain_shop_option_center(self, frame) -> tuple[int, int] | None:
         for box in self.vision.ocr_boxes(
@@ -368,8 +380,37 @@ class TradeNavigationMixin:
             ):
                 presses += 1
                 self._status("商店进入", f"菜单未打开，第{presses}次补点商人互动按钮")
+        if self._talk_key_opens_menu():
+            return True
         self.task.log_warning("跑商：点击商人后未打开对话/商店菜单（未识别到砍价）。")
         return False
+
+    def _talk_key_opens_menu(self) -> bool:
+        """Still no menu after the prompt presses: the game's talk key once.
+
+        Another player's name can sit over his prompt (live 1080p
+        2026-10-20), and a prompt press that missed misses again.  Step 4 of
+        docs/dev-notes/bug-prevention.md, as when the prompt is unread on
+        arrival; only on the field (its C/H/P keys show, his open menu hides
+        them), so F never lands on his menu.
+        """
+        tap_key = getattr(self.task, "tap_key", None)
+        if not callable(tap_key) or not self._field_keycaps_shown():
+            return False
+        self.task.log_info(f"跑商：点商人后菜单没打开，改按 {MERCHANT_TALK_KEY} 键和他说话。")
+        if not tap_key(MERCHANT_TALK_KEY, after_sleep=0.0):
+            return False
+        return bool(
+            wait_for(
+                lambda: self._ocr_keywords_in_frame(
+                    self.vision.capture(), ("砍价",), "砍价入口"
+                )[0],
+                Q_SP6_BARGAIN_OCR_TIMEOUT,
+                sleep=self.task.sleep,
+                poll=MERCHANT_MENU_RECHECK_SECONDS,
+                clock=monotonic,
+            )
+        )
 
     def _merchant_prompt_box(self, frame):
         """The merchant's interaction prompt, visible only right next to him."""
@@ -394,6 +435,11 @@ class TradeNavigationMixin:
         while True:
             frame = self.vision.capture()
             box = self._merchant_prompt_box(frame)
+            if box is not None and self._merchant_menu_in_frame(frame):
+                # His menu is already open: its 「洛兹 欢迎光临!」 reads like the
+                # prompt, and pressing it is not what opens the shop.
+                self._status("商店进入", "商人菜单已经开着，不再点商人")
+                return True
             if box is not None:
                 center = (round(box.x + box.width / 2), round(box.y + box.height / 2))
                 self._status("商人交互点击位置", f"center=({center[0]},{center[1]})")
@@ -415,7 +461,15 @@ class TradeNavigationMixin:
         """
 
         self._merchant_prompt_unread = False
-        if self._merchant_prompt_box(self.vision.capture()) is not None:
+        frame = self.vision.capture()
+        if self._merchant_prompt_box(frame) is not None:
+            # His open menu reads like the prompt (2026-10-28): beside him
+            # still, but not on the field.  The shop entry uses the menu;
+            # cooking closes it first.
+            if self._merchant_menu_in_frame(frame):
+                return NavigationResult(
+                    True, ScreenState.MERCHANT_DIALOG, "已在商人旁（商人菜单开着）"
+                )
             return NavigationResult(True, ScreenState.SANDBOX, "已在商人旁")
         self._status("导航状态", "进入梦幻广场")
         self._merchant_stage_text = SQUARE_MERCHANT_STAGE
@@ -789,9 +843,17 @@ class TradeNavigationMixin:
         self._status("导航状态", "等待商人旁确认")
         end_at = monotonic() + max(0.0, timeout)
         last_state = ScreenState.UNKNOWN
+        menu_closed = False
         while True:
             frame = self.vision.capture()
             last_state = self._classify_trade_frame(frame)
+            if last_state == ScreenState.MERCHANT_DIALOG and timeout > 0 and not menu_closed:
+                # Beside him with his menu still open: close it, then the field.
+                menu_closed = True
+                self.task.log_info("跑商：商人的对话/商店菜单还开着，先关掉。")
+                self.close_merchant_menu()
+                end_at = monotonic() + max(0.0, timeout)  # the field is waited for from now
+                continue
             at_merchant = self._merchant_prompt_box(frame) is not None
             self._status(
                 "商人旁确认",
@@ -1201,12 +1263,50 @@ class TradeNavigationMixin:
                 return False
             self.task.sleep(0.5)
 
+    def close_merchant_menu(self) -> bool:
+        """Close the merchant's 对话/商店 menu back to the field; True once it
+        is gone (or was never open)."""
+
+        state = per_frame(self._classify_trade_frame)
+        if state(self.vision.capture()) != ScreenState.MERCHANT_DIALOG:
+            return True
+        tap_escape = getattr(self.task, "tap_escape", None)
+        closed = press_next(
+            "关闭商人菜单",
+            lambda: self._click_shop_close_control(after_sleep=0.5),
+            (
+                Next("场上", lambda frame: state(frame) == ScreenState.SANDBOX, goal=True),
+                Next("主页", lambda frame: state(frame) == ScreenState.HOME, goal=True),
+                Next(
+                    "商人菜单",
+                    lambda frame: state(frame) == ScreenState.MERCHANT_DIALOG,
+                    before=True,
+                ),
+                Next("加载中", lambda frame: state(frame) == ScreenState.LOADING, loading=True),
+            ),
+            capture=self.vision.capture,
+            sleep=self.task.sleep,
+            log=self.task.log_info,
+            # Its back control did not close it: Esc (Leo 「關不掉 就按ESC做備案」).
+            key=("Esc", lambda: tap_escape(after_sleep=0.5)) if callable(tap_escape) else None,
+            timeout=MERCHANT_MENU_CLOSE_LOOK_SECONDS,
+            poll=0.4,
+            clock=monotonic,
+        )
+        return closed.reached
+
     def leave_shop_to_merchant(self) -> NavigationResult:
         """After buying, stand beside the merchant again (cooking follows)."""
 
         closed = self._close_shop_to_field()
         if not closed.success:
             return closed
+        # His menu also shows 「洛兹」 where the prompt beside him is read: it
+        # must be gone first, or the prompt check passes on the menu.
+        if not self.close_merchant_menu():
+            return NavigationResult(
+                False, ScreenState.MERCHANT_DIALOG, "关闭商店后商人的对话/商店菜单关不掉"
+            )
         if self._wait_for_merchant_prompt(MERCHANT_NAV_LANDMARK_TIMEOUT):
             return NavigationResult(True, ScreenState.SANDBOX, "已关闭商店，回到商人旁")
         return NavigationResult(False, self.classify(), "关闭商店后未回到商人旁")
