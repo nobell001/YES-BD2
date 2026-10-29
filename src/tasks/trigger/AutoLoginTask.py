@@ -22,8 +22,10 @@ from src.utils.colour_check import (
 )
 from src.utils.home_confirmation import (
     HOME_GACHA_OCR_RELATIVE_ROI,
+    grey_picture_gain,
     home_confirmation_passes,
     home_gacha_ocr_with_fallback,
+    screen_whitest,
 )
 from src.utils.image_utils import (
     crop_relative,
@@ -1095,7 +1097,12 @@ class AutoLoginTask(BaseBD2Task):
         return True
 
     def _home_brightness_ratio(self, frame) -> float:
-        return max(self._home_brightness_ratio_for_template(frame, spec) for spec in HOME_TEMPLATES)
+        # A grey picture (HDR, a dim filter) is no notice over home: same rule
+        # as the left-column check (home_confirmation.relative_to_whitest).
+        gain = grey_picture_gain(screen_whitest(frame))
+        return gain * max(
+            self._home_brightness_ratio_for_template(frame, spec) for spec in HOME_TEMPLATES
+        )
 
     def _home_brightness_ratio_for_template(
         self,

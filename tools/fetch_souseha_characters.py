@@ -42,11 +42,41 @@ PORTRAIT_SIZE = 256  # souseha's own size: sharp at 200 % screen scaling (Leo 20
 NODE_DUMP = """
 const chars = await import(process.argv[2]);
 const summons = await import(process.argv[3]);
-// loadCharacters: data = b, characters_i18n = c, costumes_i18n = a (see loadCharacters-*.js)
-// loadSummons: data = s, i18n = a
+// The bundler renames the modules' exports on each deploy (b/c/a until
+// 2026-10-20, then different letters), so each table is found by its shape.
+const tables = (module) => {
+  const found = [];
+  for (const value of Object.values(module)) {
+    found.push(value);
+    if (value && typeof value === "object" && !Array.isArray(value)) found.push(...Object.values(value));
+  }
+  return found;
+};
+const entries = (table) =>
+  (Array.isArray(table) ? table : Object.values(table)).filter((entry) => entry && typeof entry === "object").slice(0, 50);
+const firstEntry = (table) => (table && typeof table === "object" ? entries(table)[0] : undefined);
+const pick = (module, label, wantArray, keys) => {
+  const hit = tables(module).find((table) => {
+    if (!table || typeof table !== "object" || Array.isArray(table) !== wantArray) return false;
+    return entries(table).some((entry) => keys.every((key) => key in entry));
+  });
+  if (hit === undefined) {
+    const seen = Object.entries(module).map(([name, value]) => {
+      const entry = firstEntry(value);
+      const kind = Array.isArray(value) ? "array" : typeof value;
+      return `${name}:${kind}` + (entry ? `[${Object.keys(entry).slice(0, 8).join(",")}]` : "");
+    });
+    console.error(`souseha changed its data: no ${label} table (${keys.join(", ")}); exports ${seen.join(" ")}`);
+    process.exit(2);
+  }
+  return hit;
+};
 console.log(JSON.stringify({
-  base: chars.b, characters: chars.c, costumes: chars.a,
-  summons: summons.s, summons_i18n: summons.a,
+  base: pick(chars, "characters", true, ["characterId", "costumes"]),
+  characters: pick(chars, "character names", false, ["character_CN"]),
+  costumes: pick(chars, "costume names", false, ["costumeName_CN"]),
+  summons: pick(summons, "summons", true, ["summonId"]),
+  summons_i18n: pick(summons, "summon names", false, ["name_CN"]),
 }));
 """
 
@@ -196,9 +226,10 @@ def main() -> None:
         result = subprocess.run(
             ["node", str(script), characters.as_uri(), summons.as_uri()],
             capture_output=True,
-            check=True,
             encoding="utf-8",
         )
+    if result.returncode != 0:
+        raise SystemExit(result.stderr.strip() or f"node exited with {result.returncode}")
     data = snapshot(json.loads(result.stdout))
     try:
         old = json.loads(OUT.read_text(encoding="utf-8"))

@@ -12,8 +12,17 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QImage, QLinearGradient, QPainter, QPainterPath, QPixmap
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetricsF,
+    QImage,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPixmap,
+)
 from PySide6.QtWidgets import QFileDialog, QLabel, QWidget
 
 from src.ui.shell import data, icons, motion, theme
@@ -62,6 +71,8 @@ class Avatar(QWidget):
         self._account: accounts.Account | None = None
         self._on_click = on_click
         self._dim = False
+        self._colour: QColor | None = None
+        self._letter = ""
         if on_click is not None:
             self.setCursor(Qt.PointingHandCursor)
             self._hover = motion.HoverFade(self, self.update)
@@ -70,6 +81,16 @@ class Avatar(QWidget):
 
     def set_account(self, account: accounts.Account) -> None:
         self._account = account
+        self.update()
+
+    def set_colour(self, colour: QColor | None) -> None:
+        """The disc's colour when there is no picture (None = the theme's)."""
+        self._colour = colour
+        self.update()
+
+    def set_letter(self, letter: str) -> None:
+        """What the disc shows without a picture ('' = the name's first letter)."""
+        self._letter = letter
         self.update()
 
     def set_dim(self, dim: bool) -> None:
@@ -97,17 +118,25 @@ class Avatar(QWidget):
             painter.drawPixmap(rect.toRect(), picture)
         else:
             gradient = QLinearGradient(rect.topLeft(), rect.bottomRight())
-            gradient.setColorAt(0.0, mix(theme.color("primary"), QColor("#FFFFFF"), 0.22))
-            gradient.setColorAt(1.0, theme.color("primary"))
+            base = self._colour or theme.color("primary")
+            gradient.setColorAt(0.0, mix(base, QColor("#FFFFFF"), 0.22))
+            gradient.setColorAt(1.0, base)
             painter.fillRect(rect, gradient)
-            letter = self._account.name[:1] or self._account.id
+            letter = self._letter or self._account.name[:1] or self._account.id
             font = QFont(self.font())
-            font.setPixelSize(max(10, round(side * 0.44)))
+            font.setPixelSize(max(9, round(side * 0.46)))
             # The first letter of the account name, which may be Chinese.
             theme.strong(font)
             painter.setFont(font)
             painter.setPen(theme.color("on_primary"))
-            painter.drawText(rect, Qt.AlignCenter, letter.upper())
+            # In the very middle of the disc by the glyph's own ink, not the
+            # font's line box (Leo 2026-10-29 「數字要在圈正中間」).
+            text = letter.upper()
+            ink = QFontMetricsF(font).tightBoundingRect(text)
+            painter.drawText(
+                QPointF(rect.center().x() - ink.center().x(), rect.center().y() - ink.center().y()),
+                text,
+            )
         if self._hover is not None and float(self._hover.value) > 0:
             painter.fillRect(rect, QColor(0, 0, 0, round(70 * float(self._hover.value))))
             pad = side * 0.32

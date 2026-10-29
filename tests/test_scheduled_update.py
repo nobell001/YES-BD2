@@ -98,6 +98,17 @@ class UpdateTest(unittest.TestCase):
         # The one-time look finds nothing left to do.
         self.assertFalse(self.retry(NOW + timedelta(minutes=10)))
 
+    def test_the_run_after_the_update_is_the_slot_that_fired(self):
+        # YES-BD2 #64: the slot (its 帳號) is the one at the first open.
+        self.addCleanup(setattr, scheduled_update.scheduled_start, "opened_at", None)
+        self.hand()
+        scheduled_update.take_pending(now=NOW + timedelta(minutes=40), run=self.windows.run)
+        self.assertEqual(NOW, scheduled_update.scheduled_start.opened_at)
+        scheduled_update.scheduled_start.opened_at = None
+        self.hand()
+        self.assertTrue(self.retry(NOW + timedelta(minutes=10)))
+        self.assertEqual(NOW, scheduled_update.scheduled_start.opened_at)
+
     def test_newest_already_runs_now(self):
         self.set_app(current_version="v0.2.10")
         self.assertFalse(self.hand())

@@ -93,6 +93,118 @@ class TimesTest(unittest.TestCase):
         )
 
 
+class SlotAccountTest(unittest.TestCase):
+    """YES-BD2 #64: each slot its own 帳號 (and its own items, Leo 2026-10-29)."""
+
+    def setUp(self):
+        self.settings = Settings(True, True, [
+            Slot(KIND_TIME, 8, 0, account="1"),
+            Slot(KIND_TIME, 21, 0, account="2"),
+            Slot(KIND_TIME, 13, 0, days=[5, 6]),
+        ])
+
+    def test_the_account_is_saved_and_old_files_have_none(self):
+        again = Settings.from_json(self.settings.to_json())
+        self.assertEqual(["1", "2", ""], [slot.account for slot in again.slots])
+        self.assertFalse(again.migrated)
+        old = Settings.from_json({"enabled": True, "slots": [{"kind": "time", "time": "08:00", "days": [0], "on": True}]})
+        self.assertEqual("", old.slots[0].account)
+        self.assertNotIn("account", old.slots[0].to_json())
+        self.assertFalse(old.migrated)
+
+    def test_the_slot_that_fired_gives_the_account(self):
+        thursday = datetime(2026, 10, 22, tzinfo=TAIPEI)
+        at = lambda h, m=0: thursday.replace(hour=h, minute=m)
+        self.assertEqual("1", ss.account_at(self.settings, at(8, 0)))
+        # Opened late after an update: still the slot that fired.
+        self.assertEqual("1", ss.account_at(self.settings, at(8, 50)))
+        self.assertEqual("2", ss.account_at(self.settings, at(21, 0, )))
+        self.assertEqual("2", ss.account_at(self.settings, at(7, 59) + timedelta(days=1)))
+        # The Saturday slot runs the current one.
+        self.assertEqual("", ss.account_at(self.settings, at(13, 5) + timedelta(days=2)))
+
+    def test_switched_off_slots_never_count(self):
+        self.settings.slots[1].on = False
+        moment = datetime(2026, 10, 22, 21, 1, tzinfo=TAIPEI)
+        self.assertEqual("1", ss.account_at(self.settings, moment))
+        self.assertEqual("", ss.account_at(Settings(), moment))
+
+
+class SharedTimeTest(unittest.TestCase):
+    """Leo 2026-10-29 「同時段同帳號不能重疊 不同帳號可以」."""
+
+    def test_an_hour_for_one_account_half_an_hour_between_two(self):
+        # Leo 2026-10-29 「不同帳號 也要間隔至少半小時」.
+        a = Slot(KIND_TIME, 21, 0, [0], account="1")
+        self.assertTrue(a.clashes_with(Slot(KIND_TIME, 21, 30, [0], account="1"), current="1"))
+        self.assertTrue(a.clashes_with(Slot(KIND_TIME, 21, 15, [0], account="2"), current="1"))
+        self.assertFalse(a.clashes_with(Slot(KIND_TIME, 21, 30, [0], account="2"), current="1"))
+        # "" is the current 帳號.
+        self.assertTrue(a.clashes_with(Slot(KIND_TIME, 21, 30, [0]), current="1"))
+        self.assertFalse(a.clashes_with(Slot(KIND_TIME, 21, 30, [0]), current="2"))
+        with mock.patch.object(ss, "_current_account", lambda: "1"):
+            self.assertEqual(["", ""], ss.slot_problems([a, Slot(KIND_TIME, 21, 30, [0], account="2")]))
+            problems = ss.slot_problems([a, Slot(KIND_TIME, 21, 0, [0], account="2")])
+            self.assertIn("半小时", problems[0])
+            problems = ss.slot_problems([a, Slot(KIND_TIME, 21, 45, [0], account="1")])
+            self.assertIn("1 小时", problems[0])
+
+    def test_every_account_at_one_time_runs(self):
+        settings = Settings(True, True, [
+            Slot(KIND_TIME, 21, 0, account="1", tasks=["领取邮件"]),
+            Slot(KIND_TIME, 21, 0, account="2"),
+            Slot(KIND_TIME, 8, 0, account="3"),
+        ])
+        moment = datetime(2026, 10, 22, 21, 1, tzinfo=TAIPEI)
+        jobs = ss.jobs_at(settings, moment)
+        self.assertEqual(["1", "2"], [job["account"] for job in jobs])
+        self.assertEqual(["领取邮件"], jobs[0]["tasks"])
+        self.assertIsNone(jobs[1]["tasks"])
+        self.assertEqual("1", ss.account_at(settings, moment))
+
+
+class SlotTasksTest(unittest.TestCase):
+    """Leo 2026-10-29 「也要選擇該時段進行的任務」: a slot's own items."""
+
+    def test_saved_and_none_means_the_accounts_ticks(self):
+        settings = Settings(True, True, [
+            Slot(KIND_TIME, 8, 0, tasks=["领取邮件", "快速狩猎"]),
+            Slot(KIND_TIME, 21, 0),
+        ])
+        again = Settings.from_json(settings.to_json())
+        self.assertEqual(["领取邮件", "快速狩猎"], again.slots[0].tasks)
+        self.assertIsNone(again.slots[1].tasks)
+        self.assertNotIn("tasks", again.slots[1].to_json())
+        moment = datetime(2026, 10, 22, 8, 1, tzinfo=TAIPEI)
+        self.assertEqual(["领取邮件", "快速狩猎"], ss.tasks_at(again, moment))
+        self.assertIsNone(ss.tasks_at(again, moment.replace(hour=21, minute=5)))
+
+    def test_item_settings_are_saved_per_slot(self):
+        settings = Settings(True, True, [
+            Slot(KIND_TIME, 8, 0, settings={"镜中之战": {"竞技场战斗倍数": 2}}),
+            Slot(KIND_TIME, 21, 0),
+        ])
+        again = Settings.from_json(settings.to_json())
+        self.assertEqual({"镜中之战": {"竞技场战斗倍数": 2}}, again.slots[0].settings)
+        self.assertEqual({}, again.slots[1].settings)
+        self.assertNotIn("settings", again.slots[1].to_json())
+        moment = datetime(2026, 10, 22, 8, 1, tzinfo=TAIPEI)
+        self.assertEqual({"镜中之战": {"竞技场战斗倍数": 2}}, ss.item_settings_at(again, moment))
+        self.addCleanup(ss.mark_run_pending, False)
+        ss.mark_run_pending(settings={"镜中之战": {"竞技场战斗倍数": 2}})
+        self.assertEqual({"镜中之战": {"竞技场战斗倍数": 2}}, ss.take_run_settings())
+        self.assertEqual({}, ss.take_run_settings())
+
+    def test_handed_to_the_run_once(self):
+        self.addCleanup(ss.mark_run_pending, False)
+        ss.mark_run_pending(tasks=["领取邮件"])
+        self.assertEqual(["领取邮件"], ss.take_run_tasks())
+        self.assertIsNone(ss.take_run_tasks())
+        ss.mark_run_pending(tasks=["领取邮件"])
+        ss.mark_run_pending(False)  # the start failed: nothing is left for a later run
+        self.assertIsNone(ss.take_run_tasks())
+
+
 class TaskXmlTest(unittest.TestCase):
     def xml(self, settings):
         return ss.task_xml(
@@ -244,39 +356,56 @@ class UiTest(unittest.TestCase):
         self.assertTrue(self.ui.settings().enabled)
         ss.save.assert_not_called()
 
+    def _editing(self, change):
+        from src.ui.shell import schedule_week
+
+        def run(editor):
+            return change(editor)
+
+        return mock.patch.object(schedule_week.SlotEditor, "exec", run)
+
     def test_dialog_adds_and_deletes_slots(self):
         dialog = self.ui.ScheduleDialog(None)
         self.addCleanup(dialog.close)
-        dialog._add_time()
-        self.assertEqual(len(dialog._rows), 2)
+        with self._editing(lambda editor: True):
+            dialog._add_now()
+        self.assertEqual(len(dialog.working.slots), 2)
         # A free time, not a copy (Leo 2026-10-22 「時間不可以衝突吧」).
         self.assertEqual((21, 0), (dialog.working.slots[1].hour, dialog.working.slots[1].minute))
-        dialog._delete(dialog._rows[0])
+
+        def delete(editor):
+            editor._delete()
+            return True
+
+        with self._editing(delete):
+            dialog._edit(dialog.working.slots[0])
         self.assertEqual([(s.hour, s.minute) for s in dialog.working.slots], [(21, 0)])
-        for _ in range(10):
-            dialog._add_time()
+        with self._editing(lambda editor: True):
+            for _ in range(10):
+                dialog._add_now()
         self.assertEqual(len(dialog.working.slots), ss.MAX_SLOTS)
         self.assertEqual(5, ss.MAX_SLOTS)
-        self.assertFalse(dialog.add_time.isEnabled())
+        self.assertFalse(dialog.add_button.isEnabled())
         # Every added slot can be saved as it is.
         self.assertEqual([""] * 5, ss.slot_problems(dialog.working.slots))
         self.assertTrue(dialog.save_button.isEnabled())
         # Nothing is kept before 保存.
         self.assertEqual(len(self.ui.settings().slots), 1)
 
-    def test_clashing_rows_are_marked_and_block_saving(self):
+    def test_clashing_slots_are_marked_and_block_saving(self):
         dialog = self.ui.ScheduleDialog(None)
         self.addCleanup(dialog.close)
-        dialog._add_time()
-        dialog._rows[1].hour.setCurrentIndex(8)  # 08:00, 15 min from 08:15
-        self.assertTrue(all(row.problem.text() for row in dialog._rows))
+        dialog.working.slots.append(Slot(KIND_TIME, 8, 0))  # 15 min from 08:15
+        dialog._fill()
+        self.assertTrue(all(block.problem for block in dialog.week.blocks))
         self.assertFalse(dialog.save_button.isEnabled())
-        dialog._rows[1].hour.setCurrentIndex(10)  # 10:00: more than an hour
-        self.assertEqual(["", ""], [row.problem.text() for row in dialog._rows])
+        dialog.working.slots[1].hour = 10  # 10:00: more than an hour
+        dialog._fill()
+        self.assertFalse(any(block.problem for block in dialog.week.blocks))
         self.assertTrue(dialog.save_button.isEnabled())
-        for chip in dialog._rows[1].days:
-            chip.setChecked(False)
-        self.assertIn("星期", dialog._rows[1].problem.text())
+        dialog.working.slots[1].days = []
+        dialog._fill()
+        self.assertIn("星期", dialog.problem.text())
         self.assertFalse(dialog.save_button.isEnabled())
         # With 定时启动 off the slots do nothing, so it saves.
         dialog.master.setChecked(False)
@@ -289,8 +418,14 @@ class UiTest(unittest.TestCase):
         self.addCleanup(dialog.close)
         # Leo 2026-10-22: a scheduled run closes the game by default.
         self.assertTrue(dialog.close_game.isChecked())
-        dialog._add_time()
-        dialog._rows[1].days[6].setChecked(False)
+
+        def weekdays(editor):
+            for day, chip in enumerate(editor.days):
+                chip.setChecked(day < 6)
+            return True
+
+        with self._editing(weekdays):
+            dialog._add(0, 21)
         dialog.shutdown.setChecked(True)
         with mock.patch.object(ss, "apply") as apply:
             dialog._save()

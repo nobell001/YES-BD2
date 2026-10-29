@@ -632,6 +632,22 @@ class SquareGoddessEntryTest(unittest.TestCase):
         self.assertFalse(SquareGoddessTask.run(task))
         self.assertEqual(["enter", "pray", "home"], stages)
 
+    def test_square_return_home_falls_back_to_shared_way_home(self):
+        # Player summary v0.2.21 2026-10-29: house button and H failed, the
+        # run stopped without trying anything else (Leo 「要有備用方案」).
+        task = object.__new__(SquareGoddessTask)
+        task.config = {}
+        task.info_set = lambda *_args: None
+        task.log_info = lambda *_args: None
+        task.operate_click = lambda *_args, **_kwargs: None
+        task._wait_for_cartridge_home = lambda **_kwargs: False
+        for found in (True, False):
+            with self.subTest(found=found), patch(
+                "src.tasks.recovery.recover_to_home", return_value=found
+            ) as recover:
+                self.assertEqual(found, SquareGoddessTask._return_home_from_square(task))
+                recover.assert_called_once_with(task)
+
     def test_square_return_home_uses_relative_home_point_and_restores_timeout(self):
         task = object.__new__(SquareGoddessTask)
         task.config = {

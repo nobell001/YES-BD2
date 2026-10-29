@@ -218,7 +218,8 @@ def dialogs(shell):
 
         return open_it
 
-    from src.ui.shell import run_notify_dialog, schedule_ui
+    from src.ui.shell import run_notify_dialog, schedule_ui, schedule_week
+    from src.utils.scheduled_start import Slot
     from src.ui.shell.widgets import shell_buttons
     from src.utils import accounts
 
@@ -230,6 +231,37 @@ def dialogs(shell):
 
     def last_row(dialog):
         return dialog.rows.itemAt(dialog.rows.count() - 1).widget()
+
+    def own_slot():
+        # A slot with its own 帳號, items and 镜中之战 settings (Leo 2026-10-29).
+        return Slot(
+            hour=21, account="2", tasks=["快速狩猎", "自动PVP", "领取邮件"],
+            settings={"自动PVP": {"竞技场战斗倍数": 2}},
+        )
+
+    def pvp_item():
+        return next(i for i in schedule_ui._batch_items() if i.key == "自动PVP")
+
+    def week(dialog):
+        # A shared week: 帳號 1 every evening, 帳號 2 on weekdays with its own
+        # items, 帳號 3 on weekend mornings (Leo 2026-10-29).
+        dialog.master.setChecked(True)
+        dialog.working.slots = [
+            Slot(hour=21, account="1"),
+            Slot(hour=21, minute=30, days=[0, 1, 2, 3, 4], account="2", tasks=["快速狩猎", "自动PVP", "领取邮件"]),
+            Slot(hour=9, days=[5, 6], account="3", settings={"自动PVP": {"竞技场战斗倍数": 2}}),
+            Slot(hour=12, days=[2], account="2"),
+        ]
+        dialog._fill()
+        dialog.week.scroll_to_first()
+
+    def clash(dialog):
+        dialog.working.slots.append(Slot(hour=21, minute=15, days=[4], account="3"))
+        dialog._fill()
+
+    def pause_third(dialog):
+        dialog.working.slots.pop()
+        dialog.legend[2].setChecked(False) if len(dialog.legend) > 2 else None
 
     def set_message(dialog, text):
         # What 保存 does when Windows refuses the task, minus Windows.
@@ -255,10 +287,10 @@ def dialogs(shell):
             ("error-gone", lambda d: d.say("")),
         ],
         "schedule": [
-            *[(f"add-{n}", lambda d: d._add_time()) for n in range(1, 7)],
-            ("add-reset", lambda d: d._add_reset()),
+            ("week", week),
+            ("clash", clash),
+            ("paused", pause_third),
             ("save-error", lambda d: set_message(d, "Windows 不让建立定时：请重新打开 YES-BD2 再试，还是不行就重开电脑")),
-            ("delete", lambda d: d._delete(d._rows[-1])),
             ("off", lambda d: d.master.setChecked(False)),
         ],
         "run-notify": [
@@ -292,6 +324,9 @@ def dialogs(shell):
         ("accounts", lambda: accounts_ui.ManageDialog(window).exec()),
         ("accounts-5", five_accounts),
         ("schedule", lambda: schedule_ui.ScheduleDialog(window).exec()),
+        ("schedule-edit", lambda: schedule_week.SlotEditor(own_slot(), [], accounts.accounts(), window).exec()),
+        ("schedule-tasks", lambda: schedule_ui.TaskPickDialog(own_slot(), window).exec()),
+        ("schedule-item-settings", lambda: schedule_ui.ItemSettingsDialog(pvp_item(), {"竞技场战斗倍数": 2}, window).exec()),
         ("run-notify", lambda: run_notify_dialog.ask(window)),
         ("account-mismatch", lambda: accounts_ui.MismatchDialog(window).exec()),
         ("clone-ask", lambda: clone_flow.ask_and_start(window, batch)),

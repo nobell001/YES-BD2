@@ -3245,8 +3245,6 @@ msgstr "Delete this time slot"
 msgid "游戏每天重置后"
 msgstr "After the daily game reset"
 
-msgid "只开关这个时段"
-msgstr "Turn only this time slot on or off"
 
 msgid "时间到自动打开游戏，跑今天还没做的"
 msgstr "Opens the game at the set time and runs what is left today"
@@ -3257,11 +3255,7 @@ msgstr "Add time slot"
 msgid "没选星期，这个时段不会跑"
 msgstr "No day picked: this slot will not run"
 
-msgid "和另一个时段隔不到 1 小时，请错开"
-msgstr "Less than 1 hour from another slot; move one of them"
 
-msgid "电脑完全关机时不会启动；睡眠中可以叫醒"
-msgstr "Does not start while the PC is shut down; a sleeping PC can be woken"
 
 msgid "最多 {n} 个时段"
 msgstr "At most {n} time slots"
@@ -3494,6 +3488,36 @@ msgstr "Login retries before giving up"
 msgid "连续这么多次没进主页，就取消这次一键日常/周常"
 msgstr "After this many misses in a row, this Run All Dailies / Weeklies is cancelled"
 
+msgid "当前账号"
+msgstr "Current account"
+
+msgid "这个时段要跑账号「{name}」，但没能切换过去，这次没有跑。"
+msgstr "This time slot runs account \"{name}\", but switching to it failed, so nothing ran this time."
+
+msgid "这个时段要跑什么"
+msgstr "What this time slot runs"
+
+msgid "{time} 到了只跑勾的任务，今天做完的不会再跑"
+msgstr "At {time} only the ticked tasks run; anything already done today is skipped"
+
+msgid "照账号的勾选跑"
+msgstr "Run what the account has ticked"
+
+msgid "和首页一键日常勾的一样"
+msgstr "The same as ticked for Run All Dailies on Home"
+
+msgid "全不选"
+msgstr "Select none"
+
+msgid "照账号勾选"
+msgstr "Account's ticks"
+
+msgid "自选 {n} 项"
+msgstr "{n} picked"
+
+msgid "时间到先切到这个账号再跑"
+msgstr "When the time comes, switch to this account first, then run"
+
 msgid "游戏里显示执行状态"
 msgstr "Show run status in the game"
 
@@ -3547,3 +3571,58 @@ msgstr "Resume to play Stage {n} instead"
 
 msgid "已通关"
 msgstr "cleared"
+
+msgid "只在这个时段这样跑，任务本身的设定不变"
+msgstr "Only this time slot runs it this way; the task's own settings stay as they are"
+
+msgid "{n} 项"
+msgstr "{n} tasks"
+
+
+msgid "任务"
+msgstr "Tasks"
+
+msgid "这个时段自己的设定"
+msgstr "Settings for this time slot"
+
+msgid "这个时段自己的设定（已改）"
+msgstr "Settings for this time slot (changed)"
+
+msgid "改回和任务本身一样"
+msgstr "Back to the task's own settings"
+
+msgid "有自己的设定"
+msgstr "own settings"
+
+msgid "时间到自动打开游戏，跑今天还没做的。点空格或右上角 ＋ 新增，点色块修改"
+msgstr "Opens the game on time and runs what is left today. Click an empty hour or ＋ at the top right to add; click a block to change it"
+
+msgid "同一个账号隔 1 小时，不同账号隔半小时"
+msgstr "1 hour apart for one account, 30 minutes between accounts"
+
+msgid "点一下暂停或恢复这个账号的时段；拖到时间上新增一个"
+msgstr "Click to pause or resume this account's times; drag it onto an hour to add one"
+
+msgid "每个账号最多 {n} 个时段"
+msgstr "Up to {n} times per account"
+
+msgid "修改这个时段"
+msgstr "Change this time"
+
+msgid "时间"
+msgstr "Time"
+
+msgid "每周哪几天"
+msgstr "Days of the week"
+
+msgid "{name} 在 {time} 已经有一个时段，同一个账号要隔 1 小时"
+msgstr "{name} already runs at {time}; one account needs 1 hour between times"
+
+msgid "{name} 在 {time} 有一个时段，不同账号要隔半小时"
+msgstr "{name} runs at {time}; two accounts need 30 minutes between them"
+
+msgid "同一个账号的另一个时段隔不到 1 小时，请错开"
+msgstr "Less than 1 hour from another time of the same account; move one"
+
+msgid "和别的账号的时段隔不到半小时，请错开"
+msgstr "Less than 30 minutes from another account's time; move one"

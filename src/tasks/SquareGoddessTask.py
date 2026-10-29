@@ -286,12 +286,20 @@ class SquareGoddessTask(BaseBD2Task):
         )
         self.info_set("广场主页点击次数", f"1/{max_clicks}")
         self.operate_click(*SQUARE_HOME_POINT, after_sleep=1.0)
-        return self._wait_for_cartridge_home(
+        if self._wait_for_cartridge_home(
             timeout=float(self.config.get("广场返回主页等待秒数", STUCK_SECONDS)),
             retry_home_clicks=max_clicks - 1,
             retry_interval=retry_interval,
             total_home_clicks=max_clicks,
-        )
+        ):
+            return True
+        # Player summary v0.2.21 2026-10-29: the square's own house button and
+        # H were the only ways out (Leo 「要有備用方案」): the shared way home
+        # (closes popups, back, H, Esc, waits out loading) before giving up.
+        from src.tasks.recovery import recover_to_home
+
+        self.log_info("广场女神像：广场的主页按钮和 H 都没回到主页，改用通用的回主页方法。")
+        return bool(recover_to_home(self))
 
     def _enter_square_from_home(self) -> bool:
         """The square card is clicked where its picture is.  When the picture

@@ -132,8 +132,45 @@ class HomeConfirmationTest(unittest.TestCase):
             home_left_column_brightness(frame), HOME_DIMMED_P95_THRESHOLD_DEFAULT
         )
         dimmed = (frame // 2).astype(np.uint8)
+        dimmed[500:520, 900:1000] = 255  # the notice's own white text
         self.assertLess(
             home_left_column_brightness(dimmed), HOME_DIMMED_P95_THRESHOLD_DEFAULT
+        )
+
+    def test_grey_picture_home_is_not_taken_for_a_notice(self):
+        # Player summary v0.2.21 2026-10-29 (4K, HDR on): the whole picture
+        # greyer, white labels at ~153, home never passed after the square.
+        import cv2
+        from pathlib import Path
+
+        picture = Path(__file__).parent / "fixtures/pvp/home_bright_skin_cues_fhd.png"
+        home = cv2.imread(str(picture))
+        self.assertGreater(home_left_column_brightness(home), HOME_DIMMED_P95_THRESHOLD_DEFAULT)
+        for factor in (0.6, 0.7, 0.8):
+            grey = (home.astype(np.float32) * factor).astype(np.uint8)
+            with self.subTest(factor=factor):
+                self.assertGreater(
+                    home_left_column_brightness(grey), HOME_DIMMED_P95_THRESHOLD_DEFAULT
+                )
+                # A notice over that grey home: its white text, home dims more.
+                noticed = (grey.astype(np.float32) * 0.5).astype(np.uint8)
+                noticed[400:700, 600:1300] = 200
+                noticed[420:440, 1200:1280] = 255
+                self.assertLess(
+                    home_left_column_brightness(noticed), HOME_DIMMED_P95_THRESHOLD_DEFAULT
+                )
+
+    def test_notice_over_normal_home_still_reads_dimmed(self):
+        import cv2
+        from pathlib import Path
+
+        picture = Path(__file__).parent / "fixtures/pvp/home_bright_skin_cues_fhd.png"
+        home = cv2.imread(str(picture))
+        noticed = (home.astype(np.float32) * 0.5).astype(np.uint8)
+        noticed[400:700, 600:1300] = 230
+        noticed[420:440, 1200:1280] = 255
+        self.assertLess(
+            home_left_column_brightness(noticed), HOME_DIMMED_P95_THRESHOLD_DEFAULT
         )
 
     def test_confirmation_requires_all_three_signals(self):

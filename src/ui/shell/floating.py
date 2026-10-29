@@ -8,6 +8,7 @@ height was taken once, and the same check then found 跑完发到微信's title 
 
 from __future__ import annotations
 
+import shiboken6
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QDialog, QFrame, QLayout, QWidget
@@ -84,7 +85,9 @@ class Floating(QDialog):
         self.panel = Panel(self)
         pad = Panel.SHADOW
         side, top = self.PAD
-        self.column = vbox(self.panel, (pad + side, pad - 6 + top, pad + side, pad + 6 + top), self.SPACING)
+        self.column = vbox(
+            self.panel, (pad + side, pad - 6 + top, pad + side, pad + 6 + top), self.SPACING
+        )
         self._place_queued = False
         self.panel.installEventFilter(self)
         if parent is not None:
@@ -119,6 +122,10 @@ class Floating(QDialog):
         return self.panel.layout().totalMinimumSize().width()
 
     def _place(self) -> None:
+        # A place queued for the next pass can come after the window is gone
+        # (2K test 2026-10-29: 29 「SlotEditor already deleted」 errors).
+        if not shiboken6.isValid(self):
+            return
         self._place_queued = False
         area = self.rect()
         # Wider than usual when the words need it (English day names).

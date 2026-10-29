@@ -176,6 +176,8 @@ if __name__ == "__main__":
         # here, after the Administrator copy got it, so a language change or
         # the 桌面分身 does not start a run again.
         scheduled_start.launched_by_schedule = scheduled_start.take_flag(sys.argv)
+        if scheduled_start.launched_by_schedule:
+            scheduled_start.opened_at = scheduled_start.local_now()
         from src.utils import scheduled_update
 
         # 定时启动's one-time look after handing the update to the launcher.

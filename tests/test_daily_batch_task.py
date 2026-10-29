@@ -160,6 +160,54 @@ class DailyBatchTaskTest(unittest.TestCase):
         self.assertIs(original_second_config, second.config)
         self.assertEqual(2, len(resets))
 
+    def test_a_scheduled_slots_own_items_run_and_the_ticks_stay(self):
+        # Leo 2026-10-29 「也要選擇該時段進行的任務」.
+        from src.utils import scheduled_start
+
+        class First:
+            pass
+
+        class Second:
+            pass
+
+        calls = []
+        specs = (DailyBatchChild("第一项", First), DailyBatchChild("第二项", Second))
+        ticks = {"启用": True, "第一项": True, "第二项": False}
+        task, _resets = self.make_task(
+            {First: _ChildTask("first", calls), Second: _ChildTask("second", calls)},
+            specs,
+            dict(ticks),
+        )
+        self.addCleanup(scheduled_start.mark_run_pending, False)
+        scheduled_start.mark_run_pending(tasks=["第二项"])
+        self.assertTrue(DailyBatchTask.run(task))
+        self.assertEqual([("second", True)], calls)
+        self.assertEqual(ticks, task.config)
+        # The next run (by the player) goes by the ticks again.
+        calls.clear()
+        self.assertTrue(DailyBatchTask.run(task))
+        self.assertEqual([("first", True)], calls)
+
+    def test_a_scheduled_slots_own_settings_apply_to_that_run_only(self):
+        # Leo 2026-10-29 「鏡中之戰也可以選倍數那些」.
+        from src.utils import scheduled_start
+
+        class First:
+            pass
+
+        seen = []
+        child = _ChildTask("first", [])
+        child.run = lambda: seen.append(child.config.get("保留配置")) or True
+        task, _resets = self.make_task(
+            {First: child}, (DailyBatchChild("第一项", First),), {"启用": True, "第一项": True}
+        )
+        self.addCleanup(scheduled_start.mark_run_pending, False)
+        scheduled_start.mark_run_pending(settings={"第一项": {"保留配置": 3}})
+        self.assertTrue(DailyBatchTask.run(task))
+        self.assertTrue(DailyBatchTask.run(task))
+        self.assertEqual([3, 1], seen)
+        self.assertEqual(1, child.config["保留配置"])
+
     def test_progress_is_published_after_each_child(self):
         class First:
             pass

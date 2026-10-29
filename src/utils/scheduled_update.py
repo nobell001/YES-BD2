@@ -149,11 +149,21 @@ def _drop_pending(run=subprocess.run) -> None:
         _log(f"retry task not removed: {exc}")
 
 
-def _age(data: dict, now: datetime) -> timedelta | None:
+def _opened(data: dict) -> datetime | None:
     try:
-        return now - datetime.fromisoformat(data["at"])
+        return datetime.fromisoformat(data["at"])
     except (KeyError, TypeError, ValueError):
         return None
+
+
+def _age(data: dict, now: datetime) -> timedelta | None:
+    opened = _opened(data)
+    return None if opened is None else now - opened
+
+
+def _remember_opened(data: dict) -> None:
+    """The run after the update is the slot that fired then (its 帳號)."""
+    scheduled_start.opened_at = _opened(data)
 
 
 def auto_run_box_on(config=None) -> bool:
@@ -264,6 +274,8 @@ def take_pending(now: datetime | None = None, run=subprocess.run) -> bool:
         _log(f"opened after the update ({data.get('to')}): the 首页 box starts the run")
         return False
     fresh = age is not None and timedelta(0) <= age <= timedelta(minutes=PENDING_MINUTES)
+    if fresh:
+        _remember_opened(data)
     _log(f"opened after the update ({data.get('to')}): {'run' if fresh else 'too late, no run'}")
     return fresh
 
@@ -300,5 +312,6 @@ def on_retry(
         except scheduled_start.TaskError as exc:
             _log(f"retry task not set again ({exc}): run now")
     _drop_pending(run=run)
+    _remember_opened(data)
     _log("the launcher did not reopen the tool: run the version that is there")
     return True

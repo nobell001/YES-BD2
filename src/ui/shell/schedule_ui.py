@@ -24,29 +24,31 @@ from PySide6.QtCore import (
     QVariantAnimation,
 )
 from PySide6.QtGui import QFont, QFontMetrics, QPainter
-from PySide6.QtWidgets import QAbstractButton, QGraphicsEffect, QSizePolicy, QWidget
-from qfluentwidgets import ComboBox, ScrollArea
+from PySide6.QtWidgets import (
+    QAbstractButton,
+    QGraphicsEffect,
+    QGridLayout,
+    QSizePolicy,
+    QWidget,
+)
+from qfluentwidgets import ComboBox, FlowLayout, ScrollArea
 
-from src.ui.shell import motion, theme
+from src.ui.shell import icons, motion, theme
 from src.ui.shell.floating import Floating
 from src.ui.shell.run_confirm import HeroIcon
 from src.ui.shell.safe import guarded
 from src.ui.shell.widgets import (
     Button,
     CheckBox,
-    Inset,
-    Separator,
     Text,
-    Toggle,
     hbox,
     mix,
-    set_prop,
     t,
     tf,
     vbox,
 )
-from src.utils import scheduled_start
-from src.utils.scheduled_start import KIND_TIME, MAX_SLOTS, Settings, Slot
+from src.utils import accounts, scheduled_start
+from src.utils.scheduled_start import Settings, Slot
 
 logger = Logger.get_logger(__name__)
 
@@ -102,7 +104,29 @@ def next_text(now: datetime | None = None) -> tuple[str, str]:
         word = t("下次 · 明天")
     else:
         word = tf("下次 · 周{weekday}", weekday=t(WEEKDAYS[moment.weekday()]))
+    names = [_account_name(slot.account) for slot in scheduled_start.slots_at(settings(), moment)]
+    who = "、".join(dict.fromkeys(name for name in names if name))
+    if who:
+        word = f"{word} · {who}"
     return moment.strftime("%H:%M"), word
+
+
+def account_label(account_id: str) -> str:
+    """A 帳號's name for a report, 「当前账号」 when unknown."""
+    return _account_name(account_id) or t("当前账号")
+
+
+def _account_name(account_id: str) -> str:
+    """The name of the 帳號 a slot runs ('' for the current one or one gone)."""
+    if not account_id:
+        return ""
+    from src.ui.shell.accounts_ui import display_name
+
+    try:
+        known = {account.id: account for account in accounts.accounts()}
+    except Exception:
+        return ""
+    return display_name(known[account_id]) if account_id in known else ""
 
 
 # ---------------------------------------------------------------- the run
@@ -141,12 +165,15 @@ def report_failure(note: str) -> None:
     run_report.finish(run_report.ENDED_ERROR)
 
 
-def before_start() -> bool:
-    """Checks before a scheduled 一键日常; False when it cannot run (reported)."""
+def before_start(tasks: list[str] | None = None, item_settings: dict | None = None) -> bool:
+    """Checks before a scheduled 一键日常; False when it cannot run (reported).
+
+    ``tasks``: the slot's own items (None = the 帳號's ticks);
+    ``item_settings``: their settings for this run only."""
     if scheduled_start.screen_locked():
         report_failure(LOCKED_NOTE)
         return False
-    scheduled_start.mark_run_pending()
+    scheduled_start.mark_run_pending(tasks=tasks, settings=item_settings)
     return True
 
 
@@ -163,7 +190,7 @@ def after_start(started: bool) -> None:
     QTimer.singleShot(WATCHDOG_MINUTES * 60_000, guarded("scheduled start check", _check_begun))
 
 
-def _begun_since(since: float) -> bool:
+def begun_since(since: float) -> bool:
     from src.tasks import run_report
     from src.ui.shell import data
 
@@ -179,7 +206,7 @@ def _check_begun(rechecks: int = 0) -> None:
     from src.ui.shell import data
 
     since = _watch_started
-    if since is None or _begun_since(since):
+    if since is None or begun_since(since):
         return
     if data.busy() and rechecks < WATCHDOG_RECHECKS:
         QTimer.singleShot(
@@ -219,7 +246,7 @@ class _Watch(QObject):
         if due is None:
             return
         logger.info(f"scheduled start: slot {due:%H:%M} came while the tool is open")
-        autorun.schedule(scheduled=True)
+        autorun.schedule_jobs(scheduled_start.jobs_at(settings(), due))
 
 
 def start_watch(parent: QObject) -> _Watch:
@@ -384,228 +411,391 @@ def _number_box(values: range, value: int, on_change) -> ComboBox:
     return box
 
 
-class SlotRow(Inset):
-    RIGHT_PAD = 8
-    GAP = 12
+def _batch_items() -> list:
+    """一键日常's items in its order (data.Child)."""
+    from src.ui.shell import data
 
-    def __init__(self, slot: Slot, on_delete, on_change):
+    return data.batch_children(data.task_by_name(data.DAILY_BATCH))
+
+
+def account_ticks(account_id: str) -> set[str]:
+    """What the 帳號 has ticked: the current one's from 一键日常 itself."""
+    items = _batch_items()
+    if not account_id or account_id == accounts.current_id():
+        return {item.key for item in items if item.included}
+    saved = accounts.saved_ticks(account_id)
+    return {item.key for item in items if saved.get(item.key, True)}
+
+
+class _AccountPill(QAbstractButton):
+    """One 帳號 to pick in :class:`TaskPickDialog`: picture and name in a
+    pill; ``None`` is 「当前账号」."""
+
+    HEIGHT = 36
+
+    def __init__(self, account, on_click, colour=None):
+        from src.ui.shell.accounts_ui import Avatar
+
         super().__init__()
-        self.slot = slot
-        self._on_change = on_change
-        # Always a 1 px edge (clear until something is wrong), so a marked
-        # row's contents do not move by that pixel.
-        self.setProperty("outlined", True)
-        lines = vbox(self, (14, 10, self.RIGHT_PAD, 10), 6)
-        row = hbox(None, (0, 0, 0, 0), self.GAP)
-        lines.addLayout(row)
-        self.days: list[DayChip] = []
-        # Two plain lists, 00-23 and 00/15/30/45: they open right under
-        # themselves.  qfluentwidgets' TimePicker opened a wheel whose
-        # highlight sat crooked and wrote 0 for 00 (Leo 2026-10-22).
-        clock = hbox(None, (0, 0, 0, 0), 4)
-        self.hour = _number_box(HOURS, slot.hour, self._time_changed)
-        self.minute = _number_box(MINUTES, slot.minute, self._time_changed)
-        clock.addWidget(self.hour)
-        clock.addWidget(Text(":", "h3"))
-        clock.addWidget(self.minute)
-        row.addLayout(clock)
-        chips = hbox(None, (0, 0, 0, 0), 5)
-        for day in range(7):
-            chip = DayChip(day, day in slot.days)
-            chip.toggled.connect(self._days_changed)
-            chips.addWidget(chip)
-            self.days.append(chip)
-        row.addLayout(chips)
-        row.addStretch(1)
-        self.toggle = Toggle(slot.on, small=True)
-        self.toggle.setToolTip(t("只开关这个时段"))
-        self.toggle.toggled.connect(self._on_changed)
-        row.addWidget(self.toggle)
-        row.addWidget(_delete_button(lambda: on_delete(self)))
-        # Why this slot cannot be saved (a clash, no day ticked).
-        self.problem = Text("", "bad", wrap=True)
-        self.problem.hide()
-        lines.addWidget(self.problem)
-        self._dim()
+        self.account_id = account.id if account is not None else ""
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setFixedHeight(self.HEIGHT)
+        self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self._hover = motion.HoverFade(self, self.update)
+        row = hbox(self, (5, 4, 14, 4), 8)
+        avatar = Avatar(self.HEIGHT - 10)
+        shown = account or accounts.current()
+        if colour is not None:
+            # On the week calendar: the 帳號's own colour and number.
+            avatar.set_colour(colour)
+            avatar.set_letter(shown.id)
+        avatar.set_account(shown)
+        avatar.setAttribute(Qt.WA_TransparentForMouseEvents)
+        row.addWidget(avatar)
+        label = Text(display_name(account) if account is not None else "当前账号", "body")
+        label.setAttribute(Qt.WA_TransparentForMouseEvents)
+        row.addWidget(label)
+        self.clicked.connect(lambda *_: on_click(self.account_id))
 
-    def set_problem(self, why: str) -> None:
-        shown = self.problem.isVisibleTo(self)
-        self.problem.set_text(why)
-        self.problem.setVisible(bool(why))
-        set_prop(self, "bad", bool(why))
-        if why and not shown and self.isVisible():
-            slide(self.problem, duration=180)
+    def sizeHint(self) -> QSize:
+        return self.layout().sizeHint()
 
-    def _time_changed(self, _index: int = 0) -> None:
-        self.slot.hour = HOURS[self.hour.currentIndex()]
-        self.slot.minute = MINUTES[self.minute.currentIndex()]
-        self._on_change()
+    def minimumSizeHint(self) -> QSize:
+        return self.layout().minimumSize()
 
-    def _days_changed(self) -> None:
-        self.slot.days = [day for day, chip in enumerate(self.days) if chip.isChecked()]
-        self._on_change()
-
-    def _on_changed(self, on: bool) -> None:
-        self.slot.on = on
-        self._dim()
-        self._on_change()
-
-    def _dim(self) -> None:
-        for widget in [self.hour, self.minute, *self.days]:
-            widget.setEnabled(self.slot.on)
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        radius = rect.height() / 2
+        on = self.isChecked()
+        hover = float(self._hover.value)
+        fill = 0.14 if on else 0.06 * hover
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(mix(theme.color("card"), theme.color("primary"), fill))
+        painter.drawRoundedRect(rect, radius, radius)
+        pen = painter.pen()
+        pen.setColor(theme.color("primary") if on else theme.color("line2"))
+        pen.setWidthF(1.6 if on else 1.0)
+        pen.setStyle(Qt.SolidLine)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(rect, radius, radius)
 
 
-class ScheduleDialog(Floating):
-    PANEL_WIDTH = 600
+class _Gear(QAbstractButton):
+    """A small settings gear beside a task (Leo 2026-10-29 「齒輪太大沒質感」):
+    a thin grey icon, a soft circle on hover, violet with a dot once the
+    slot has its own settings for the task."""
 
-    def __init__(self, parent: QWidget | None):
+    SIZE = 24
+    ICON = 15
+
+    def __init__(self, on_click):
+        super().__init__()
+        self.own = False
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setFixedSize(self.SIZE, self.SIZE)
+        self._hover = motion.HoverFade(self, self.update)
+        self.clicked.connect(lambda *_: on_click())
+
+    def set_own(self, own: bool) -> None:
+        if own != self.own:
+            self.own = own
+            self.update()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = QRectF(self.rect())
+        hover = float(self._hover.value)
+        if hover > 0:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(mix(theme.color("card"), theme.color("primary"), 0.10 * hover))
+            painter.drawEllipse(rect)
+        if self.own:
+            colour = theme.color("primary")
+        else:
+            colour = mix(theme.color("ink3"), theme.color("ink2"), hover)
+        inset = (self.SIZE - self.ICON) / 2
+        icons.paint(painter, rect.adjusted(inset, inset, -inset, -inset), "settings", colour, 1.7)
+        if self.own:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(theme.color("primary"))
+            painter.drawEllipse(QRectF(self.SIZE - 7, 1, 5, 5))
+
+
+class TaskPickDialog(Floating):
+    """What one slot runs, in a window of its own (Leo 2026-10-29 「也要選擇
+    該時段進行的任務」「跳出視窗 選擇」): which 帳號 (YES-BD2 #64, only with
+    two or more), and the slot's own ticks, starting from that 帳號's (Leo
+    2026-10-29 「按帳號勾選不要 全選全不選用打勾的 放上面」)."""
+
+    PANEL_WIDTH = 560
+    COLUMNS = 2
+
+    def __init__(self, slot: Slot, parent: QWidget | None, known: list | None = None):
         super().__init__(parent)
-        self.working = copy.deepcopy(settings())
+        self._known = list(known or [])
+        ids = [account.id for account in self._known]
+        # A 帳號 deleted since runs the current one, and shows so here.
+        self._account = slot.account if slot.account in ids else ""
         column = self.column
-
         head = hbox(None, (0, 0, 0, 0), 12)
-        head.addWidget(HeroIcon("clock", 44))
+        head.addWidget(HeroIcon("list-checks", 40), 0, Qt.AlignTop)
         titles = vbox(None, (0, 0, 0, 0), 2)
-        titles.addWidget(Text("定时启动", "h2"))
-        titles.addWidget(Text("时间到自动打开游戏，跑今天还没做的", "sub", wrap=True))
+        titles.addWidget(Text("这个时段要跑什么", "h2"))
+        when = f"{slot.hour:02d}:{slot.minute:02d}"
+        titles.addWidget(
+            Text(tf("{time} 到了只跑勾的任务，今天做完的不会再跑", time=when), "sub", wrap=True)
+        )
         head.addLayout(titles, 1)
-        self.master = Toggle(self.working.enabled)
-        self.master.setToolTip(t("关掉就完全取消，Windows 里也不留"))
-        self.master.toggled.connect(self._master_changed)
-        head.addWidget(self.master, 0, Qt.AlignVCenter)
-        # Over the slots' own switches, not over their delete buttons.
-        head.addSpacing(SlotRow.RIGHT_PAD + SlotRow.GAP + DELETE_SIZE)
         column.addLayout(head)
 
-        self.body = QWidget()
-        body = vbox(self.body, (0, 4, 0, 0), 12)
-        # The rows scroll only when the tool window is too short for all of
-        # them (5 slots at 175 % on a 1080p screen); otherwise all show.
-        # Selectors by name: a bare 「background: transparent」 would reach
-        # the rows too and wipe their own background.
-        self.rows_holder = QWidget()
-        self.rows_holder.setObjectName("slotRows")
-        self.rows_holder.setStyleSheet("QWidget#slotRows { background: transparent; }")
-        self.rows_box = vbox(self.rows_holder, (0, 0, 0, 0), 10)
+        # Two parts, each under its own heading (Leo 2026-10-29 「帳號那邊
+        # 排的不好」): which 帳號, as pills like the 帳號 switch; then items.
+        self.pills: list[_AccountPill] = []
+        if self._known:
+            column.addWidget(Text("账号", "h3"))
+            # Packed side by side, onto a new line when the names are long.
+            holder = QWidget()
+            pills = FlowLayout(holder, needAni=False)
+            pills.setContentsMargins(0, 0, 0, 0)
+            pills.setHorizontalSpacing(8)
+            pills.setVerticalSpacing(8)
+            for account in [None, *self._known]:
+                pill = _AccountPill(account, on_click=self._account_changed)
+                pill.setToolTip(t("时间到先切到这个账号再跑"))
+                pills.addWidget(pill)
+                self.pills.append(pill)
+            column.addWidget(holder)
+            self._show_account()
+            column.addWidget(Text("任务", "h3"))
+
+        # One box on top ticks or clears them all.
+        self.every = CheckBox("全选")
+        self.every.toggled.connect(self._tick_all)
+        column.addWidget(self.every)
+        # Until a box is touched, the ticks follow the 帳號 picked above.
+        self._follow = slot.tasks is None
+
+        self.items = _batch_items()
+        self._settings = {k: dict(v) for k, v in slot.settings.items()}
+        chosen = account_ticks(self._account) if slot.tasks is None else set(slot.tasks)
+        # Each item: its box, then its ⚙ in a column of their own so they
+        # line up; a gap between the two halves.
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(10)
+        grid.setColumnMinimumWidth(2, 16)
+        grid.setColumnStretch(3 * self.COLUMNS - 1, 1)  # the boxes stay on the left
+        self.boxes: list[CheckBox] = []
+        self.gears: dict[str, _Gear] = {}
+        rows = max(1, (len(self.items) + self.COLUMNS - 1) // self.COLUMNS)
+        for index, item in enumerate(self.items):
+            row, half = index % rows, index // rows
+            box = CheckBox(item.name, item.key in chosen)
+            box.toggled.connect(self._ticked)
+            grid.addWidget(box, row, 3 * half, Qt.AlignVCenter)
+            if item_setting_keys(item.task):
+                # Its own settings for this slot only (镜中之战's 倍数 ...).
+                gear = _Gear(lambda i=item: self._edit_item(i))
+                grid.addWidget(gear, row, 3 * half + 1, Qt.AlignVCenter)
+                self.gears[item.key] = gear
+            self.boxes.append(box)
+        self.list = QWidget()
+        self.list.setObjectName("taskList")
+        self.list.setStyleSheet("QWidget#taskList { background: transparent; }")
+        self.list.setLayout(grid)
+        # Many items in a short tool window scroll instead of being cut.
         self.scroll = _RowsView()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(ScrollArea.NoFrame)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        self.scroll.viewport().setObjectName("slotView")
-        self.scroll.viewport().setStyleSheet("QWidget#slotView { background: transparent; }")
-        self.scroll.setWidget(self.rows_holder)
-        body.addWidget(self.scroll, 1)
-        adds = hbox(None, (0, 0, 0, 0), 8)
-        self.add_time = Button("新增时段", "ghost", "plus", on_click=self._add_time)
-        self.add_time.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
-        adds.addWidget(self.add_time)
-        adds.addStretch(1)
-        body.addLayout(adds)
-        body.addWidget(Separator())
-        self.wake = CheckBox("电脑睡着时叫醒它", self.working.wake)
-        self.wake.setToolTip(t("睡眠中会被叫醒；完全关机的电脑叫不醒"))
-        # Only for the runs 定时启动 starts (Leo 2026-10-22: set it and leave it).
-        self.close_game = CheckBox("做完关闭游戏", self.working.close_game)
-        self.shutdown = CheckBox("做完关机", self.working.shutdown)
-        for box in (self.close_game, self.shutdown):
-            box.setToolTip(t("定时启动跑的那次，全部做完且没有失败时才会做"))
-        boxes = (self.wake, self.close_game, self.shutdown)
-        # One row when it fits; longer words (日本語) get one line each
-        # instead of running past the window's edge.
-        width = sum(box.sizeHint().width() for box in boxes) + OPTION_GAP * 2
-        one_row = width <= self.PANEL_WIDTH - 2 * 28 - 8
-        if one_row:
-            options = hbox(None, (0, 2, 0, 0), OPTION_GAP)
-        else:
-            options = vbox(None, (0, 2, 0, 0), 8)
-        for box in boxes:
-            options.addWidget(box)
-        if one_row:
-            options.addStretch(1)
-        body.addLayout(options)
-        # Leo 2026-10-22 「要備註關機時不能使用」.
-        body.addWidget(Text("电脑完全关机时不会启动；睡眠中可以叫醒", "muted", wrap=True))
-        column.addWidget(self.body)
+        self.scroll.viewport().setObjectName("taskView")
+        self.scroll.viewport().setStyleSheet("QWidget#taskView { background: transparent; }")
+        self.scroll.setWidget(self.list)
+        column.addWidget(self.scroll, 1)
+        self._show_gears()
 
-        self.message = Text("", "warn", wrap=True)
-        self.message.hide()
-        column.addWidget(self.message)
         buttons = hbox(None, (0, 6, 0, 0), 8)
         buttons.addStretch(1)
         buttons.addWidget(Button("取消", "secondary", on_click=self.reject))
-        self.save_button = Button("保存", "primary", on_click=self._save)
-        buttons.addWidget(self.save_button)
+        self.ok = Button("确定", "primary", on_click=self.accept)
+        buttons.addWidget(self.ok)
+        column.addLayout(buttons)
+        self._count()
+
+    def _account_changed(self, account_id: str) -> None:
+        self._account = account_id
+        self._show_account()
+        if self._follow:
+            ticked = account_ticks(account_id)  # that 帳號's own ticks
+            for item, box in zip(self.items, self.boxes):
+                box.set_checked_quietly(item.key in ticked)
+            self._count()
+
+    def _show_account(self) -> None:
+        for pill in self.pills:
+            pill.setChecked(pill.account_id == self._account)
+
+    def _edit_item(self, item) -> None:
+        dialog = ItemSettingsDialog(item, self._settings.get(item.key, {}), self)
+        if dialog.exec():
+            own = dialog.changed()
+            if own:
+                self._settings[item.key] = own
+            else:
+                self._settings.pop(item.key, None)
+            self._show_gears()
+
+    def _show_gears(self) -> None:
+        # Violet where this slot has its own settings for the item.
+        for key, gear in self.gears.items():
+            own = bool(self._settings.get(key))
+            gear.set_own(own)
+            gear.setToolTip(t("这个时段自己的设定（已改）") if own else t("这个时段自己的设定"))
+
+    def _tick_all(self, on: bool) -> None:
+        for box in self.boxes:
+            box.set_checked_quietly(on)
+        self._ticked()
+
+    def _ticked(self, _on: bool = False) -> None:
+        self._follow = False
+        self._count()
+
+    def _count(self) -> None:
+        self.every.set_checked_quietly(all(box.isChecked() for box in self.boxes))
+        # Nothing ticked would be a slot that never runs anything.
+        self.ok.setEnabled(any(box.isChecked() for box in self.boxes))
+
+    def account(self) -> str:
+        """The 帳號 picked ("" = the current one)."""
+        return self._account
+
+    def item_settings(self) -> dict[str, dict]:
+        """Item -> its settings for this slot ({} = the items' own)."""
+        return {k: dict(v) for k, v in self._settings.items() if v}
+
+    def tasks(self) -> list[str]:
+        """The items ticked here."""
+        return [item.key for item, box in zip(self.items, self.boxes) if box.isChecked()]
+
+    def mouseReleaseEvent(self, event):
+        if not self.panel.geometry().contains(event.position().toPoint()):
+            self.reject()
+        super().mouseReleaseEvent(event)
+
+
+def item_setting_keys(task) -> list[str]:
+    """The settings an item shows on its own page (none: no ⚙)."""
+    if task is None:
+        return []
+    from src.ui.shell.config_form import visible_keys
+
+    try:
+        return visible_keys(task, skip=("启用",))
+    except Exception:
+        return []
+
+
+class _SlotConfig(dict):
+    """An item's settings as one slot sees them: its own saved settings with
+    the slot's changes on top.  Writes stay here (``changed``); the item's
+    own settings are never written."""
+
+    def __init__(self, base, own: dict):
+        super().__init__({**dict(base.items()), **own})
+        self._base = base
+        self.changed = dict(own)
+
+    def __setitem__(self, key, value) -> None:
+        super().__setitem__(key, value)
+        if self._base.get(key) == value:
+            self.changed.pop(key, None)  # back to the item's own
+        else:
+            self.changed[key] = value
+
+    def get_default(self, key):
+        getter = getattr(self._base, "get_default", None)
+        return getter(key) if getter is not None else self._base.get(key)
+
+
+def slot_task(task, own: dict):
+    """A stand-in for ``task`` that config_form draws exactly like its page
+    (same class name for its panel, same types and hints), on a
+    :class:`_SlotConfig`."""
+    stand_in = type(type(task).__name__, (), {})()
+    stand_in.name = getattr(task, "name", "")
+    stand_in.config = _SlotConfig(task.config, own)
+    for attribute in ("config_type", "config_description", "default_config"):
+        setattr(stand_in, attribute, getattr(task, attribute, None))
+    return stand_in
+
+
+class ItemSettingsDialog(Floating):
+    """One item's settings for one 定时启动 slot (Leo 2026-10-29 「鏡中之戰也
+    可以選倍數那些」): the same form as its own page, kept with the slot."""
+
+    PANEL_WIDTH = 520
+
+    def __init__(self, item, own: dict, parent: QWidget | None):
+        from src.ui.shell.config_form import ConfigForm
+
+        super().__init__(parent)
+        self.task = slot_task(item.task, own)
+        column = self.column
+        head = hbox(None, (0, 0, 0, 0), 12)
+        head.addWidget(HeroIcon("settings", 40), 0, Qt.AlignTop)
+        titles = vbox(None, (0, 0, 0, 0), 2)
+        titles.addWidget(Text(item.name, "h2"))
+        titles.addWidget(Text("只在这个时段这样跑，任务本身的设定不变", "sub", wrap=True))
+        head.addLayout(titles, 1)
+        column.addLayout(head)
+        self.form = ConfigForm(self.task, keys=item_setting_keys(item.task))
+        column.addWidget(self.form)
+        buttons = hbox(None, (0, 6, 0, 0), 8)
+        self.back = Button("", "ghost", "rotate-ccw", on_click=self._same_as_item)
+        self.back.setFixedSize(DELETE_SIZE, DELETE_SIZE)
+        self.back.setToolTip(t("改回和任务本身一样"))
+        buttons.addWidget(self.back)
+        buttons.addStretch(1)
+        buttons.addWidget(Button("取消", "secondary", on_click=self.reject))
+        buttons.addWidget(Button("确定", "primary", on_click=self.accept))
         column.addLayout(buttons)
 
-        self._rows: list[SlotRow] = []
-        self._fill()
-        self._master_changed(self.working.enabled)
+    def _same_as_item(self) -> None:
+        for key in list(self.task.config.changed):
+            self.task.config[key] = self.task.config._base.get(key)
+        self.form.sync()
 
-    def _fill(self) -> None:
-        for row in self._rows:
-            row.setParent(None)
-            row.deleteLater()
-        self._rows = []
-        for slot in self.working.slots:
-            row = SlotRow(slot, self._delete, self._check)
-            self.rows_box.addWidget(row)
-            self._rows.append(row)
-        room = len(self.working.slots) < MAX_SLOTS
-        self.add_time.setEnabled(room)
-        self.add_time.setToolTip("" if room else tf("最多 {n} 个时段", n=MAX_SLOTS))
-        self._check()
-        self.scroll.setVisible(bool(self._rows))
-        self.scroll.updateGeometry()
-        self._place()
+    def changed(self) -> dict:
+        """The settings this slot runs differently from the item's own."""
+        return dict(self.task.config.changed)
 
-    def least_width(self) -> int:
-        # A scroll area asks for no width of its own: count the rows' need.
-        margins = self.column.contentsMargins()
-        rows = self.rows_holder.minimumSizeHint().width() + margins.left() + margins.right()
-        return max(super().least_width(), rows)
+    def mouseReleaseEvent(self, event):
+        if not self.panel.geometry().contains(event.position().toPoint()):
+            self.reject()
+        super().mouseReleaseEvent(event)
 
-    def _delete(self, row: SlotRow) -> None:
-        if row.slot not in self.working.slots:
-            return  # already going
-        self.working.slots.remove(row.slot)
-        if row.isVisible():
-            row.setEnabled(False)
-            slide(row, out=True, done=self._fill, duration=160)
-        else:
-            self._fill()
 
-    def _add_time(self) -> None:
-        # A time no slot uses yet, not a copy of the last one (Leo 2026-10-22
-        # 「時間不可以衝突吧」).
-        if len(self.working.slots) < MAX_SLOTS:
-            hour, minute = scheduled_start.free_time(self.working.slots)
-            self.working.slots.append(Slot(KIND_TIME, hour, minute))
-            self._fill()
-            slide(self._rows[-1])
-            # The new row may be below the fold when the rows scroll.
-            QTimer.singleShot(0, lambda: self.scroll.ensureWidgetVisible(self._rows[-1]))
+def display_name(account) -> str:
+    from src.ui.shell.accounts_ui import display_name as name
 
-    def _check(self) -> None:
-        """Mark the slots that cannot be saved; 保存 waits until none is left."""
-        problems = scheduled_start.slot_problems(self.working.slots)
-        for row, why in zip(self._rows, problems):
-            row.set_problem(why)
-        self.save_button.setEnabled(not (self.working.enabled and any(problems)))
+    return name(account)
 
-    def _master_changed(self, on: bool) -> None:
-        self.working.enabled = on
-        self.body.setEnabled(on)
-        self._check()
 
-    def _save(self) -> None:
-        self.working.wake = self.wake.isChecked()
-        self.working.close_game = self.close_game.isChecked()
-        self.working.shutdown = self.shutdown.isChecked()
-        why = store(self.working)
-        if why:
-            self.message.set_text(why)
-            self.message.show()
-            self._place()
-            return
-        self.accept()
+def __getattr__(name):
+    # The week calendar (Leo 2026-10-29) lives in its own module, which
+    # imports this one; loading it lazily keeps either import order working.
+    if name == "ScheduleDialog":
+        from src.ui.shell.schedule_week import ScheduleDialog
+
+        return ScheduleDialog
+    raise AttributeError(name)

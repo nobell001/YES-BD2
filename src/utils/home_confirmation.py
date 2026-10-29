@@ -45,6 +45,10 @@ HOME_LEFT_COLUMN_REQUIRED_HITS = 2
 # 左列灰度（每行 p99，见 home_left_column_brightness）：未压暗 255、0.5x 公告压暗约 126，阈值 185 分离，
 # 且不随主页背景场景变化（旧模板相对亮度比值依赖采集场景，已废弃）。
 HOME_DIMMED_P95_THRESHOLD_DEFAULT = 185.0
+# Below this the picture is a loading screen, not a grey one: no rescaling.
+WHITEST_MIN = 90.0
+# White seen somewhere on screen: the picture's colours are normal.
+WHITE_SEEN = 235.0
 # Upper icon row (我的小屋…) vs lower row (经营管理…): reference y 240 of 165-320.
 HOME_LEFT_COLUMN_ROW_SPLIT = (240 - 165) / 155
 
@@ -128,15 +132,49 @@ def home_left_column_brightness(frame) -> float:
     if crop.size == 0:
         return 0.0
     gray = to_gray(crop)
+    whitest = screen_whitest(frame)
     # Both icon rows must be bright.  The pass page dims home but its bright
     # season cards cover the lower row, so the whole-ROI p95 read 212 and a
     # pass page passed as home (live 2K 2026-09-29: upper row 43, home 222).
     split = max(1, round(gray.shape[0] * HOME_LEFT_COLUMN_ROW_SPLIT))
     if split >= gray.shape[0]:
-        return float(np.percentile(gray, 99))
-    return float(
-        min(np.percentile(gray[:split], 99), np.percentile(gray[split:], 99))
-    )
+        raw = float(np.percentile(gray, 99))
+    else:
+        raw = float(
+            min(np.percentile(gray[:split], 99), np.percentile(gray[split:], 99))
+        )
+    return relative_to_whitest(raw, whitest)
+
+
+def screen_whitest(frame) -> float:
+    """The whitest grey anywhere on the picture (every 2nd pixel: thin
+    white text on a notice must still count)."""
+    if not isinstance(frame, np.ndarray) or frame.size == 0:
+        return 0.0
+    return float(to_gray(frame)[::2, ::2].max())
+
+
+def relative_to_whitest(raw: float, whitest: float) -> float:
+    """``raw`` (0-255) as if the picture's whitest were pure white.
+
+    Player summary v0.2.21 2026-10-29 (4K, HDR on): leaving the square,
+    home never passed (cause inferred, no picture of it).  With HDR (or a dim
+    filter) the whole picture comes out greyer, white labels included: at
+    0.6x they read 153, under the 185 line for good, the same as a notice
+    dimming home.  A notice dims home but not itself: its own text and ✕
+    stay white, so with white anywhere on screen nothing changes.  Only a
+    picture with no white at all is judged against its own whitest: a grey
+    home then reads 255.  A near-black picture (loading) stays as it is.
+    """
+    return float(min(255.0, raw * grey_picture_gain(whitest)))
+
+
+def grey_picture_gain(whitest: float) -> float:
+    """How much a picture with no white anywhere is brightened to be judged
+    (1.0 for a normal picture or a loading screen); see relative_to_whitest."""
+    if whitest < WHITEST_MIN or whitest >= WHITE_SEEN:
+        return 1.0
+    return 255.0 / whitest
 
 
 def home_confirmation_passes(

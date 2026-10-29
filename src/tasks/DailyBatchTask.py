@@ -418,6 +418,13 @@ class ChildBatchTask(BaseTask):
         elif getattr(self, "_done_before_crash_day", None) != day_start_ts():
             # 08:00 passed while it logged in again: that was yesterday's work.
             self._done_before_crash = set()
+        if not getattr(self, "_resuming_after_crash", False):
+            # A 定时启动 slot's own items (Leo 2026-10-29); the player's
+            # ticks stay as they are.  Kept over a 闪退 restart.
+            mine = self.batch_label == "一键完成日常"
+            self._slot_ticks = scheduled_start.take_run_tasks() if mine else None
+            # And each item's settings for this run only (镜中之战's 倍数 ...).
+            self._slot_settings = scheduled_start.take_run_settings() if mine else {}
         self._run_mode = run_mode
         self._resuming_after_crash = False
         if not bool(self.config.get("启用", True)):
@@ -452,6 +459,13 @@ class ChildBatchTask(BaseTask):
             finally:
                 run_report.finish(self._report_ended)
 
+    def _ticked(self, key: str) -> bool:
+        """This run does ``key``: the 定时启动 slot's own list, else the tick."""
+        slot = getattr(self, "_slot_ticks", None)
+        if slot is not None:
+            return key in slot
+        return bool(self.config.get(key, True))
+
     def _setup_stops(self) -> bool:
         """One look at the game's settings before the first item (差異化點子 5).
 
@@ -484,7 +498,7 @@ class ChildBatchTask(BaseTask):
     def _begin_report(self, run_mode: str) -> None:
         rows = []
         for child in self.child_tasks:
-            if not bool(self.config.get(child.config_key, True)):
+            if not self._ticked(child.config_key):
                 continue
             task = self._child_task(child.task_class)
             rows.append((child.config_key, str(getattr(task, "name", None) or child.config_key)))
@@ -570,7 +584,7 @@ class ChildBatchTask(BaseTask):
 
         for child in self.child_tasks:
             self._raise_if_stopped()
-            if not bool(self.config.get(child.config_key, True)) or stop_remaining:
+            if not self._ticked(child.config_key) or stop_remaining:
                 skipped.append(child.config_key)
                 publish_outcome()
                 if stop_remaining:
@@ -578,7 +592,7 @@ class ChildBatchTask(BaseTask):
                 if (
                     stop_remaining
                     and not self._resume_after_login_set()
-                    and bool(self.config.get(child.config_key, True))
+                    and self._ticked(child.config_key)
                 ):
                     # Otherwise the auto-scheduler relaunches the aborted
                     # batch 8 s later onto the same stuck screen, over and over.
@@ -666,7 +680,10 @@ class ChildBatchTask(BaseTask):
                 # 执行剩余 also tells the child to skip its own finished parts
                 # (trade phases); a full run redoes everything (user,
                 # 2026-09-27: "我選擇再點一次就應該再做一次").
-                overlay = {"启用": True, ONLY_INCOMPLETE_KEY: only_incomplete}
+                # A 定时启动 slot's own settings for this item come first;
+                # the item's saved settings are never written.
+                own = (getattr(self, "_slot_settings", None) or {}).get(child.config_key) or {}
+                overlay = {**own, "启用": True, ONLY_INCOMPLETE_KEY: only_incomplete}
                 if child.task_class is JunkGearTask:
                     overlay[AFTER_GACHA_KEY] = last_ran == (GACHA_CHILD_KEY, True)
                 task.config = ChainMap(overlay, original_config or {})
@@ -999,7 +1016,7 @@ class ChildBatchTask(BaseTask):
         enabled_children = [
             child
             for child in self.child_tasks
-            if bool(self.config.get(child.config_key, True))
+            if self._ticked(child.config_key)
         ]
         if not enabled_children:
             self.log_info(f"{self.batch_label}：没有已启用子任务，不执行{action}。")
@@ -1021,6 +1038,14 @@ class ChildBatchTask(BaseTask):
                 return False
         return True
 
+    def _others_in_line(self, action: str) -> bool:
+        """定时启动 has another 帳號 to run right after this one (two 帳號 at
+        one time): ``action`` waits for the last of them."""
+        if not scheduled_start.queued:
+            return False
+        self.log_info(f"{self.batch_label}：定时启动后面还有别的账号要跑，先不{action}。")
+        return True
+
     def _scheduled_option(self, name: str) -> bool:
         """定时启动's own 做完关闭游戏 / 做完关机, for the run it started."""
         if not getattr(self, "_scheduled_run", False):
@@ -1040,6 +1065,8 @@ class ChildBatchTask(BaseTask):
         if not bool(self.config.get(CLOSE_GAME_KEY, False)) and not self._scheduled_option(
             "close_game"
         ):
+            return
+        if self._others_in_line("关闭游戏"):
             return
         if not self._all_done_today(completed, pre_completed, "关闭游戏"):
             return
@@ -1073,6 +1100,8 @@ class ChildBatchTask(BaseTask):
         if not bool(self.config.get("完成日常后自动关机", False)) and not self._scheduled_option(
             "shutdown"
         ):
+            return
+        if self._others_in_line("自动关机"):
             return
         if not self._all_done_today(completed, pre_completed, "自动关机"):
             return

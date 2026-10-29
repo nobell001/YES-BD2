@@ -277,6 +277,13 @@ def delete(account_id: str) -> None:
     shutil.rmtree(ACCOUNTS_DIR / account_id, ignore_errors=True)
 
 
+def saved_ticks(account_id: str) -> dict:
+    """An account's 一键日常 ticks as kept for it (the current one's live in
+    the 一键日常 config itself, and may be newer than this)."""
+    ticks = (_read().get("ticks") or {}).get(str(account_id)) or {}
+    return {str(key): bool(value) for key, value in ticks.items()} if isinstance(ticks, dict) else {}
+
+
 def switch(account_id: str, config=None, tick_keys=()) -> bool:
     """Make ``account_id`` current.  ``config`` is the 一键日常 config: its
     ticks (``tick_keys``) are kept for the old account and the new account's

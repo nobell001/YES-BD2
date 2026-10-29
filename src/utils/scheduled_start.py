@@ -38,14 +38,28 @@ RESET_DELAY_MINUTES = 5
 # The open tool starts a slot it noticed this late at the latest; a PC that
 # slept through a slot and was woken by the player later does not start then.
 LATE_LIMIT = timedelta(minutes=5)
-MAX_SLOTS = 5  # Leo 2026-10-22 「最多可以設定5個時間」
+MAX_SLOTS = 5  # Leo 2026-10-22 「最多可以設定5個時間」: per 帳號
+# All 帳號 together (accounts.MAX_ACCOUNTS of them).
+MAX_ALL_SLOTS = MAX_SLOTS * 5
 # Minutes come in quarters (Leo 2026-10-22 「分鐘改成每15分鐘間隔」).
 MINUTE_STEP = 15
 # Two slots at least this far apart (Leo 2026-10-22 picked 「擋下來」 for
 # slots under an hour apart, and 「時間不可以衝突吧」 for the same time).
 MIN_GAP_MINUTES = 60
+# Two 帳號 at least this far apart (Leo 2026-10-29 「不同帳號 也要間隔至少
+# 半小時」); the second waits for the first run to end all the same.
+MIN_GAP_OTHER_MINUTES = 30
 DAY_MINUTES = 24 * 60
 WEEK_MINUTES = 7 * DAY_MINUTES
+
+
+def _current_account() -> str:
+    try:
+        from src.utils import accounts
+
+        return accounts.current_id()
+    except Exception:
+        return ""
 
 
 def _apart(a: int, b: int) -> int:
@@ -62,14 +76,44 @@ CREATE_NO_WINDOW = 0x08000000
 # The tool was opened by the task (main.py takes the flag off sys.argv, so a
 # language change or the 桌面分身 does not start a run again).
 launched_by_schedule = False
+# When the task opened it: after an update the launcher opens it again later,
+# and the slot (its 帳號) is the one that fired then.  None = just now.
+opened_at: datetime | None = None
 # 定时启动 started 一键日常 and its run has not begun yet (it may wait for the
 # login first); DailyBatchTask takes it when the run begins.
 _run_pending = False
+# The items that run picks (a slot's own list), None = the 帳號's ticks.
+_run_tasks: list[str] | None = None
+# Item -> its settings for that run only (镜中之战's 倍数 ...).
+_run_settings: dict[str, dict] = {}
+# Other 帳號 waiting to run right after this one (autorun's line): 做完关闭
+# 游戏 / 做完关机 wait for the last.
+queued = 0
 
 
-def mark_run_pending(pending: bool = True) -> None:
-    global _run_pending
+def mark_run_pending(
+    pending: bool = True,
+    tasks: list[str] | None = None,
+    settings: dict[str, dict] | None = None,
+) -> None:
+    global _run_pending, _run_tasks, _run_settings
     _run_pending = pending
+    _run_tasks = list(tasks) if pending and tasks is not None else None
+    _run_settings = {k: dict(v) for k, v in (settings or {}).items()} if pending else {}
+
+
+def take_run_settings() -> dict[str, dict]:
+    """Once: each item's own settings for the scheduled run ({} = none)."""
+    global _run_settings
+    settings, _run_settings = _run_settings, {}
+    return settings
+
+
+def take_run_tasks() -> list[str] | None:
+    """Once: the items the scheduled run does (None = the ticks as they are)."""
+    global _run_tasks
+    tasks, _run_tasks = _run_tasks, None
+    return tasks
 
 
 def take_run_pending() -> bool:
@@ -86,16 +130,32 @@ class Slot:
     minute: int = 0
     days: list[int] = field(default_factory=lambda: list(range(7)))  # 0 = Monday
     on: bool = True
+    # Which 帳號 this slot runs, with its own ticks (YES-BD2 #64, Leo
+    # 2026-10-28: one 帳號 at one time, another at another); "" = the current one.
+    account: str = ""
+    # What it runs (Leo 2026-10-29 「也要選擇該時段進行的任務」): 一键日常's
+    # item names; None = what the 帳號 has ticked.
+    tasks: list[str] | None = None
+    # Item -> {setting: value} for this slot's runs only (Leo 2026-10-29
+    # 「鏡中之戰也可以選倍數那些」); the items' own settings stay as they are.
+    settings: dict[str, dict] = field(default_factory=dict)
 
     def to_json(self) -> dict:
         if self.kind == KIND_RESET:
             return {"kind": KIND_RESET, "on": self.on}
-        return {
+        value = {
             "kind": KIND_TIME,
             "time": f"{self.hour:02d}:{self.minute:02d}",
             "days": sorted(set(self.days)),
             "on": self.on,
         }
+        if self.account:
+            value["account"] = self.account
+        if self.tasks is not None:
+            value["tasks"] = list(self.tasks)
+        if self.settings:
+            value["settings"] = {k: dict(v) for k, v in self.settings.items() if v}
+        return value
 
     @classmethod
     def from_json(cls, value: dict) -> Slot | None:
@@ -112,19 +172,44 @@ class Slot:
         if hour > 23 or minute > 59:
             return None
         days = sorted({d for d in value.get("days", []) if isinstance(d, int) and 0 <= d <= 6})
-        return cls(KIND_TIME, hour, snap_minute(minute), days, on)
+        account = value.get("account", "")
+        account = account if isinstance(account, str) else ""
+        tasks = value.get("tasks")
+        if isinstance(tasks, list):
+            tasks = [str(task) for task in tasks if isinstance(task, str)]
+        else:
+            tasks = None
+        settings = value.get("settings")
+        settings = {
+            str(item): dict(own)
+            for item, own in (settings.items() if isinstance(settings, dict) else ())
+            if isinstance(own, dict) and own
+        }
+        return cls(KIND_TIME, hour, snap_minute(minute), days, on, account, tasks, settings)
 
     def week_minutes(self) -> list[int]:
         """When it fires, as minutes from Monday 00:00."""
         return [day * DAY_MINUTES + self.hour * 60 + self.minute for day in self.days]
 
-    def clashes_with(self, other: Slot) -> bool:
-        """Both on and less than ``MIN_GAP_MINUTES`` apart on some day (over
-        midnight too): the second start would find the first still running."""
+    def runs(self, current: str) -> str:
+        """The 帳號 it runs, "" (the current one) read as ``current``."""
+        return self.account or current
+
+    def clashes_with(self, other: Slot, current: str | None = None) -> bool:
+        """Both on and too close on some day (over midnight too): under
+        ``MIN_GAP_MINUTES`` for the same 帳號 (its run would still be going),
+        under ``MIN_GAP_OTHER_MINUTES`` for two 帳號 (Leo 2026-10-29 「同時段
+        同帳號不能重疊 不同帳號可以」「不同帳號 也要間隔至少半小時」: the
+        later one waits for the run before it).  ``current``: the 帳號 ""
+        stands for (None = now's)."""
         if not (self.on and other.on):
             return False
+        if current is None:
+            current = _current_account()
+        same = self.runs(current) == other.runs(current)
+        gap = MIN_GAP_MINUTES if same else MIN_GAP_OTHER_MINUTES
         return any(
-            _apart(mine, theirs) < MIN_GAP_MINUTES
+            _apart(mine, theirs) < gap
             for mine in self.week_minutes()
             for theirs in other.week_minutes()
         )
@@ -143,6 +228,9 @@ class Settings:
     # 2026-10-22 「設定好定時就不管他」, so the game closes after a clean run.
     close_game: bool = True
     shutdown: bool = False
+    # 帳號 switched off on the week calendar (Leo 2026-10-29 「點帳號可以讓
+    # 該帳號變淺變深 變淺該帳號行程隱藏(失效)」): their slots do not run.
+    paused: list[str] = field(default_factory=list)
     migrated: bool = field(default=False, compare=False, repr=False)
 
     def to_json(self) -> dict:
@@ -152,6 +240,7 @@ class Settings:
             "close_game": self.close_game,
             "shutdown": self.shutdown,
             "slots": [slot.to_json() for slot in self.slots],
+            **({"paused": list(self.paused)} if self.paused else {}),
         }
 
     @classmethod
@@ -159,13 +248,19 @@ class Settings:
         if not isinstance(value, dict):
             return cls()
         stored = value.get("slots", [])
-        slots = [s for s in (Slot.from_json(v) for v in stored) if s][:MAX_SLOTS]
+        slots, per_account = [], {}
+        for slot in (Slot.from_json(v) for v in stored):
+            if slot and per_account.get(slot.account, 0) < MAX_SLOTS:
+                per_account[slot.account] = per_account.get(slot.account, 0) + 1
+                slots.append(slot)
+        slots = slots[:MAX_ALL_SLOTS]
         settings = cls(
             bool(value.get("enabled", False)),
             bool(value.get("wake", True)),
             slots,
             bool(value.get("close_game", True)),
             bool(value.get("shutdown", False)),
+            [str(each) for each in value.get("paused") or [] if each],
         )
         # A dropped 「游戏每天重置后」 or a minute moved to its quarter: the
         # file and the Windows task are written again (schedule_ui).
@@ -173,7 +268,14 @@ class Settings:
         return settings
 
     def active_slots(self) -> list[Slot]:
-        return [slot for slot in self.slots if slot.active()] if self.enabled else []
+        if not self.enabled:
+            return []
+        current = _current_account() if self.paused else ""
+        return [
+            slot
+            for slot in self.slots
+            if slot.active() and slot.runs(current) not in self.paused
+        ]
 
 
 def snap_minute(minute: int) -> int:
@@ -198,10 +300,22 @@ def slot_problems(slots: list[Slot]) -> list[str]:
         if slot.on and not slot.days:
             found.append("没选星期，这个时段不会跑")
         elif any(slot.clashes_with(other) for n, other in enumerate(slots) if n != index):
-            found.append("和另一个时段隔不到 1 小时，请错开")
+            found.append(_clash_note(slot, slots, index))
         else:
             found.append("")
     return found
+
+
+def _clash_note(slot: Slot, slots: list[Slot], index: int) -> str:
+    current = _current_account()
+    same = any(
+        other.runs(current) == slot.runs(current) and slot.clashes_with(other, current)
+        for n, other in enumerate(slots)
+        if n != index
+    )
+    if same:
+        return "同一个账号的另一个时段隔不到 1 小时，请错开"
+    return "和别的账号的时段隔不到半小时，请错开"
 
 
 def load(path: Path = SETTINGS_FILE) -> Settings:
@@ -279,6 +393,63 @@ def due_between(settings: Settings, last: datetime, now: datetime) -> datetime |
         if now - moment <= LATE_LIMIT
     ]
     return max(moments) if moments else None
+
+
+def slots_at(settings: Settings, moment: datetime) -> list[Slot]:
+    """The slots that fired last at or before ``moment``: the ones that
+    opened the tool (its start may come late after an update).  Several
+    when 帳號 share a time; they run one after the other, in their order."""
+    found = [
+        (fired, slot)
+        for slot in settings.active_slots()
+        for fired in slot_moments(slot, moment - timedelta(days=8), moment)
+    ]
+    if not found:
+        return []
+    last = max(fired for fired, _slot in found)
+    return [slot for fired, slot in found if fired == last]
+
+
+def slot_at(settings: Settings, moment: datetime) -> Slot | None:
+    """The first of :func:`slots_at`."""
+    slots = slots_at(settings, moment)
+    return slots[0] if slots else None
+
+
+def account_at(settings: Settings, moment: datetime) -> str:
+    """The 帳號 the slot at ``moment`` runs ("" = the current one)."""
+    slot = slot_at(settings, moment)
+    return slot.account if slot is not None else ""
+
+
+def tasks_at(settings: Settings, moment: datetime) -> list[str] | None:
+    """What the slot at ``moment`` runs (None = the 帳號's ticks)."""
+    slot = slot_at(settings, moment)
+    return None if slot is None or slot.tasks is None else list(slot.tasks)
+
+
+def item_settings_at(settings: Settings, moment: datetime) -> dict[str, dict]:
+    """The slot's own settings per item ({} = the items' own)."""
+    slot = slot_at(settings, moment)
+    return {k: dict(v) for k, v in slot.settings.items()} if slot is not None else {}
+
+
+def jobs_at(settings: Settings, moment: datetime) -> list[dict]:
+    """What each slot at ``moment`` runs, for ``autorun.schedule``: one per
+    帳號 (the first slot of a 帳號 wins), in the slots' order."""
+    jobs, seen = [], set()
+    for slot in slots_at(settings, moment):
+        if slot.account in seen:
+            continue
+        seen.add(slot.account)
+        jobs.append(
+            {
+                "account": slot.account,
+                "tasks": None if slot.tasks is None else list(slot.tasks),
+                "item_settings": {k: dict(v) for k, v in slot.settings.items()},
+            }
+        )
+    return jobs
 
 
 # ---------------------------------------------------------------- Windows task

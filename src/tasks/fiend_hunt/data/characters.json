@@ -1,6 +1,6 @@
 {
  "source": "https://browndust2-db.souseha.com",
- "fetched": "2026-10-08",
+ "fetched": "2026-10-27",
  "note": "names, skills and SP; portraits in costumes/; refresh with tools/fetch_souseha_characters.py",
  "characters": [
   {
@@ -2670,7 +2670,11 @@
       2,
       1
      ],
-     "burst_sp": []
+     "burst_sp": [
+      1,
+      1,
+      2
+     ]
     }
    ]
   },
@@ -3810,6 +3814,29 @@
       1,
       1
      ]
+    },
+    {
+     "id": "Aquila_2",
+     "name_zh_tw": "封印的欲望",
+     "name_zh_cn": "被封印的欲望",
+     "name_en": "Sealed Desires",
+     "name_ja": "封印されし欲望",
+     "name_ko": "봉인된 욕망",
+     "skill_zh_tw": "狩獵時間到了！",
+     "skill_zh_cn": "狩猎时间到！",
+     "skill_en": "Time to Hunt!",
+     "skill_ja": "狩りの時間だ！",
+     "skill_ko": "사냥 시간이다!",
+     "sp": [
+      5,
+      4
+     ],
+     "burst_sp": [
+      1,
+      1,
+      1
+     ],
+     "added": "2026-10-27"
     }
    ]
   },
