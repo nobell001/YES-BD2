@@ -37,12 +37,14 @@
 
 ## Features
 
-- **Run All Dailies**: Guild, House, Tavern, Regulars' Magic Crystals, Quick Hunt, free Draw, junk gear, Refine, Goddess Statue, Mirror Wars, Event battles, quest rewards, Pass, Mail and Event rewards, in order with one press.
+- **Run All Dailies**: Guild, House, Tavern, Regulars' Magic Crystals, Quick Hunt, free Draw, junk gear, Refine, Goddess Statue, Mirror Wars, Event battles, Tower of Redemption, Affinity Counseling, quest rewards, Pass, Mail and Event rewards, in order with one press. The weeklies (Arcade menu, House popularity, Craft Gear, Last Night) are in it too.
 - **Weekly Farming**: uses Absorb, Assemble and Overpower on the Story Packs for you, spread over the days of the week.
 - **Daily Trade Run**: buys, cooks and sells by the sale calendar; you choose how much to keep.
-- **Run All Weeklies**: Arcade menu, House popularity, Craft Gear, Last Night.
-- **Clone Desktop**: the game runs on a separate desktop in its own window, so your mouse and keyboard stay yours.
+- **Talos textbook**: the month's 9 stages, fought with built-in plans; cleared ones are skipped.
 - **Fiend Hunter**: record your own fight once with F8; after that the tool sets each turn's order, positions and skills the same way, then fights.
+- **Scheduled Start**: pick a time and the dailies run by themselves, even if the tool was closed.
+- **Clone Desktop**: the game runs on a separate desktop in its own window, so your mouse and keyboard stay yours.
+- **Run status in the game**: a bar over the game shows what is running, with Pause and Stop; clicks go through it.
 - **Today's Report**: what ran today, what failed and why, at a glance.
 
 ## Highlights
@@ -65,18 +67,26 @@
 
 <table>
   <tr>
-    <td><img src="docs/images/daily.jpg" alt="Daily Setup"></td>
+    <td><img src="docs/images/daily.jpg" alt="Task Setup"></td>
     <td><img src="docs/images/trade.jpg" alt="Trade Run"></td>
     <td><img src="docs/images/maps.jpg" alt="Farming"></td>
   </tr>
   <tr>
-    <td align="center">Daily Setup: tick what to run</td>
+    <td align="center">Task Setup: tick what to run</td>
     <td align="center">Trade Run: buy, cook, sell</td>
     <td align="center">Farming: the week's progress at a glance</td>
   </tr>
+  <tr>
+    <td><img src="docs/images/talos.jpg" alt="Talos textbook"></td>
+    <td><img src="docs/images/fiend.jpg" alt="Fiend Hunter"></td>
+    <td><img src="docs/images/clone.jpg" alt="Clone Desktop"></td>
+  </tr>
+  <tr>
+    <td align="center">Talos textbook: 9 stages in one press</td>
+    <td align="center">Fiend Hunter: follows your own recording</td>
+    <td align="center">Clone Desktop: use your PC while it runs</td>
+  </tr>
 </table>
-
-<p align="center"><img src="docs/images/fiend.jpg" alt="Fiend Hunter" width="760"><br><sub>Fiend Hunter: each turn's order, positions and skills follow your own recording</sub></p>
 
 <sub>Screenshots show the Simplified Chinese interface.</sub>
 
