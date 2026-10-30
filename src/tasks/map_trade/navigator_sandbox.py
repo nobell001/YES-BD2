@@ -21,6 +21,7 @@ from src.tasks.map_trade.action_icons import (
 )
 from src.tasks.map_trade.collector_constants import SEARCH_COUNTDOWN_RELATIVE_ROI
 from src.tasks.map_trade.models import (
+    COVERED_CIRCLE_ICONS,
     CARD_BY_ID,
     CIRCLE_EXIT_WALKS,
     EVENT_WALK_EDGES,
@@ -101,6 +102,9 @@ from src.tasks.map_trade.navigator_constants import (
     SANDBOX_MAP_EVIDENCE_MIN_SCORE,
     SANDBOX_MAP_EVIDENCE_MIN_ZNCC,
     SANDBOX_MAP_SETTLE_SECONDS,
+    SANDBOX_MAP_BATTLE_EXIT_MIN_RED,
+    AREA_MAP_LABELS_RELATIVE_ROI,
+    SANDBOX_MAP_LABEL_ICON_REACH,
     SANDBOX_MAP_TELEPORT_GLYPH_RADIUS,
     SANDBOX_MAP_TELEPORT_MIN_GLYPH,
     SANDBOX_MAP_TELEPORT_MIN_PIXEL,
@@ -1244,10 +1248,9 @@ class SandboxNavigationMixin:
     def _sandbox_navigation_page_has_keyword(self, frame: np.ndarray) -> bool:
         return self._detect_map_page_mode(frame).mode == MapPageMode.SANDBOX_LARGE_MAP
 
-    def _sandbox_navigation_teleport(
-        self,
-        frame: np.ndarray,
-    ) -> MatchResult | None:
+    def _round_map_icons(self, frame: np.ndarray) -> list[MatchResult]:
+        """Places on the area map that look like a round icon frame, the most
+        alike first.  The circle, inn, shop and NPC icons share that frame."""
         try:
             candidates = self.vision.match_all(
                 frame,
@@ -1260,7 +1263,7 @@ class SandboxNavigationMixin:
         # The masked template scores ~0.90 on any plain stretch of the map
         # (60 passes on 施塔因之塔第6层 at 2K, 2026-09-29) and "exactly one"
         # never held; the pixel similarity ranks them, the glyph decides.
-        passed = sorted(
+        return sorted(
             (
                 result
                 for result in candidates
@@ -1269,6 +1272,12 @@ class SandboxNavigationMixin:
             key=lambda result: result.pixel_score,
             reverse=True,
         )
+
+    def _sandbox_navigation_teleport(
+        self,
+        frame: np.ndarray,
+    ) -> MatchResult | None:
+        passed = self._round_map_icons(frame)
         glyphs = [self._teleport_glyph_score(frame, result) for result in passed[:8]]
         best = passed[0].pixel_score if passed else -1.0
         second = passed[1].pixel_score if len(passed) > 1 else -1.0
@@ -1725,27 +1734,35 @@ class SandboxNavigationMixin:
                 teleport_frame = frame
                 break
             self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
-        if teleport is None:
-            # Why, in the player's words (Leo 2026-10-24 「錯誤要寫原因 不要寫讀不到」).
-            why = (
-                "区域地图上找不到传送阵图标（这张地图可能没有已开启的传送阵，或被角色图标盖住）"
-                if ever_confirmed
-                else "点小地图后没看到区域地图（地图没打开，或标题和底栏都没对上）"
-            )
-            self._close_confirmed_map_page(
-                {MapPageMode.SANDBOX_LARGE_MAP},
-                timeout=SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
-            )
-            self._close_field_map_if_open()
-            return NavigationResult(
-                False,
-                ScreenState.SANDBOX_MAP,
-                why,
-                map_page_mode=MapPageMode.SANDBOX_LARGE_MAP,
-            )
-
         destination_confirmed = caught_early = False
+        if teleport is None:
+            # The circle drawn under another icon (第16章 迪尔索特港口城市: the
+            # inn's icon covers it, player report 2026-10-29): pressing that
+            # icon lists 「魔法阵 / 旅馆」.
+            under = self._circle_under_other_icon(frame) if ever_confirmed else None
+            if under is None:
+                # Why, in the player's words (Leo 2026-10-24 「錯誤要寫原因 不要寫讀不到」).
+                why = (
+                    "区域地图上找不到传送阵图标（这张地图可能没有已开启的传送阵，"
+                    "或被别的图示盖住）"
+                    if ever_confirmed
+                    else "点小地图后没看到区域地图（地图没打开，或标题和底栏都没对上）"
+                )
+                self._close_confirmed_map_page(
+                    {MapPageMode.SANDBOX_LARGE_MAP},
+                    timeout=SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
+                )
+                self._close_field_map_if_open()
+                return NavigationResult(
+                    False,
+                    ScreenState.SANDBOX_MAP,
+                    why,
+                    map_page_mode=MapPageMode.SANDBOX_LARGE_MAP,
+                )
+            destination_confirmed, caught_early = under
         for press in range(1, TELEPORT_ICON_PRESSES + 1):
+            if teleport is None:
+                break
             self.vision.click_client(
                 teleport.center,
                 teleport_frame.shape,
@@ -1844,6 +1861,164 @@ class SandboxNavigationMixin:
                 return True, False
             self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
         return False, False
+
+    def _circle_under_other_icon(self, frame: np.ndarray) -> tuple[bool, bool] | None:
+        """On a map whose circle the game draws under another icon
+        (COVERED_CIRCLE_ICONS), press that icon, found by its label: a menu
+        listing 「魔法阵」 is followed as a circle press, and a walk that
+        starts at once (the character is near: Leo 2026-10-30 「距離近的時候
+        他就是會用走的」) is kept while its banner names 魔法阵 or that icon.
+        Any other walk is stopped at once.  No other icon is ever pressed
+        (Leo 「你有可能會點到戰鬥區域」).  None when nothing came of it.
+
+        第16章 迪尔索特港口城市: the inn hides the circle; its frame scored
+        0.839 and glyph 0.30 (Leo's 2K frame 2026-10-30), and pressing the
+        inn lists 「魔法阵 / 旅馆」 (Leo: 「點擊後可以選擇」)."""
+        header = self._area_map_title(frame)
+        label = next(
+            (cover for title, cover in COVERED_CIRCLE_ICONS.items() if title in header),
+            None,
+        )
+        if label is None:
+            return None
+        icon = self._icon_under_label(frame, label)
+        if icon is None:
+            self._status("导航状态", f"地图上没读到「{label}」，不点别的图示")
+            return None
+        self._status("导航状态", f"传送阵被「{label}」盖住，点它的图示")
+        self.task.log_info(f"跑图：区域地图上的传送阵被「{label}」的图示盖住，点那个图示。")
+        self.vision.click_client(
+            icon.center,
+            frame.shape,
+            after_sleep=SANDBOX_NAVIGATION_OCR_INTERVAL,
+        )
+        outcome = wait_for(
+            lambda: self._icon_press_outcome(label),
+            SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
+            sleep=self.task.sleep,
+            poll=SANDBOX_NAVIGATION_OCR_INTERVAL,
+        )
+        if outcome == "menu":
+            return self._follow_teleport_icon_press()
+        if outcome == "walk":
+            return True, False
+        self._undo_map_icon_press()
+        return None
+
+    def _area_map_title(self, frame: np.ndarray) -> str:
+        """The area map's title in ``frame``, normalized; "" when unread."""
+        try:
+            text = self.vision.ocr_text(
+                frame, "区域地图标题", relative_roi=TELEPORT_MAP_HEADER_OCR_RELATIVE_ROI
+            )
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception:
+            return ""
+        return normalize_text(self.vision.simplify(str(text)))
+
+    def _icon_under_label(self, frame: np.ndarray, label: str) -> MatchResult | None:
+        """The round icon nearest the map label ``label`` (read by OCR), within
+        an icon's width of it; None when the label or an icon is not seen."""
+        centre = None
+        for scale in (1.0, 2.0):
+            # Small words: read again at 2× (the remedy ladder's first step).
+            try:
+                boxes = self.vision.ocr_boxes(
+                    frame,
+                    "区域地图图示名",
+                    relative_roi=AREA_MAP_LABELS_RELATIVE_ROI,
+                    ocr_scale=scale,
+                )
+            except (TaskDisabledException, FinishedException):
+                raise
+            except Exception:
+                return None
+            centre = next(
+                (
+                    self._ocr_box_center(box)
+                    for box in boxes
+                    if self._reads_as_label(
+                        normalize_text(self.vision.simplify(str(getattr(box, "name", "")))), label
+                    )
+                ),
+                None,
+            )
+            if centre is not None:
+                break
+        if centre is None:
+            return None
+        reach = frame.shape[0] * SANDBOX_MAP_LABEL_ICON_REACH
+        icons = [
+            icon
+            for icon in self._round_map_icons(frame)
+            if not self._battle_exit_icon(frame, icon)
+            and abs(icon.center[0] - centre[0]) <= reach
+            and abs(icon.center[1] - centre[1]) <= reach
+        ]
+        return min(
+            icons,
+            key=lambda icon: (icon.center[0] - centre[0]) ** 2 + (icon.center[1] - centre[1]) ** 2,
+            default=None,
+        )
+
+    def _icon_press_outcome(self, label: str) -> str | None:
+        """After pressing the icon over the circle: "menu" when a menu lists
+        魔法阵, "walk" when a walk began toward 魔法阵 or that icon (or its
+        banner names no place), "other" at once for a walk anywhere else or
+        the 自动移动 question, None while nothing showed yet."""
+        frame = self.vision.capture()
+        if self._sandbox_navigation_menu_teleport_option(frame) is not None:
+            return "menu"
+        walk_text = self._walk_text(frame)
+        if self._auto_move_question_shown(walk_text):
+            return "other"
+        if "移动中" not in walk_text:
+            # 「已中止自动移动」 and the like are no walk.
+            return None
+        place = walk_text.split("移动中", 1)[1].lstrip(":：")
+        if not place or "魔法阵" in place or place in label or label in place:
+            return "walk"
+        self._status("导航状态", f"点图示后走向「{place}」，不是传送阵，马上停下")
+        return "other"
+
+    @staticmethod
+    def _reads_as_label(text: str, label: str) -> bool:
+        """``text`` is ``label`` read whole, or with at most its first or last
+        character cut off (「迪尔索特旅」 at 1080p); 「迪尔索特」 alone, shared
+        by every label on that map, is not."""
+        if not text:
+            return False
+        if label in text:
+            return True
+        return len(text) >= len(label) - 1 and text in label
+
+    @staticmethod
+    def _battle_exit_icon(frame: np.ndarray, icon: MatchResult) -> bool:
+        """The icon holds red crossed swords: a battle area's exit.  Its
+        box is ~25 % strong red (迪尔索特黑市, 加尔顿山后段), the inn,
+        tavern, NPC and circle icons 0 % (2026-10-30 frames)."""
+        x, y = icon.position
+        width, height = icon.size
+        crop = frame[max(0, y) : y + height, max(0, x) : x + width]
+        if crop.size == 0 or crop.ndim != 3:
+            return False
+        hsv = cv2.cvtColor(crop[..., :3], cv2.COLOR_BGR2HSV)
+        red = ((hsv[..., 0] < 10) | (hsv[..., 0] > 170)) & (hsv[..., 1] > 120) & (hsv[..., 2] > 90)
+        return float(red.mean()) >= SANDBOX_MAP_BATTLE_EXIT_MIN_RED
+
+    def _undo_map_icon_press(self) -> np.ndarray | None:
+        """After pressing an icon that was not the circle: cancel the
+        自动移动 question or a walk it started, then close the area map and
+        open it again (closes any icon menu too).  The reopened map's frame,
+        or None when it did not open."""
+        self._cancel_auto_move_dialog()
+        self._cancel_walk()
+        self._close_field_map_if_open()
+        if self._open_field_map() is None:
+            return None
+        frame = self.vision.capture()
+        return frame if self._sandbox_navigation_page_has_keyword(frame) else None
 
     def _circle_press_left_nothing(self, frame: np.ndarray) -> MatchResult | None:
         """The circle to press again: the area map still shows it, and none of
@@ -2763,7 +2938,10 @@ class SandboxNavigationMixin:
                 self.task.log_info("跑图：人已经在狩猎场，直接去按传送阵。")
                 self._already_in_hunting_ground = True
                 return HUNTING_GROUND_NAV_ENTRY
-            if choice is not None or press == NAV_MENU_PRESSES or self._nav_menu_listed(texts):
+            on_map = self._area_map_title_in(getattr(self, "_nav_menu_frame", None))
+            if choice is not None or press == NAV_MENU_PRESSES or (
+                self._nav_menu_listed(texts) and not on_map
+            ):
                 break
             # Nothing the menu lists was read: the ≡ press may not have taken
             # (remedy 3, docs/dev-notes/bug-prevention.md).  On a menu that was
@@ -2833,6 +3011,7 @@ class SandboxNavigationMixin:
                 entry = next(item for item in entries if item in listed)
                 return entry, listed[entry], frame.shape
             if timed_out:
+                self._nav_menu_frame = frame
                 self._nav_menu_texts = tuple(texts)
                 self._nav_menu_seen = " ".join(texts)[:40]
                 return None
@@ -2848,6 +3027,27 @@ class SandboxNavigationMixin:
             for text in texts
             for word in NAV_MENU_WORDS
         )
+
+    def _nav_menu_shown(self, frame) -> bool:
+        """The ≡ menu is open: a row it lists reads, and no area map is up.
+        The area map's place labels 「迪尔索特旅馆」「…酒馆」 sit where the menu
+        opens and carry its words (Leo's 2K frame of 第16章 2026-10-30)."""
+        return self._nav_menu_listed(self._nav_menu_entries(frame, ())[1]) and not (
+            self._area_map_title_in(frame)
+        )
+
+    def _area_map_title_in(self, frame) -> bool:
+        """The area map's 「战斗 …」/「安全 …」 title reads in ``frame``."""
+        if frame is None:
+            return False
+        header = normalize_text(
+            self.vision.simplify(
+                self.vision.ocr_text(
+                    frame, "区域地图标题", relative_roi=TELEPORT_MAP_HEADER_OCR_RELATIVE_ROI
+                )
+            )
+        )
+        return any(tag in header for tag in AREA_MAP_HEADER_TAGS)
 
     @staticmethod
     def _hunting_ground_panel(texts) -> bool:

@@ -61,7 +61,7 @@ CHECKS = {
     # 跑图 presses ≡ once more only while no menu row reads, and a tab once
     # more only while the bar's tab names show.
     "≡菜单": (
-        lambda nav, frame: nav._nav_menu_listed(nav._nav_menu_entries(frame, ())[1]),
+        lambda nav, frame: nav._nav_menu_shown(frame),
         {"field_nav_menu"},
     ),
     "快速切换栏": (

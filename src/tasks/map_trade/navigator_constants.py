@@ -888,6 +888,15 @@ SANDBOX_CONFIRM_ACTION_TEMPLATES = (
 SANDBOX_MAP_TELEPORT_MIN_PIXEL = 0.90
 SANDBOX_MAP_TELEPORT_GLYPH_RADIUS = 12.5 / 40  # of the icon width
 SANDBOX_MAP_TELEPORT_MIN_GLYPH = 0.70
+# How far from a map label (OCR centre) its icon may sit, as a share of the
+# frame height: the 迪尔索特旅馆 label's centre is 18 px from its icon at 1080p.
+SANDBOX_MAP_LABEL_ICON_REACH = 40 / 1080
+# Where the area map draws its place labels: between the title row and the
+# footer, left of the page arrow area's far side.
+AREA_MAP_LABELS_RELATIVE_ROI = (0.03, 0.12, 0.8, 0.88)
+# Share of strong red in an icon's box above which it is a battle exit (red
+# crossed swords, ~25 %); other round icons 0 %, a red-haired portrait 9 %.
+SANDBOX_MAP_BATTLE_EXIT_MIN_RED = 0.15
 SANDBOX_MAP_TELEPORT_TEMPLATE = TemplateSpec(
     "箱庭地图传送阵模板",
     "image/green/SandboxNviTpCircleMapGE.png",

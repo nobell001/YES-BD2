@@ -508,7 +508,9 @@ class Collector(SkillExecutionMixin):
                     depleted=True,
                     completed_submaps=completed_this_run,
                     message=(
-                        "当前卡带已完成并通过复核；实机技能次数显示已到上限"
+                        # Named: next to a skipped card's reason, 「当前卡带」 read as
+                        # that card being done (player report 2026-10-29, 第16章).
+                        f"{card.label}已完成并通过复核；游戏显示今天的技能次数已用完"
                         if observed_depleted
                         else self._used_up_today()
                     )

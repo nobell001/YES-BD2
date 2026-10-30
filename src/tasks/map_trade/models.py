@@ -302,6 +302,14 @@ WALK_ONLY_TARGETS = frozenset(
 # 安全 科库托斯暗黑神殿, which has no circle and no 狩猎场 in its ≡ menu; its
 # 科库托斯圣域 exit is a free 4.6 s walk, and 圣域's circle is found (0.949).
 # Without a portal skill on the bar this is the only way out.
+# Maps whose teleport circle the game draws under another icon, so the
+# circle itself never shows on the area map: map title -> that icon's label.
+# Pressing it lists 「魔法阵 / 旅馆」, or walks there when the character is
+# near.  第16章 迪尔索特港口城市 (player report 2026-10-29; Leo's 2K frames
+# 2026-10-30).
+COVERED_CIRCLE_ICONS = {
+    "迪尔索特港口城市": "迪尔索特旅馆",
+}
 CIRCLE_EXIT_WALKS = {
     "Q_sp18": ("科库托斯暗黑神殿", "科库托斯圣域"),
 }

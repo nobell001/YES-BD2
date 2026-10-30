@@ -23,3 +23,13 @@ capture. No account details are on them.
 - `hunting_ground_map_player_fhd.jpg`: sandbox large map of a chapter's hunting
   ground (第9章 「战斗 守山人休息处」, player report 2026-10-23); its title is
   none of the cards' own maps.
+
+Leo's 2K frames (2026-10-30, 2560x1440 scaled to 1920x1080), 第16章 安全
+迪尔索特港口城市; the player's report (v0.2.21, 2026-10-29) stopped here with
+「区域地图上找不到传送阵图标」:
+
+- `port_city_inn_covers_circle_leo_2k_as_1080.jpg`: area map whose teleport
+  circle is drawn under the 迪尔索特旅馆 icon (~(481, 469)); only an edge of
+  its ring shows.
+- `port_city_inn_menu_leo_2k_as_1080.jpg`: the same map after pressing the
+  inn's place: a menu 「魔法阵 / 旅馆」 opened beside it.
