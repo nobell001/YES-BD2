@@ -23,6 +23,29 @@ free_gacha_module = importlib.import_module("src.tasks.FreeGachaTask")
 
 
 class FreeGachaTaskHelperTest(unittest.TestCase):
+    def setUp(self):
+        # No real record file: each test starts with nothing drawn today.
+        self.recorded = []
+        for name, stub in (
+            ("done_today", lambda _path: False),
+            ("record_today", lambda path: self.recorded.append(path)),
+        ):
+            patcher = patch.object(free_gacha_module.day_record, name, stub)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_draws_already_recorded_today_are_skipped_without_a_press(self):
+        task = object.__new__(FreeGachaTask)
+        task.config = {"启用": True}
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_info = lambda *_args, **_kwargs: None
+        task._click_reference = lambda *_args, **_kwargs: self.fail("drawn today: no press")
+        notes = []
+        task.done_already = notes.append
+        with patch.object(free_gacha_module.day_record, "done_today", lambda _path: True):
+            self.assertTrue(FreeGachaTask.run(task))
+        self.assertEqual(["今天已经抽过"], notes)
+
     def test_successful_run_emits_standalone_completion_notification(self):
         task = object.__new__(FreeGachaTask)
         task.config = {"启用": True}
@@ -40,10 +63,10 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
         )
         task._wait_for_gacha_page = lambda *_args, **_kwargs: True
         task._wait_for_clothing_pool_page = lambda *_args, **_kwargs: True
-        task._wait_for_equipment_pool_page = lambda *_args, **_kwargs: True
+        task._switch_to_equipment_pool = lambda *_args, **_kwargs: True
         task._run_free_section = lambda *_args, **_kwargs: True
         task._sleep_after_recognition = lambda: None
-        task._wait_loading_or_home_confirmation = lambda *_args, **_kwargs: True
+        task._return_home = lambda *_args, **_kwargs: True
 
         self.assertTrue(FreeGachaTask.run(task))
         self.assertEqual(
@@ -64,7 +87,7 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
             "抽抽乐",
         )
         task._sleep_after_recognition = lambda: None
-        task._wait_loading_or_home_confirmation = lambda *_args, **_kwargs: True
+        task._return_home = lambda *_args, **_kwargs: True
         sections = []
         task._run_free_section = (
             lambda name, verify_finished: sections.append((name, verify_finished))
@@ -74,7 +97,7 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
         task._wait_for_clothing_pool_page = (
             lambda name: pool_waits.append(("clothing", name)) or True
         )
-        task._wait_for_equipment_pool_page = (
+        task._switch_to_equipment_pool = (
             lambda name: pool_waits.append(("equipment", name)) or True
         )
 
@@ -87,6 +110,124 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
             [("clothing", "确认服装池"), ("equipment", "切换装备抽卡")],
             pool_waits,
         )
+
+    def test_done_draws_stay_done_when_the_way_home_fails(self):
+        # Player 2026-10-31 (v0.2.23): both free draws were done, the back
+        # press left 装备抽抽乐 up and the run was reported 失败.
+        task = object.__new__(FreeGachaTask)
+        task.config = {"启用": True}
+        statuses = []
+        task.info_set = lambda key, value: statuses.append((key, value))
+        task.log_info = lambda *_args, **_kwargs: None
+        task._click_reference = lambda *_args, **_kwargs: None
+        task._wait_for_home_confirmation = lambda *_args, **_kwargs: True
+        task._wait_loading_or_gacha_page = lambda *_args, **_kwargs: ("target", True, "抽抽乐")
+        task._wait_for_clothing_pool_page = lambda *_args, **_kwargs: True
+        task._switch_to_equipment_pool = lambda *_args, **_kwargs: True
+        task._run_free_section = lambda *_args, **_kwargs: True
+        task._sleep_after_recognition = lambda: None
+        task._return_home = lambda *_args, **_kwargs: False
+        recovered = []
+        task.home_after_done = lambda name: recovered.append(name) or True
+
+        self.assertTrue(FreeGachaTask.run(task))
+        self.assertEqual(["白嫖抽抽乐"], recovered)
+        # Recorded the moment both pools were drawn, before the way home.
+        self.assertEqual([free_gacha_module.DRAWN_RECORD_PATH], self.recorded)
+        self.assertIn(("状态", "白嫖抽抽乐完成。"), statuses)
+
+    @staticmethod
+    def _fake_clock():
+        from contextlib import ExitStack
+        from functools import partial
+
+        from src.utils import press_next
+
+        clock = iter(range(0, 10000))
+        stack = ExitStack()
+        stack.enter_context(
+            patch(
+                "src.tasks.task_vision_mixin.press_next",
+                partial(press_next.press_next, clock=lambda: next(clock)),
+            )
+        )
+        stack.enter_context(patch("src.tasks.task_vision_mixin.is_loading_dark", return_value=False))
+        return stack
+
+    def _return_home_task(self, screens):
+        """screens: what each frame shows; a list of one entry per press made
+        so far (the last entry repeats)."""
+        task = object.__new__(FreeGachaTask)
+        task.config = {}
+        task.info_set = lambda *_args, **_kwargs: None
+        logs = []
+        task.log_info = lambda message, *_args, **_kwargs: logs.append(message)
+        presses = []
+        task._click_reference = lambda x, y, after_sleep=0.0: presses.append(("click", x, y))
+        task.tap_escape = lambda after_sleep=0.0: presses.append(("esc",)) or True
+        task.sleep = lambda _seconds: None
+        task.capture_frame = lambda: screens[min(len(presses), len(screens)) - 1]
+        task._home_confirmation_ok = lambda frame, _name: frame == "home"
+        task._match = lambda *_args, **_kwargs: MatchResult(-1.0, (0, 0), (0, 0))
+        task._passes = lambda *_args, **_kwargs: False
+        task._ocr_keywords_in_frame = lambda frame, *_args: (frame == "gacha", "")
+        waits = []
+        task._wait_for_home_confirmation = lambda name, **_kwargs: waits.append(name) or True
+        return task, presses, waits, logs
+
+    def test_swallowed_back_press_is_pressed_again_while_gacha_page_shows(self):
+        with self._fake_clock():
+            task, presses, waits, logs = self._return_home_task(["gacha", "home"])
+            self.assertTrue(FreeGachaTask._return_home(task, "抽抽乐返回主页"))
+        self.assertEqual([("click", 105, 51), ("click", 105, 51)], presses)
+        self.assertEqual([], waits)
+        self.assertTrue(any("补按" in line for line in logs))
+
+    def test_back_that_never_leaves_gacha_page_fails_fast_after_esc_and_arrow(self):
+        with self._fake_clock():
+            task, presses, waits, _logs = self._return_home_task(["gacha"])
+            self.assertFalse(FreeGachaTask._return_home(task, "抽抽乐返回主页"))
+        self.assertEqual(
+            [("click", 105, 51), ("click", 105, 51), ("esc",), ("click", 150, 50)], presses
+        )
+        self.assertEqual([], waits)  # no 45 s home wait on a page that stayed up
+
+    def test_swallowed_equipment_tab_press_is_pressed_again(self):
+        from functools import partial
+
+        clock = iter(range(0, 10000))
+        with patch.object(free_gacha_module, "is_loading_dark", lambda _f: False), patch.object(
+            free_gacha_module,
+            "press_next",
+            partial(free_gacha_module.press_next, clock=lambda: next(clock)),
+        ):
+            task, presses, waits, _logs = self._return_home_task(["clothing", "equipment"])
+            task._pool_seen = lambda frame, keywords, _name: frame == (
+                "equipment" if keywords == free_gacha_module.EQUIPMENT_POOL_KEYWORDS else "clothing"
+            )
+            task._wait_for_equipment_pool_page = lambda name: waits.append(name) or True
+            self.assertTrue(FreeGachaTask._switch_to_equipment_pool(task, "切换装备抽卡"))
+        self.assertEqual([("click", 175, 432), ("click", 175, 432)], presses)
+        self.assertEqual([], waits)
+
+    def test_unknown_screen_without_home_still_gets_one_more_press(self):
+        # Leo 2026-10-31 「總之最少都要補按」.
+        with self._fake_clock():
+            task, presses, waits, _logs = self._return_home_task(["popup"])
+            results = iter([False, True])
+            task._wait_for_home_confirmation = lambda name, **_kw: waits.append(name) or next(results)
+            self.assertTrue(FreeGachaTask._return_home(task, "抽抽乐返回主页"))
+        self.assertEqual([("click", 105, 51), ("click", 105, 51)], presses)
+        self.assertEqual(2, len(waits))
+
+    def test_back_onto_an_unknown_screen_is_not_pressed_again(self):
+        # A popup over home is neither home nor the gacha page: no quick
+        # press (it could land on home), the full home wait decides first.
+        with self._fake_clock():
+            task, presses, waits, _logs = self._return_home_task(["popup"])
+            self.assertTrue(FreeGachaTask._return_home(task, "抽抽乐返回主页"))
+        self.assertEqual([("click", 105, 51)], presses)
+        self.assertEqual(["抽抽乐返回主页"], waits)
 
     def test_run_requires_home_confirmation_before_entry_click(self):
         task = object.__new__(FreeGachaTask)

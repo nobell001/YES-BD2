@@ -1,4 +1,3 @@
-import json
 import re
 from pathlib import Path
 from time import monotonic
@@ -20,7 +19,7 @@ from src.tasks.map_trade.navigator_constants import (
     AUTO_MOVE_CANCEL_REFERENCE_POINT,
     AUTO_MOVE_IDLE_READS,
 )
-from src.utils import task_vision
+from src.utils import day_record, task_vision
 from src.utils.calibration import FHD_1080, HD_720
 from src.utils.cartridge_quick_switch import (
     CHARACTER_CATEGORY_LABEL,
@@ -640,36 +639,11 @@ class SquareGoddessTask(BaseBD2Task):
     # hide the morning's wish: the wish day is kept in its own file.
     WISH_RECORD_PATH = Path("configs") / "goddess_wish.json"
 
-    def _wish_path(self) -> Path:
-        from src.utils import accounts, test_run
-
-        path = Path(accounts.scoped(self.WISH_RECORD_PATH))
-        return test_run.scratch() / path if test_run.active() else path
-
-    @staticmethod
-    def _game_day() -> str:
-        from datetime import datetime
-
-        from src.tasks.map_trade.progress import UTC_PLUS_8, daily_cycle_key
-
-        return daily_cycle_key(datetime.now(UTC_PLUS_8))
-
     def _wished_today(self) -> bool:
-        try:
-            data = json.loads(self._wish_path().read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return False
-        return isinstance(data, dict) and data.get("day") == self._game_day()
+        return day_record.done_today(self.WISH_RECORD_PATH)
 
     def _record_wish(self) -> None:
-        try:
-            path = self._wish_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps({"day": self._game_day()}), encoding="utf-8"
-            )
-        except OSError:
-            pass
+        day_record.record_today(self.WISH_RECORD_PATH)
 
     def _pray_at_goddess(self) -> bool:
         self.info_set("当前阶段", "检查广场感叹号")

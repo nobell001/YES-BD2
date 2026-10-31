@@ -830,7 +830,7 @@ class DailyTaskHelperTest(unittest.TestCase):
         # done sign-in count as failed).
         recoveries = []
         with patch(
-            "src.tasks.DailyTask.recover_to_home",
+            "src.tasks.recovery.recover_to_home",
             side_effect=lambda _task: recoveries.append(1) or True,
         ):
             self.assertTrue(DailyTask.run_guild_sign_in(task))
@@ -946,9 +946,29 @@ class DailyTaskHelperTest(unittest.TestCase):
         task._click_reference = lambda x, y, **_kwargs: clicks.append((x, y))
         task._wait_my_home_page = lambda _timeout: True
         task._wait_for_home_confirmation = lambda *_args, **_kwargs: True
+        backs = []
+        task._back_to_home = lambda name, point, page, _seen: backs.append(page) or clicks.append(point) or True
 
         self.assertTrue(DailyTask.run_my_home_sign_in(task))
         self.assertEqual([(166, 158), (100, 50)], clicks)
+        self.assertEqual(["小屋页面"], backs)
+
+    def test_my_home_back_that_stays_on_the_page_goes_home_by_recovery(self):
+        # Press back, expect 主页 (MaaEnd's next): still 小屋 after the
+        # re-press, Esc and the arrow → the sign-in is done, home by recovery.
+        task = object.__new__(DailyTask)
+        task.config = {"小屋页面等待秒数": 12.0}
+        task.log_info = lambda *_args, **_kwargs: None
+        task.sleep = lambda *_args, **_kwargs: None
+        task._click_reference = lambda *_args, **_kwargs: None
+        task._wait_my_home_page = lambda _timeout: True
+        task._wait_for_home_confirmation = lambda *_args, **_kwargs: True
+        task._back_to_home = lambda *_args: False
+        done = []
+        task._home_after_done = lambda name: done.append(name) or True
+
+        self.assertTrue(DailyTask.run_my_home_sign_in(task))
+        self.assertEqual(["小屋签到"], done)
 
     def test_my_home_page_is_found_by_its_title_on_the_first_poll(self):
         # The title bar (not the player's room, which differs per player) is
@@ -2376,7 +2396,7 @@ class DailyTaskHelperTest(unittest.TestCase):
 
         def guild():
             calls.append("guild")
-            with patch("src.tasks.DailyTask.recover_to_home", return_value=False):
+            with patch("src.tasks.recovery.recover_to_home", return_value=False):
                 return DailyTask._home_after_done(task, "公会签到")
 
         task.run_guild_sign_in = guild

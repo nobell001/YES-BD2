@@ -1,11 +1,14 @@
+from pathlib import Path
 from time import monotonic
 
 from qfluentwidgets import FluentIcon
 
 from src.tasks.BaseBD2Task import BaseBD2Task
-from src.tasks.task_vision_mixin import LOADING_TEMPLATE, TaskVisionMixin, loading_gone_seconds
+from src.tasks.task_vision_mixin import BACK_LOOK_SECONDS, LOADING_TEMPLATE, TaskVisionMixin, loading_gone_seconds
+from src.utils import day_record
 from src.utils.ocr_utils import keyword_match_count
 from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS
+from src.utils.press_next import Next, press_next
 from src.utils.wait_limits import LOADING_MAX_SECONDS, STUCK_SECONDS, StillTimer, is_loading_dark, load_wait, scene_at_press
 
 KEYWORD_MATCH_RATIO = 0.9
@@ -41,6 +44,9 @@ RESULT_TOTAL_SECONDS = 30.0
 # The skip corner is only pressed on an unknown (animation) screen: never on
 # the gacha page (currency bar), the confirm dialog, or anything that sells.
 SKIP_UNSAFE_KEYWORDS = ["购买", "充值"]
+# Both pools' free draws done this game day (Leo 2026-10-31 「都已經成功抽了
+# 工具應該要紀錄起來吧」): kept the moment the draws end, however the run ends.
+DRAWN_RECORD_PATH = Path("configs") / "free_gacha_drawn.json"
 
 
 class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
@@ -119,6 +125,12 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
             self.log_info("白嫖抽抽乐已禁用。")
             return True
 
+        if day_record.done_today(DRAWN_RECORD_PATH):
+            self.done_already("今天已经抽过")
+            self.info_set("状态", "白嫖抽抽乐今天已经抽过。")
+            self.log_info("白嫖抽抽乐：今天已经抽完免费抽抽乐，跳过。")
+            return True
+
         self.info_set("状态", "启动白嫖抽抽乐。")
         if not self._wait_for_home_confirmation("白嫖抽抽乐入口前主页确认"):
             self.info_set("状态", "白嫖抽抽乐入口前主页确认失败。")
@@ -144,10 +156,9 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
             return self._fail_run("服装抽抽乐")
 
         self._sleep_after_recognition()
-        self._click_reference(*EQUIPMENT_TAB_REFERENCE_POINT, after_sleep=0.8)
         # 换池必须验证目标池标题：通用抽卡页关键词在服装页同样能命中，
         # 无法证明实际换池（BUG-20260913-01）。
-        if not self._wait_for_equipment_pool_page("切换装备抽卡"):
+        if not self._switch_to_equipment_pool("切换装备抽卡"):
             return self._fail_run("切换装备抽卡")
 
         if not self._run_free_section(
@@ -155,15 +166,67 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
             verify_finished=True,
         ):
             return self._fail_run("装备抽抽乐")
+        day_record.record_today(DRAWN_RECORD_PATH)
 
         self._sleep_after_recognition()
-        self._click_reference(*BACK_BUTTON_REFERENCE_POINT, after_sleep=1.0)
-        if not self._wait_loading_or_home_confirmation("抽抽乐返回主页"):
-            return self._fail_run("返回主页")
+        if not self._return_home("抽抽乐返回主页"):
+            # Both pools' free draws are done: the chore is judged on that,
+            # not on the way home (player 2026-10-31: done draw shown 失败).
+            self.home_after_done("白嫖抽抽乐")
 
         self.info_set("状态", "白嫖抽抽乐完成。")
         self.log_completion("白嫖抽抽乐：流程完成。")
         return True
+
+    def _pool_seen(self, frame, keywords: list[str], name: str) -> bool:
+        return self._ocr_keywords_in_frame(frame, keywords, 1, name)[0]
+
+    def _switch_to_equipment_pool(self, name: str) -> bool:
+        """Press the 装备 tab, expect 装备抽抽乐; still 服装抽抽乐 → press again.
+
+        The shop behind the pools keeps panning, so a swallowed tab press
+        never looked stuck and was waited out to 45 s (same as the back press,
+        player 2026-10-31; Leo 「其他地方也要套用」).
+        """
+        outcome = press_next(
+            name,
+            lambda: self._click_reference(*EQUIPMENT_TAB_REFERENCE_POINT, after_sleep=0.8),
+            [
+                Next("装备抽抽乐", lambda f: self._pool_seen(f, EQUIPMENT_POOL_KEYWORDS, f"{name}_equipment_pool"), goal=True),
+                Next("加载画面", is_loading_dark, loading=True),
+                Next("服装抽抽乐", lambda f: self._pool_seen(f, CLOTHING_POOL_KEYWORDS, f"{name}_clothing_pool"), before=True),
+            ],
+            capture=self.capture_frame,
+            sleep=self.sleep,
+            log=self.log_info,
+            timeout=BACK_LOOK_SECONDS,
+            retry_after=0.5,
+        )
+        if outcome.reached:
+            self.log_info(f"{name}：已确认装备抽抽乐页面。")
+            return True
+        if outcome.screen == "服装抽抽乐":
+            self.log_info(f"{name}：点了装备页签又补点一次，还是服装抽抽乐，不点免费入口。")
+            return False
+        if self._wait_for_equipment_pool_page(name):
+            return True
+        # Leo 2026-10-31 「總之最少都要補按」: one more press on any screen.
+        self.log_info(f"{name}：点了装备页签没看到装备抽抽乐（{outcome.screen}），补点一次。")
+        self._click_reference(*EQUIPMENT_TAB_REFERENCE_POINT, after_sleep=0.8)
+        return self._wait_for_equipment_pool_page(name)
+
+    def _return_home(self, name: str) -> bool:
+        return self._back_to_home(
+            name,
+            BACK_BUTTON_REFERENCE_POINT,
+            "抽卡页",
+            lambda frame: self._ocr_keywords_in_frame(
+                frame,
+                GACHA_PAGE_KEYWORDS,
+                int(self.config.get("抽卡页面关键词最低命中数", 3)),
+                f"{name}_gacha_page",
+            )[0],
+        )
 
     def _fail_run(self, stage: str) -> bool:
         # 失败路径必须把"失败"写进状态，否则 run_history 会把本次运行
@@ -678,12 +741,6 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
         count = self._keyword_match_count(text, keywords)
         self.info_set(f"{name} 关键字", f"{count}/{len(keywords)}")
         return count >= minimum_matches, text
-
-    def _home_confirmation_ok(self, frame, name: str) -> bool:
-        confirmed, _left_hits, _p95_brightness, _text = (
-            self._home_confirmation_signals(frame, f"{name} 抽抽乐")
-        )
-        return confirmed
 
     def _ocr_text(self, frame, name: str) -> str:
         try:

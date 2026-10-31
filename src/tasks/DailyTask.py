@@ -408,10 +408,8 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         reached through the recovery flow, which closes popups; only when
         that fails too do the remaining steps stop.
         """
-        self.log_info(f"{name}：已完成，但回主页时没认出主页（可能被弹窗挡住），走回主页流程。")
-        if not recover_to_home(self):
+        if not self.home_after_done(name):
             self._home_lost_after_done = True
-            self.log_info(f"{name}：已完成，但没能回到主页。")
         return True
 
     def _home_after_failed_step(self, name: str) -> bool:
@@ -675,6 +673,19 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         self._status_set("公会签到返回主页结果", "通过" if home_ok else "失败")
         return home_ok
 
+    def _my_home_page_seen(self, frame) -> bool:
+        """The 小屋 page on one frame: its template or its title."""
+        if self._passes(self._match(frame, MY_HOME_TEMPLATE), MY_HOME_TEMPLATE):
+            return True
+        title = self._quick_vision().ocr_text(
+            frame,
+            "小屋页面标题",
+            relative_roi=MY_HOME_TITLE_RELATIVE_ROI,
+            target_height=0,
+            ocr_scale=2.0,
+        )
+        return self._keyword_match_count(title, ["我的小屋"]) >= 1
+
     def _wait_my_home_page(self, timeout: float, load: bool = False) -> bool:
         """``load``: the page comes after the my-home loading (load_wait)."""
         vision = self._quick_vision()
@@ -730,13 +741,15 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         if found:
             self.log_info("小屋签到：已进入小屋页面，返回主页。")
             self._sleep_after_recognition()
-            self._click_reference(*BACK_BUTTON_REFERENCE_POINT, after_sleep=1.0)
         else:
             self.log_info("小屋签到：未确认小屋页面标题，不执行返回点击。")
             self._status_set("小屋签到返回主页结果", "未执行")
             return self._step_failed("点了小屋入口，没认出小屋页面")
 
-        home_ok = self._wait_for_home_confirmation("小屋签到返回主页")
+        # Press back, expect 主页; still 小屋 → press again, Esc, the arrow.
+        home_ok = self._back_to_home(
+            "小屋签到返回主页", BACK_BUTTON_REFERENCE_POINT, "小屋页面", self._my_home_page_seen
+        )
         self._status_set("小屋签到返回主页结果", "通过" if home_ok else "失败")
         if not home_ok:
             return self._home_after_done("小屋签到")

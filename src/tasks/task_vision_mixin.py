@@ -25,6 +25,7 @@ from src.utils.home_confirmation import (
 )
 from src.utils.image_utils import to_gray
 from src.utils.ocr_utils import keyword_match_count, normalize_ocr_text
+from src.utils.press_next import Next, press_next
 from src.utils.wait_limits import LOADING_MAX_SECONDS, STUCK_SECONDS, is_loading_dark, load_wait, scene_at_press
 
 REFERENCE_WIDTH = FHD_1080.width
@@ -34,6 +35,12 @@ REFERENCE_HEIGHT = FHD_1080.height
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 TEMPLATE_DIR = PROJECT_ROOT / "recognition-assets" / "template-assets"
+
+# The top-left back arrow itself (recovery presses the same spot): the last
+# remedy when the usual back point and Esc both left a page up.
+BACK_ARROW_REFERENCE_POINT = (150, 50)
+
+BACK_LOOK_SECONDS = 2.5
 
 LOADING_TEMPLATE = TemplateSpec(
     name="ui_loading_black",
@@ -78,6 +85,62 @@ class TaskVisionMixin:
             self.info_set(key, value)
         except AttributeError:
             pass
+
+    def _back_to_home(
+        self,
+        name: str,
+        back_point: tuple[int, int],
+        page_name: str,
+        page_seen,
+    ) -> bool:
+        """Press the top-left back on a home sub-page until home shows.
+
+        A back press can be swallowed by the page's own animation (player
+        2026-10-31: 装备抽抽乐 stayed up after its back press and the tool
+        waited 46 s for home, then failed a draw that was done; the guild page
+        had the same, BUG-20260901-02).  press_next presses again only while
+        ``page_seen`` still reads the page, then Esc, then the arrow itself;
+        a screen that moved on (loading, a popup over home) is never pressed
+        and gets the full home wait.  Still on the page after all: False at
+        once, no long wait (Leo 2026-10-31 「12秒離開 補點 esc」).
+        """
+
+        def loading(frame) -> bool:
+            return is_loading_dark(frame) or self._passes(self._match(frame, LOADING_TEMPLATE), LOADING_TEMPLATE)
+
+        outcome = press_next(
+            name,
+            lambda: self._click_reference(*back_point, after_sleep=0.5),
+            [
+                Next("主页", lambda frame: self._home_confirmation_ok(frame, name), goal=True),
+                Next("加载画面", loading, loading=True),
+                Next(page_name, page_seen, before=True),
+            ],
+            capture=self.capture_frame,
+            sleep=self.sleep,
+            log=self.log_info,
+            key=("Esc", lambda: self.tap_escape(after_sleep=0.5)),
+            fixed=lambda: self._click_reference(*BACK_ARROW_REFERENCE_POINT, after_sleep=0.5),
+            # Four looks and the presses between them: about NO_RESPONSE_SECONDS
+            # on a page that stays up (Leo 2026-10-31 「12秒離開 補點 esc」).
+            timeout=BACK_LOOK_SECONDS,
+            retry_after=0.5,
+        )
+        if outcome.reached:
+            return True
+        if outcome.screen == page_name:
+            self.log_info(f"{name}：补按、Esc、返回箭头后还在{page_name}。")
+            return False
+        if self._wait_for_home_confirmation(name):
+            return True
+        # Neither home nor the page: at least one more press (Leo 2026-10-31
+        # 「總之最少都要補按」).
+        self.log_info(f"{name}：按了返回没看到主页（{outcome.screen}），补按一次返回。")
+        self._click_reference(*back_point, after_sleep=0.5)  # 不用确认：下一行等主页
+        return self._wait_for_home_confirmation(name)
+
+    def _home_confirmation_ok(self, frame, name: str) -> bool:
+        return self._home_confirmation_signals(frame, f"{name} 抽抽乐")[0]
 
     def _home_confirmation_signals(
         self,

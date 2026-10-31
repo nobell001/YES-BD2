@@ -532,6 +532,20 @@ class BaseBD2Task(BaseTask):
         instead of 完成 (Leo 2026-10-28 「應該判定已跳過 已完成就好」)."""
         self.done_already_note = note
 
+    def home_after_done(self, name: str) -> bool:
+        """The task's work is done but its way home did not show home: home
+        is reached through the recovery flow and the run still counts as
+        done (a step is judged on its own work; player 2026-10-31: 白嫖抽抽乐
+        drew both pools, then a swallowed back press reported it 失败).
+        True once home is confirmed."""
+        from src.tasks.recovery import recover_to_home
+
+        self.log_info(f"{name}：已完成，但回主页时没认出主页，走回主页流程。")
+        if recover_to_home(self):
+            return True
+        self.log_info(f"{name}：已完成，但没能回到主页。")
+        return False
+
     def _task_info_lock(self) -> threading.RLock:
         """The per-instance info lock, or a shared fallback for odd instances.
 
