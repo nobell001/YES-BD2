@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import re
 from dataclasses import replace
 from time import monotonic
@@ -146,6 +147,9 @@ from src.tasks.map_trade.navigator_constants import (
     TELEPORT_MAP_RETURN_REFERENCE_POINT,
     TELEPORT_MAP_RETURN_RELATIVE_POINT,
     TELEPORT_MAP_SEEK_LIMIT,
+    LOOSE_PAGE_NAME_MIN_RATIO,
+    TELEPORT_MAP_TITLE_REREAD_MIN_RATIO,
+    TELEPORT_MAP_TITLE_REREAD_SCALES,
     TELEPORT_MAP_TELEPORT_CIRCLE_TEMPLATES,
     TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI,
     TELEPORT_LOADING_DARK_P95,
@@ -2497,6 +2501,77 @@ class SandboxNavigationMixin:
         longest = max(length for length, _key in matches)
         return tuple(sorted({key for length, key in matches if length == longest}))
 
+    def _centered_title_keys(
+        self, frame: np.ndarray, card: CardSpec, keys: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        """The page whose name sits in the middle of the label bar, when the
+        title read named several maps.
+
+        Player v0.2.25 2560x1440 fullscreen 150% (2026-10-31): 第7章 back to
+        the town failed with 「左右翻页都未找到拉勒凯镇：last=… 拉勒凯镇」 while
+        page 1 (安全 拉勒凯镇) was on screen for 9 s.  Every page read that
+        names 拉勒凯镇 alone is taken, so that read also named 洞穴神殿 or
+        隐藏神殿 (same length, a tie -> no page at all).  The bar shows one
+        centred label; another map's name (the next label sliding by, a map
+        label) lies off the middle.  Per OCR box, the box nearest the bar's
+        centre that names one map decides; inside one box, the name read last
+        (the label is 「战斗Ⅰ 洞穴神殿」/「安全 拉勒凯镇」: tag, then name).
+        """
+        ocr_boxes = getattr(self.vision, "ocr_boxes", None)
+        if ocr_boxes is None:
+            return keys
+        try:
+            boxes = list(
+                ocr_boxes(frame, "传送阵地图名分框", relative_roi=TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI)
+                or []
+            )
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception as exc:  # the joined read still stands
+            self._status("区域地图", f"传送阵地图名分框读取失败：{exc}")
+            return keys
+        width = frame.shape[1]
+        middle = width * (
+            TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI[0] + TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI[2]
+        ) / 2
+        named: list[tuple[float, str, str]] = []
+        for box in boxes:
+            text = normalize_text(self.vision.simplify(str(getattr(box, "name", "") or "")))
+            box_keys = self._target_keys_in_text(card, text) if text else ()
+            if not box_keys:
+                continue
+            if len(box_keys) > 1:
+                box_keys = (self._last_named_key(card, text, box_keys),)
+            x = getattr(box, "x", None)
+            box_width = getattr(box, "width", None)
+            distance = (
+                abs(float(x) + float(box_width) / 2 - middle)
+                if x is not None and box_width is not None
+                else float("inf")
+            )
+            named.append((distance, box_keys[0], text))
+        if not named:
+            return keys
+        _distance, key, text = min(named, key=lambda item: item[0])
+        self._status(
+            "区域地图",
+            f"传送阵地图名读到多个地图（{','.join(keys)}），取中间的「{text}」-> {key}",
+        )
+        return (key,)
+
+    @staticmethod
+    def _last_named_key(card: CardSpec, text: str, keys: tuple[str, ...]) -> str:
+        """Of ``keys`` all named in ``text``, the one whose name ends last."""
+        ends: list[tuple[int, str]] = []
+        for target in card.targets:
+            if target.key not in keys:
+                continue
+            for title in target.titles:
+                name = normalize_text(title)
+                if name and name in text:
+                    ends.append((text.rindex(name) + len(name), target.key))
+        return max(ends)[1] if ends else keys[0]
+
     def _area_map_context(self, frame: np.ndarray, card: CardSpec) -> AreaMapContext:
         detection = self._detect_map_page_mode(frame)
         if not detection.mode.is_teleport_map:
@@ -2528,6 +2603,31 @@ class SandboxNavigationMixin:
         )
         normalized_text = normalize_text(raw_text)
         target_keys = self._target_keys_in_text(card, normalized_text)
+        if len(target_keys) > 1:
+            target_keys = self._centered_title_keys(frame, card, target_keys)
+        if len(target_keys) != 1 and self._title_worth_rereading(card, normalized_text):
+            # Read again bordered and enlarged before the page counts as
+            # another map (Leo 2026-10-31 「還有沒有辦法不會再出錯」).
+            for scale in TELEPORT_MAP_TITLE_REREAD_SCALES:
+                again = self.vision.simplify(
+                    self.vision.ocr_text(
+                        frame,
+                        "传送阵地图名放大重读",
+                        relative_roi=TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI,
+                        ocr_scale=scale,
+                        bordered=True,
+                    )
+                )
+                again_keys = self._target_keys_in_text(card, normalize_text(again))
+                if len(again_keys) == 1:
+                    self._status(
+                        "区域地图",
+                        f"传送阵地图名「{raw_text or '-'}」放大{scale:g}倍重读为「{again}」",
+                    )
+                    raw_text, normalized_text, target_keys = (
+                        again, normalize_text(again), again_keys
+                    )
+                    break
         context = AreaMapContext(
             frame_shape=frame.shape,
             raw_text=raw_text,
@@ -2609,8 +2709,8 @@ class SandboxNavigationMixin:
         taken from the known page order, else both sides are tried.
         """
 
-        if context.resolved_target_key == target.key:
-            return context
+        if (found := self._page_is(card, context, target)) is not None:
+            return found
         # Page order, not collection order: Q_ep2's safe zone is the last
         # page, so its battle maps are to the left (Leo 2026-10-15).
         keys = list(self._collection_page_order(card))
@@ -2625,6 +2725,13 @@ class SandboxNavigationMixin:
         else:
             directions = ("right", "left")
         start = context
+        seen: list[str] = []
+
+        def note(page: AreaMapContext) -> None:
+            if page.raw_text and page.raw_text not in seen:
+                seen.append(page.raw_text)
+
+        note(context)
         for direction in directions:
             current = start
             for _ in range(TELEPORT_MAP_SEEK_LIMIT):
@@ -2632,8 +2739,9 @@ class SandboxNavigationMixin:
                 if changed is None:
                     break  # no arrow or no change: this end of the list
                 current = changed
-                if current.resolved_target_key == target.key:
-                    return current
+                note(current)
+                if (found := self._page_is(card, current, target)) is not None:
+                    return found
             start = current
         # Last resort (Leo: every read needs a fallback): an arrow misread
         # as missing ended the first side unpressed (2K 桌面分身 2026-10-16,
@@ -2645,14 +2753,89 @@ class SandboxNavigationMixin:
             if changed is None:
                 break
             current = changed
-            if current.resolved_target_key == target.key:
-                return current
+            note(current)
+            if (found := self._page_is(card, current, target)) is not None:
+                return found
         start = current
         return NavigationResult(
             False,
             ScreenState.AREA_MAP,
-            f"传送阵地图左右翻页都未找到{target.title}：last={start.raw_text or '-'}",
+            # The page read in words, not 「last=…」: the 问题摘要 drops
+            # key=value text, so the player's summary showed 「： 拉勒凯镇」 and
+            # hid what was really read (2026-10-31).
+            (
+                f"传送阵地图左右翻页都未找到{target.title}（各页读到："
+                + ("、".join(f"「{text}」" for text in seen) or "没读到字")
+                + "）"
+            ),
         )
+
+    def _page_is(
+        self, card: CardSpec, page: AreaMapContext, target: CollectionMapTarget
+    ) -> AreaMapContext | None:
+        """``page`` when it is ``target``'s page, else None.
+
+        The name under the map decides.  A read of it that came out a little
+        wrong still counts (Leo 2026-10-31 「字接近就判定成功」): the player's
+        第7章 sat 9 s on page 1 「安全 拉勒凯镇」 and every read there missed
+        the clean name, so the card was skipped.  A loose match must be close
+        to this name and closer to it than to any other map of the card, so
+        「安全 拉勒凯旅馆」 (the town's inn, same first three characters) is
+        never the town.  The map after the teleport still checks.
+        """
+        if page.resolved_target_key == target.key:
+            return page
+        if not page.is_area_map or not page.normalized_text:
+            return None
+        if page.resolved_target_key is not None:
+            return None  # the read names another map alone
+        score = self._name_closeness(page.normalized_text, target)
+        if score < LOOSE_PAGE_NAME_MIN_RATIO:
+            return None
+        if any(
+            self._name_closeness(page.normalized_text, other) >= score
+            for other in card.targets
+            if other.key != target.key
+        ):
+            return None
+        self._status(
+            "区域地图",
+            f"传送阵地图名「{page.raw_text}」接近{target.title}（{score:.2f}），当作这一页",
+        )
+        return replace(
+            page,
+            candidate_target_keys=(target.key,),
+            resolved_target_key=target.key,
+            guessed=True,
+        )
+
+    def _title_worth_rereading(self, card: CardSpec, text: str) -> bool:
+        """An unresolved page read that may be one of the card's maps misread:
+        nothing read, or something sharing a character run with a map name.
+        A clean read of a page that is none of them (狩猎场, 旅馆) is left as
+        it is, so the seek stays quick."""
+        if not text:
+            return True
+        return any(
+            self._name_closeness(text, target) >= TELEPORT_MAP_TITLE_REREAD_MIN_RATIO
+            for target in card.targets
+        )
+
+    @staticmethod
+    def _name_closeness(text: str, target: CollectionMapTarget) -> float:
+        """How close the page read is to ``target``'s name, 0..1: the read
+        without its 安全/战斗 tag, compared character by character; a read
+        holding the whole name next to another map's name counts as 1."""
+        bare = re.sub(r"^(安全|战斗)?[ⅠⅡⅢⅣⅤⅥⅦⅰⅱⅲiIＩ1-7]*", "", text)
+        best = 0.0
+        for title in target.titles:
+            name = normalize_text(title)
+            if not name:
+                continue
+            if name in text:
+                return 1.0
+            best = max(best, difflib.SequenceMatcher(None, name, bare).ratio())
+        return best
 
     @staticmethod
     def _collection_page_order(card: CardSpec) -> tuple[str, ...]:
@@ -2759,7 +2942,7 @@ class SandboxNavigationMixin:
                 arrived.state,
                 f"传送到{target.title}后未确认剧情箱庭：{arrived.message}",
             )
-        if getattr(self, "_teleport_loading_seen", False):
+        if getattr(self, "_teleport_loading_seen", False) and not context.guessed:
             # The page was this target by name and the teleport's loading
             # screen came: no area-map check after it (Leo 2026-10-01, ~2 s
             # a move).  Without the loading seen, the area map still decides.
@@ -3631,11 +3814,41 @@ class SandboxNavigationMixin:
             return self.return_teleport_map_to_sandbox(card.number)
         first = self._seek_collection_page(card, context, main_target)
         if isinstance(first, NavigationResult):
-            return first
+            return self._town_by_npc_after_failed_seek(card, context, first)
         return self._click_collection_destination(
             card,
             main_target,
             first,
+        )
+
+    def _town_by_npc_after_failed_seek(
+        self,
+        card: CardSpec,
+        context: AreaMapContext,
+        failed: NavigationResult,
+    ) -> NavigationResult:
+        """The teleport map never showed the town by name: close it and take
+        the ≡ menu's 艾琳 (she stands in the town) before the card is skipped
+        (Leo 2026-10-31 「還有沒有辦法不會再出錯」)."""
+        town = card.targets[0]
+        self._status("导航状态", f"{failed.message}，关掉传送阵地图，改用≡选单的{TOWN_NPC_NAV_ENTRY}回{town.title}")
+        self.task.log_info(
+            f"跑图：传送阵地图没认出{town.title}，改用小地图≡选单找{TOWN_NPC_NAV_ENTRY}回主城。"
+        )
+        self._close_area_map(context)
+        if (
+            self._travel_via_nav_menu(TOWN_NPC_NAV_ENTRY)
+            and self.current_collection_target(card) == town.key
+        ):
+            return NavigationResult(
+                True, ScreenState.SANDBOX, f"经{TOWN_NPC_NAV_ENTRY}到达{town.title}"
+            )
+        why = getattr(self, "_nav_failure", "") or f"经{TOWN_NPC_NAV_ENTRY}也没到{town.title}"
+        return NavigationResult(
+            False,
+            failed.state,
+            f"{failed.message}；改用≡选单的{TOWN_NPC_NAV_ENTRY}也没回到{town.title}（{why}）",
+            map_page_mode=failed.map_page_mode,
         )
 
     def advance_collection_map(

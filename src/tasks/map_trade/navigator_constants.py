@@ -779,6 +779,9 @@ class AreaMapContext:
     overlap_arrow: MatchResult | None
     back_button: MatchResult | None
     confirmation_text: str = ""
+    # Taken as the target without reading its name cleanly (the seek's last
+    # resort): the arrival is then checked on the map, never by the page.
+    guessed: bool = False
 
     @property
     def is_area_map(self) -> bool:
@@ -1054,6 +1057,16 @@ TELEPORT_MAP_FIRST_PAGE_LIMIT = AREA_MAP_SCAN_LIMIT
 # Pages flipped in one direction while looking for a map by name (chapter 18
 # has 10 pages; a flip that changes nothing ends the direction early).
 TELEPORT_MAP_SEEK_LIMIT = 12
+# A teleport-map page read this close to a map's name (0..1, the name
+# compared with the read minus its 安全/战斗 tag) counts as that map's page
+# when no map is named cleanly: one wrong character in four is 0.75, the
+# town's inn 拉勒凯旅馆 against 拉勒凯镇 is 0.67 (Leo 2026-10-31).
+LOOSE_PAGE_NAME_MIN_RATIO = 0.75
+# An unresolved page read this close to one of the card's maps (or empty)
+# is read again bordered and enlarged at these scales before it counts as
+# another page; a clean read of an unrelated page is not.
+TELEPORT_MAP_TITLE_REREAD_MIN_RATIO = 0.4
+TELEPORT_MAP_TITLE_REREAD_SCALES = (2.0, 3.0)
 # Teleport-map page order (left to right) by target key, for cards whose
 # pages do not follow ``card.targets`` (safe zone first).  Nightmare Winter's
 # safe zone 雷瓦汀据点 is the LAST page, so from it the battle maps are to the
