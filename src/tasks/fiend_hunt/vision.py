@@ -679,7 +679,15 @@ GRID_SCALES = tuple(round(0.80 + 0.01 * step, 2) for step in range(33))
 # top left 395,264; the guide video's nine stages 1.31-1.32, top 398-498).
 # Searched only when the usual room finds nothing (it takes 4 times as long).
 GRID_WIDE_BOX: layout.Box = (380.0, 240.0, 920.0, 800.0)
-GRID_WIDE_SCALES = tuple(round(0.80 + 0.01 * step, 2) for step in range(61))
+# up to 1.50: the grid zoomed in to 110-114% (2K PC zoom probe 2026-10-28) is
+# still read, so the wheel knows which way to turn.
+GRID_WIDE_SCALES = tuple(round(0.80 + 0.01 * step, 2) for step in range(71))
+# A match this big in the usual room may be a bigger grid read wrong: on the
+# 2K zoom probe (2026-10-28) 塔洛斯's grid at 87-92% (1.15-1.22) was read
+# there as 1.10-1.12, cut short by the room's largest scale (1.12), and the
+# player's run (v0.2.24, 1920x1080, 2026-10-31) stopped on 「格子大小还是 1.11」.
+# Such a match is checked by the wide search, which reads 0.80-1.50 right.
+GRID_NEAR_TOP = 1.08
 GRID_ARM = 9.0  # bracket arm, reference px
 GRID_FOUND_AT = (480.0, 432.0)  # where the match puts layout's own grid
 GRID_MATCH_MIN = 0.2
@@ -758,9 +766,10 @@ def _grid_brackets(scale: float) -> np.ndarray:
 def grid_on_screen(frame: np.ndarray) -> Grid | None:
     """The top-down grid as drawn (see GRID_SEARCH_BOX); None when its brackets aren't seen."""
     found = _find_grid(frame, GRID_SEARCH_BOX, GRID_SCALES)
-    if found is not None:
+    if found is not None and found.scale < GRID_NEAR_TOP:
         return found
-    return _find_grid(frame, GRID_WIDE_BOX, GRID_WIDE_SCALES, every_column=True)
+    wide = _find_grid(frame, GRID_WIDE_BOX, GRID_WIDE_SCALES, every_column=True)
+    return wide if wide is not None else found
 
 
 # 塔洛斯's empty columns have dim brackets, so a match one column right (its

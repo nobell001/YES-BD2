@@ -1339,16 +1339,65 @@ class SizedGridTest(unittest.TestCase):
     def test_another_size_is_zoomed_back(self):
         small = vision.Grid(1.08, 581, 424)
         usual = vision.Grid(1.33, 492, 397)
-        screen, wheels, lines = self.place([small, usual, usual], percents=[101])
+        screen, wheels, lines = self.place([small, usual, usual, usual], percents=[101])
         self.assertEqual([-8, 5], wheels)
         self.assertEqual(usual, screen._grid)
         self.assertTrue(any("101%" in line for line in lines))
 
     def test_zoom_nudged_when_the_percent_is_off(self):
         small = vision.Grid(1.08, 581, 424)
-        usual = vision.Grid(1.28, 511, 403)
-        screen, wheels, lines = self.place([small, usual, usual], percents=[92, 97])
+        short = vision.Grid(1.28, 511, 403)
+        usual = vision.Grid(1.33, 492, 397)
+        screen, wheels, lines = self.place(
+            [small, short, usual, usual, usual], percents=[97, 101]
+        )
         self.assertEqual([-8, 5, 1], wheels)
+        self.assertEqual(usual, screen._grid)
+
+    def test_zoomed_in_too_far_is_turned_back(self):
+        big = vision.Grid(1.47, 444, 382)
+        usual = vision.Grid(1.33, 492, 397)
+        screen, wheels, lines = self.place([big, big, usual, usual, usual], percents=[105, 101])
+        self.assertEqual([-8, 5, -1], wheels)
+
+    def test_notch_by_notch_on_the_grid_when_the_percent_is_unread(self):
+        # player 2026-10-31 (1920x1080): the coarse turn left the grid at
+        # 1.11 and the run stopped; now each notch is checked until 100%
+        reads = [vision.Grid(1.11, 571, 421), vision.Grid(1.11, 571, 421)]
+        reads += [vision.Grid(1.16, 551, 416), vision.Grid(1.22, 532, 409)]
+        reads += [vision.Grid(1.28, 512, 403)] + [vision.Grid(1.33, 492, 397)] * 3
+        screen, wheels, lines = self.place(reads)
+        self.assertEqual([-8, 5, 1, 1, 1, 1], wheels)
+        self.assertEqual(1.33, screen._grid.scale)
+
+    def test_wheel_turns_are_bounded(self):
+        from src.tasks.fiend_hunt.screen import ZOOM_STEPS
+
+        small = vision.Grid(1.08, 581, 424)
+        screen, wheels, lines, patches = self.screen([small] * (ZOOM_STEPS + 3))
+        with patches[0], patches[1], patches[2], patches[3]:
+            with self.assertRaises(ScreenReadError) as caught:
+                screen._place_grid("frame")
+        self.assertEqual([-8, 5] + [1] * ZOOM_STEPS, wheels)
+        self.assertIn("1.08", str(caught.exception))
+
+    def test_zoom_uses_the_real_wheel_and_falls_back_to_posted(self):
+        # 4K PC clone 2026-10-31: posted wheel messages never zoomed the view
+        calls = []
+        task = SimpleNamespace(
+            wheel_client_real=lambda point, notches, **kw: calls.append(("real", notches)) or True,
+            scroll_client=lambda *a, **kw: calls.append(("posted", a[1], kw["count"])),
+        )
+        screen = GameFightScreen(
+            task, ["克蕾西亚"], screen_input=SimpleNamespace(), capture=lambda: "frame",
+            ocr=lambda image: [], sleep=lambda seconds: None, log=lambda line: None,
+        )
+        screen._wheel(-8)
+        self.assertEqual([("real", -8)], calls)
+        calls.clear()
+        task.wheel_client_real = lambda point, notches, **kw: False
+        screen._wheel(5)
+        self.assertEqual([("posted", 1, 5)], calls)
 
     def flips(self, grids, percents=()):
         screen, wheels, lines, patches = self.screen(grids, percents)
@@ -1375,14 +1424,14 @@ class SizedGridTest(unittest.TestCase):
 
     def test_other_view_without_a_grid_goes_back_then_wheels(self):
         usual = vision.Grid(1.31, 499, 399)
-        screen, wheels, taps = self.flips([None, None, usual, usual], percents=[101])
+        screen, wheels, taps = self.flips([None, None, usual, usual, usual], percents=[101])
         self.assertEqual(["flip", "flip"], taps)
         self.assertEqual([-8, 5], wheels)
 
     def test_still_wrong_after_the_wheel_stops(self):
         small = vision.Grid(1.08, 581, 424)
         with self.assertRaises(ScreenReadError):
-            self.place([small, small], percents=[80])
+            self.place([small, small, small], percents=[101])
 
     def test_a_place_read_differently_each_time_stops(self):
         # 2K PC 2026-10-28 stage 2 T5: one read 100 px lower than the others

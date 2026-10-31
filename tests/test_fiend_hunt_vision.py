@@ -505,6 +505,23 @@ class GridOnScreenTest(unittest.TestCase):
                 x, y = drawn.point(layout.cell_press((0, 3)))
                 self.assertTrue(695 < x < 775 and 270 < y < 350, (x, y))
 
+    def test_talos_grid_at_each_zoom(self):
+        # 2K PC zoom probe 2026-10-28, scale ~1.32 x N/100.  At 88-92% the
+        # usual room's search had read 1.10-1.12 (92%: 1.11, the player's
+        # 「格子大小还是 1.11」 2026-10-31), so the wheel never got it back.
+        for name, scale in (
+            ("talos_grid_zoom_88_2k.png", 1.16),
+            ("talos_grid_zoom_91_2k.png", 1.20),
+            ("talos_grid_zoom_92_2k.png", 1.22),
+            ("talos_grid_zoom_101_2k.png", 1.33),
+            ("talos_grid_zoom_114_2k.png", 1.49),
+        ):
+            for size, frame in frames(name):
+                with self.subTest(fixture=name, size=size):
+                    drawn = vision.grid_on_screen(frame)
+                    self.assertIsNotNone(drawn)
+                    self.assertAlmostEqual(scale, drawn.scale, delta=0.025)
+
     def test_no_grid_off_the_top_down_view(self):
         for name in ("real_cave_isometric_t1.png", "battle_end.png"):
             with self.subTest(fixture=name):

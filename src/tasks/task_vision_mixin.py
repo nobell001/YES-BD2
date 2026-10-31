@@ -415,7 +415,7 @@ class TaskVisionMixin:
             self.sleep(interval)
 
         self.log_info(
-            f"{name}：未同时确认左列关键词、亮度和抽抽乐文字，"
+            f"{name}：还没认出主页（左边按钮字样、画面亮度、抽抽乐字样没有同时对上），"
             f"left={last_left_hits}/{HOME_LEFT_COLUMN_REQUIRED_HITS}, "
             f"p95={last_p95:.0f}/{self._home_p95_threshold():.0f}, "
             f"ocr={last_gacha_text or '-'}。"

@@ -1163,6 +1163,61 @@ class BaseBD2Task(BaseTask):
         self.sleep(after_sleep)
         return True
 
+    def wheel_client_real(
+        self,
+        relative_point: tuple[float, float],
+        notches: int,
+        interval: float = 0.12,
+        after_sleep: float = 0.0,
+    ) -> bool:
+        """Turn the real mouse wheel over a relative client point.
+
+        塔洛斯战术教材's top-down zoom ignores the posted WM_MOUSEWHEEL that
+        scroll_client sends (4K PC clone 2026-10-31: six posted notches left
+        the grid at 1.21 and no 「N%」 bar showed; one real notch turned it at
+        once).  Like drag_client, only onto the game in the foreground; the
+        cursor goes back afterwards and the takeover monitor ignores it
+        (injected input).  False when nothing was turned.
+        """
+
+        turned = []
+        frame = self.capture_frame()
+        height, width = frame.shape[:2]
+        x = round(max(0.0, min(1.0, relative_point[0])) * width)
+        y = round(max(0.0, min(1.0, relative_point[1])) * height)
+
+        def action():
+            import win32api
+            import win32con
+
+            if not self._bring_game_to_foreground():
+                return
+            interaction = getattr(self.executor, "interaction", None)
+            if interaction is not None and hasattr(interaction, "force_activate"):
+                interaction.force_activate()
+            elif interaction is not None and hasattr(interaction, "try_activate"):
+                interaction.try_activate()
+            capture = getattr(interaction, "capture", None)
+            if capture is None or not hasattr(capture, "get_abs_cords"):
+                return
+            point = capture.get_abs_cords(x, y)
+            if not self._point_on_game(point):
+                return
+            win32api.SetCursorPos(point)
+            time.sleep(SCROLL_POINTER_SETTLE_SECONDS)
+            delta = win32con.WHEEL_DELTA if notches > 0 else -win32con.WHEEL_DELTA
+            for index in range(abs(int(notches))):
+                win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, delta, 0)
+                turned.append(True)
+                if index + 1 < abs(int(notches)):
+                    time.sleep(max(0.0, float(interval)))
+            time.sleep(SCROLL_POINTER_SETTLE_SECONDS)
+
+        self.operate(action, block=True, restore_cursor=True)
+        if turned:
+            self.sleep(after_sleep)
+        return bool(turned)
+
     def _point_on_game(self, point: tuple[int, int]) -> bool:
         """The top-level window under a screen point is the game."""
 

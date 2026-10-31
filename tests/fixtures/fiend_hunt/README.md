@@ -131,3 +131,13 @@ Costume fixtures (4K PC, Leo 2026-10-06, a real fight's TURN 1, 艾尼尔 select
 | `talos_zoom_97_2k.png` | 「97%」 |
 | `talos_zoom_114_2k.png` | 「114%」 |
 | `talos_zoom_none_2k.png` | angled view, no wheel turned: no bar |
+
+塔洛斯战术教材 grid at other zooms (2K PC zoom probe, 2026-10-28, stage 3 top-down; scaled to 1080p, only x 370-930 / y 230-810 kept):
+
+| file | screen |
+| --- | --- |
+| `talos_grid_zoom_88_2k.png` | 88%: the grid 1.16 times layout's size |
+| `talos_grid_zoom_91_2k.png` | 91%: 1.20 |
+| `talos_grid_zoom_92_2k.png` | 92%: 1.22 (the usual room's search had read it as 1.11) |
+| `talos_grid_zoom_101_2k.png` | 101%: 1.33, the size the wheel turns back to |
+| `talos_grid_zoom_114_2k.png` | 114%: about 1.49 |

@@ -77,3 +77,39 @@ class ScrollPointerSettleTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RealWheelTest(unittest.TestCase):
+    """塔洛斯's zoom ignores posted wheel messages (4K PC clone 2026-10-31):
+    wheel_client_real turns the real wheel, only onto the game in front."""
+
+    def wheel(self, notches, *, front=True, on_game=True):
+        events = []
+        task, interaction = _task(events)
+        task._bring_game_to_foreground = lambda: front
+        task._point_on_game = lambda point: on_game
+        with (
+            patch.object(BaseBD2Task, "executor", SimpleNamespace(interaction=interaction)),
+            patch("win32api.SetCursorPos", lambda pos: events.append(("cursor", pos))),
+            patch(
+                "win32api.mouse_event",
+                lambda flags, dx, dy, data, extra: events.append(("real wheel", data)),
+                create=True,
+            ),
+            patch("time.sleep", lambda seconds: None),
+        ):
+            done = BaseBD2Task.wheel_client_real(task, (0.5, 0.8), notches, after_sleep=0.8)
+        return done, events
+
+    def test_notches_turn_the_real_wheel_over_the_point(self):
+        done, events = self.wheel(-3)
+        self.assertTrue(done)
+        self.assertEqual(("cursor", (1960, 2864)), events[0])
+        self.assertEqual([("real wheel", -120)] * 3, [e for e in events if e[0] == "real wheel"])
+        self.assertIn(("after", 0.8), events)
+
+    def test_nothing_turned_when_the_game_is_not_in_front(self):
+        for front, on_game in ((False, True), (True, False)):
+            done, events = self.wheel(2, front=front, on_game=on_game)
+            self.assertFalse(done)
+            self.assertFalse([e for e in events if e[0] in ("real wheel", "cursor")])

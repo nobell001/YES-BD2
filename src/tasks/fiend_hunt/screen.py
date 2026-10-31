@@ -113,10 +113,17 @@ POLL = 0.3
 # 有問題就用滾輪調整」: a grid of another size is zoomed back, out to the far
 # end (78-80%) and in five notches (about 101%), and checked on the 「N%」 bar.
 # Below about 95% the bracket search can slip a column (91%: 1.10 for 1.20).
-TALOS_GRID_SCALES = (1.25, 1.40)
+# Leo 2026-10-31 「應該要把格子調整到100 101%左右」: one notch is about 4%
+# (97, 101, 105), so the usual size is the 101% notch, 1.29-1.37 (99-103%).
+# After the coarse turn the wheel goes one notch at a time, each one checked
+# on the 「N%」 bar or, when the bar isn't read, on the grid's own size: a
+# player's run (v0.2.24, 1920x1080, 2026-10-31) stopped on 「格子大小还是 1.11」
+# after the coarse turn alone.
+TALOS_GRID_SCALES = (1.29, 1.37)
 ZOOM_OUT_NOTCHES = 8
 ZOOM_IN_NOTCHES = 5
-ZOOM_OK = (95, 106)
+ZOOM_OK = (99, 103)
+ZOOM_STEPS = 6  # single notches after the coarse turn
 WHEEL_POINT = (960 / 1920, 860 / 1080)  # the floor between the sides, above the SP bar
 GRID_READS = 3
 END_WORD_EVERY = 2.0  # seconds between reads of the end word as text (a lost fight)
@@ -1098,11 +1105,12 @@ class GameFightScreen:
         if not usual(drawn):
             seen = "看不到格子" if drawn is None else f"格子大小 {drawn.scale:.2f}"
             self.log(f"{seen}，不是平常的大小，用滚轮调回 100%")
-            frame = self._zoom_back()
+            frame, percent = self._zoom_back(usual)
             drawn = vision.grid_on_screen(frame)
             if not usual(drawn):
+                shown = f"缩放停在 {percent}%，" if percent is not None else ""
                 seen = "还是看不到格子" if drawn is None else f"格子大小还是 {drawn.scale:.2f}"
-                raise ScreenReadError(f"用滚轮调过缩放，{seen}")
+                raise ScreenReadError(f"用滚轮调过缩放，{shown}{seen}（平常是 100%、1.33 左右）")
         if self._grid is None or drawn.off(self._grid):
             # A new place: read once more and take it only when two reads agree.
             for _ in range(GRID_READS - 1):
@@ -1119,20 +1127,48 @@ class GameFightScreen:
         self._grid = drawn
         return frame
 
-    def _zoom_back(self) -> np.ndarray:
-        """Wheel out to the far end, then in to about 100%, checked on the 「N%」 bar."""
+    def _zoom_back(self, usual) -> tuple[np.ndarray, int | None]:
+        """Wheel out to the far end and in to about 101%, then one notch at a
+        time until the grid is its usual size: each notch is read on the
+        「N%」 bar, or on the grid's own size when the bar isn't read (a
+        dropped notch or a slow game left it short before)."""
         self.wheel(-ZOOM_OUT_NOTCHES)
         self.wheel(ZOOM_IN_NOTCHES)
-        percent = vision.zoom_percent(self.capture(), self.ocr)
-        for _ in range(2):
-            if percent is None or ZOOM_OK[0] <= percent <= ZOOM_OK[1]:
-                break
-            self.wheel(1 if percent < ZOOM_OK[0] else -1)
+        low = self.grid_scales[0] if self.grid_scales is not None else 1.0
+        percent, frame = None, None
+        for turned in range(ZOOM_STEPS + 1):
             percent = vision.zoom_percent(self.capture(), self.ocr)
+            frame = self._settled_frame()
+            drawn = vision.grid_on_screen(frame)
+            if usual(drawn):
+                break
+            if percent is not None:
+                if ZOOM_OK[0] <= percent <= ZOOM_OK[1]:
+                    break  # the game says 100%: the grid read decides
+                step = 1 if percent < ZOOM_OK[0] else -1
+                why = f"缩放 {percent}%"
+            elif drawn is not None:
+                step = 1 if drawn.scale < low else -1
+                why = f"没读到百分比，格子大小 {drawn.scale:.2f}"
+            else:
+                self.log("没读到百分比，也看不到格子，不再转滚轮")
+                break
+            if turned == ZOOM_STEPS:
+                self.log(f"滚轮一格一格调了 {ZOOM_STEPS} 次还没到 100%（{why}）")
+                break
+            self.log(f"{why}，滚轮{'放大' if step > 0 else '缩小'}一格")
+            self.wheel(step)
         self.log(f"缩放调到 {percent}%" if percent is not None else "缩放调过了（没读到百分比）")
-        return self._settled_frame()
+        return frame, percent
 
     def _wheel(self, notches: int) -> None:
+        """The real wheel: the top-down zoom ignores posted wheel messages
+        (4K PC clone 2026-10-31); posted only when the game isn't in front
+        to take a real one."""
+        real = getattr(self.task, "wheel_client_real", None)
+        if callable(real) and real(WHEEL_POINT, notches, interval=0.12, after_sleep=0.8):
+            return
+        self.log("游戏不在最前面，滚轮改用后台方式（可能没反应）")
         self.task.scroll_client(
             WHEEL_POINT,
             1 if notches > 0 else -1,
