@@ -25,7 +25,10 @@ does it once for every task; this module is that one place (Leo 2026-10-12,
 - 「离开」 on a field battle's result (VICTORY / DEFEAT), where Esc does
   nothing (src/utils/field_battle);
 - 「点击继续」 on the battle's 暂停 menu, never its 「关闭」, which is the
-  技能过场动画 setting.
+  技能过场动画 setting;
+- 「确认」 on a server notice that carries an error code and has no other
+  button (「当前并非赛季。，error:100019」 over a 镜中之战 battle when the
+  season settles, player report 2026-11-01 23:00).
 
 The game's quit dialog (Esc pressed on a top page) is recognised so the way
 home cancels it and stops pressing Esc (Leo 2026-10-12 「這遊戲按沒幾下就會變成
@@ -104,6 +107,59 @@ BATTLE_MENU_WORDS = (
     "离开", "離開", "逃跑", "重新挑战", "重新挑戰",
     "技能过场动画", "技能過場動畫", "整体音量", "整體音量",
 )
+# A server notice: a line carrying 「error:<code>」 (seen: 「当前并非赛季。，
+# error:100019」, player report v0.2.26 2026-11-01 23:00, 1080p) and a lone
+# 确认.  Its 确认 only closes the notice: there is no other button on it.
+SERVER_ERROR_CODE = re.compile(r"error\s*[:：]?\s*(\d{3,})", re.IGNORECASE)
+# Never pressed when these are on the same dialog (a spend or a choice).
+SERVER_ERROR_BLOCKING_WORDS = ("购买", "钻石", "消耗", "支付", "是否")
+# 镜中之战 season settling: every Sunday 23:00 the server drops the
+# connection and a battle still running gets this notice (Leo 2026-11-02
+# 「镜中之战每个周日23:00点结算时，服务器会主动断开链接」).
+SEASON_OVER_WORDS = ("并非赛季", "並非賽季")
+
+
+@dataclass(frozen=True)
+class ServerError:
+    """A server notice on screen: its text, the error code and its 确认."""
+
+    message: str
+    code: str
+    confirm: object
+
+    @property
+    def season_over(self) -> bool:
+        text = normalize_ocr_text(self.message)
+        return any(normalize_ocr_text(word) in text for word in SEASON_OVER_WORDS)
+
+
+def server_error(boxes) -> ServerError | None:
+    """The server notice on screen (an 「error:<code>」 line and its lone
+    确认), or None.  Two cues: the code and the 确认; never with 取消 or a
+    spend word on the same frame."""
+    named = _named(boxes)
+    confirm = _exact(named, CONFIRM_TEXT)
+    if confirm is None or _exact(named, CANCEL_TEXT) is not None:
+        return None
+    text = "".join(name for name, _box in named)
+    if any(word in text for word in SERVER_ERROR_BLOCKING_WORDS):
+        return None
+    # The code may be read in the message's box or in a box of its own.
+    raw = "".join(
+        str(getattr(box, "name", "")) for box in boxes or () if box is not confirm
+    ).replace(" ", "")
+    found = SERVER_ERROR_CODE.search(raw)
+    if found is None:
+        return None
+    message = raw[: found.start()].strip("，,。.:：")
+    return ServerError(message or raw, found.group(1), confirm)
+
+
+def server_error_note(error: ServerError) -> str:
+    """The notice in the player's words."""
+    if error.season_over:
+        return "镜中之战赛季结算中，无法进行镜中之战"
+    return f"游戏提示「{error.message}」（error:{error.code}）"
 
 
 @dataclass(frozen=True)
@@ -203,6 +259,9 @@ def pick(boxes, *, allow_cancel: bool = False) -> PopupPress | None:
     box = battle_menu_continue(boxes)
     if box is not None:
         return PopupPress(BATTLE_MENU_CONTINUE[0], box)
+    error = server_error(boxes)
+    if error is not None:
+        return PopupPress(CONFIRM_TEXT, error.confirm)
     box = _exact(named, OVERLAY_DISMISS_KEYWORDS[0])
     if box is not None:
         return PopupPress(OVERLAY_DISMISS_KEYWORDS[0], box)

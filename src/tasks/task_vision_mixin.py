@@ -93,16 +93,42 @@ class TaskVisionMixin:
         page_name: str,
         page_seen,
     ) -> bool:
-        """Press the top-left back on a home sub-page until home shows.
+        """Press the top-left back on a home sub-page until home shows."""
+        return self._back_until(
+            name,
+            back_point,
+            "主页",
+            lambda frame: self._home_confirmation_ok(frame, name),
+            page_name,
+            page_seen,
+            lambda: self._wait_for_home_confirmation(name),
+        )
+
+    def _back_until(
+        self,
+        name: str,
+        back_point: tuple[int, int],
+        goal_name: str,
+        goal_seen,
+        page_name: str,
+        page_seen,
+        wait_goal,
+        popups=(),
+    ) -> bool:
+        """Press the top-left back until ``goal_seen``; the shared back step.
 
         A back press can be swallowed by the page's own animation (player
         2026-10-31: 装备抽抽乐 stayed up after its back press and the tool
         waited 46 s for home, then failed a draw that was done; the guild page
-        had the same, BUG-20260901-02).  press_next presses again only while
-        ``page_seen`` still reads the page, then Esc, then the arrow itself;
-        a screen that moved on (loading, a popup over home) is never pressed
-        and gets the full home wait.  Still on the page after all: False at
-        once, no long wait (Leo 2026-10-31 「12秒離開 補點 esc」).
+        had the same, BUG-20260901-02; player 2026-11-02: the 服装抽抽乐 result
+        page stayed up after its back press).  press_next presses again only
+        while ``page_seen`` still reads the page, then Esc, then the arrow
+        itself; a screen that moved on (loading, a popup over the goal) is
+        never pressed quickly and gets the full ``wait_goal``, then one more
+        press (Leo 2026-10-31 「總之最少都要補按」).  Still on the page after
+        all: False at once, no long wait (Leo 2026-10-31 「12秒離開 補點
+        esc」).  ``popups``: Next entries with a ``then`` (closed, looked
+        again), checked before the page.
         """
 
         def loading(frame) -> bool:
@@ -112,8 +138,9 @@ class TaskVisionMixin:
             name,
             lambda: self._click_reference(*back_point, after_sleep=0.5),
             [
-                Next("主页", lambda frame: self._home_confirmation_ok(frame, name), goal=True),
+                Next(goal_name, goal_seen, goal=True),
                 Next("加载画面", loading, loading=True),
+                *popups,
                 Next(page_name, page_seen, before=True),
             ],
             capture=self.capture_frame,
@@ -131,13 +158,13 @@ class TaskVisionMixin:
         if outcome.screen == page_name:
             self.log_info(f"{name}：补按、Esc、返回箭头后还在{page_name}。")
             return False
-        if self._wait_for_home_confirmation(name):
+        if wait_goal():
             return True
-        # Neither home nor the page: at least one more press (Leo 2026-10-31
-        # 「總之最少都要補按」).
-        self.log_info(f"{name}：按了返回没看到主页（{outcome.screen}），补按一次返回。")
-        self._click_reference(*back_point, after_sleep=0.5)  # 不用确认：下一行等主页
-        return self._wait_for_home_confirmation(name)
+        # Neither the goal nor the page: at least one more press (Leo
+        # 2026-10-31 「總之最少都要補按」).
+        self.log_info(f"{name}：按了返回没看到{goal_name}（{outcome.screen}），补按一次返回。")
+        self._click_reference(*back_point, after_sleep=0.5)  # 不用确认：下一行等目标画面
+        return wait_goal()
 
     def _home_confirmation_ok(self, frame, name: str) -> bool:
         return self._home_confirmation_signals(frame, f"{name} 抽抽乐")[0]

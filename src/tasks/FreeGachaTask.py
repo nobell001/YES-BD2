@@ -6,9 +6,10 @@ from qfluentwidgets import FluentIcon
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.task_vision_mixin import BACK_LOOK_SECONDS, LOADING_TEMPLATE, TaskVisionMixin, loading_gone_seconds
 from src.utils import day_record
+from src.utils.ocr_count import count_values
 from src.utils.ocr_utils import keyword_match_count
 from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS
-from src.utils.press_next import Next, press_next
+from src.utils.press_next import Next, per_frame, press_next
 from src.utils.wait_limits import LOADING_MAX_SECONDS, STUCK_SECONDS, StillTimer, is_loading_dark, load_wait, scene_at_press
 
 KEYWORD_MATCH_RATIO = 0.9
@@ -27,6 +28,8 @@ FREE_GACHA_BUTTON_REFERENCE_POINT = (347, 973)
 CONFIRM_DIALOG_OK_REFERENCE_POINT = (1045, 649)
 RESULT_PAGE_CLOSE_REFERENCE_POINT = (1420, 326)
 SKIP_BUTTON_REFERENCE_POINT = (1770, 60)
+# Presses of the home entry after the first while home still shows.
+ENTRY_REPRESSES = 2
 # How long the result page's skip button is clicked before waiting for the
 # 抽抽乐券 popup. 3 s sometimes ended before the result animation did (user
 # request 2026-09-27), so the burst is 4 s.
@@ -136,11 +139,7 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
             self.info_set("状态", "白嫖抽抽乐入口前主页确认失败。")
             self.log_info("白嫖抽抽乐：入口前还没认出主页（左边按钮字样、画面亮度、抽抽乐字样没有同时对上），不点击抽抽乐入口。")
             return False
-        self._click_reference(*GACHA_ENTRY_REFERENCE_POINT, after_sleep=0.5)
-        loading_state, gacha_found, _ = self._wait_loading_or_gacha_page("进入抽卡页")
-        if loading_state == "stuck":
-            return self._fail_run("进入抽卡页")
-        if not gacha_found and not self._wait_for_gacha_page("进入抽卡页"):
+        if not self._enter_gacha_page():
             return self._fail_run("进入抽卡页")
 
         # 通用抽卡页关键词在装备页同样能命中，无法证明首段处于服装池；
@@ -177,6 +176,27 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
         self.info_set("状态", "白嫖抽抽乐完成。")
         self.log_completion("白嫖抽抽乐：流程完成。")
         return True
+
+    def _enter_gacha_page(self) -> bool:
+        """The 抽抽乐 entry on home → the gacha page.
+
+        A press the game dropped leaves home up; the wait then gave up and the
+        whole chore failed (same class as the result-page back, player
+        2026-11-02).  While home still shows, the entry is pressed again."""
+        name = "进入抽卡页"
+        for attempt in range(ENTRY_REPRESSES + 1):
+            if attempt:
+                self.log_info(f"{name}：点了抽抽乐入口还在主页，补点一次（{attempt}/{ENTRY_REPRESSES}）。")
+            self._click_reference(*GACHA_ENTRY_REFERENCE_POINT, after_sleep=0.5)  # 不用确认：下面等抽卡页，还在主页补点
+            loading_state, gacha_found, _ = self._wait_loading_or_gacha_page(name)
+            if loading_state == "stuck":
+                return False
+            if gacha_found:
+                return True
+            if not self._home_confirmation_ok(self.capture_frame(), name):
+                return self._wait_for_gacha_page(name)
+        self.log_info(f"{name}：补点 {ENTRY_REPRESSES} 次后还在主页。")
+        return False
 
     def _pool_seen(self, frame, keywords: list[str], name: str) -> bool:
         return self._ocr_keywords_in_frame(frame, keywords, 1, name)[0]
@@ -618,8 +638,39 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
         # With the ticket popup closed the result page shows what was drawn;
         # it goes to the 跑完的结算 page's 抽到的 (Leo 2026-10-04).
         self._save_result_picture(section_name)
-        self._click_reference(*BACK_BUTTON_REFERENCE_POINT, after_sleep=0.0)
-        return self._wait_for_gacha_page(f"{section_name} 返回抽卡页")
+        return self._back_to_gacha_page(f"{section_name} 返回抽卡页")
+
+    def _back_to_gacha_page(self, name: str) -> bool:
+        """Back from the draw result to the gacha page, re-pressed if swallowed.
+
+        Player 2026-11-02 (1080p window on 4K 150%): the one back press after
+        the 抽抽乐券 popup closed did nothing, the result page stood still and
+        the draw that was done ended as 失败 after 14 s.  Same shared back step
+        as the way home: re-press, Esc, the arrow itself.
+        """
+        page_hits = int(self.config.get("抽卡页面关键词最低命中数", 3))
+        ticket_hits = TICKET_POPUP_MIN_HITS
+        read = per_frame(lambda frame: self._ocr_text(frame, name=f"{name}_back"))
+
+        def gacha(frame) -> bool:
+            return self._keyword_match_count(read(frame), GACHA_PAGE_KEYWORDS) >= page_hits
+
+        def ticket(frame) -> bool:
+            return self._keyword_match_count(read(frame), BACK_PAGE_KEYWORDS) >= ticket_hits
+
+        def close_ticket(_frame) -> None:
+            self._click_reference(*RESULT_PAGE_CLOSE_REFERENCE_POINT, after_sleep=0.5)
+
+        return self._back_until(
+            name,
+            BACK_BUTTON_REFERENCE_POINT,
+            "抽卡页",
+            gacha,
+            "抽卡结果页",
+            lambda frame: gacha_result_page(read(frame)),
+            lambda: self._wait_for_gacha_page(name),
+            popups=(Next("抽抽乐券弹窗", ticket, then=close_ticket),),
+        )
 
     def _save_result_picture(self, section_name: str) -> None:
         try:
@@ -785,3 +836,27 @@ CLOTHING_POOL_KEYWORDS = ["服装抽抽乐"]
 EQUIPMENT_POOL_KEYWORDS = ["装备抽抽乐"]
 CONFIRM_DIALOG_KEYWORDS = ["确认抽抽乐", "是否全部进行"]
 BACK_PAGE_KEYWORDS = ["抽抽乐券", "可免费抽1次的抽抽乐券", "查看获取途径"]
+
+
+# The draw result page after the 抽抽乐券 popup closed (player frame
+# 2026-11-02): only the currency bar (付费 / 免费) and the pity counter
+# 「23/100」 carry text; the gacha page's titles are gone.  Both cues together,
+# and none of the gacha page's keywords (checked first by the caller).
+RESULT_CURRENCY_KEYWORDS = ["付费", "免费"]
+# Two of the 抽抽乐券 popup's lines: it is still up, close it (✕) first.
+TICKET_POPUP_MIN_HITS = 2
+
+
+def result_page_text(text: str) -> bool:
+    return bool(count_values(text)) and (
+        keyword_match_count(text, RESULT_CURRENCY_KEYWORDS) >= 1
+    )
+
+
+def gacha_result_page(text: str) -> bool:
+    """The result page on one OCR text: not the gacha page, not the popup."""
+    return (
+        result_page_text(text)
+        and keyword_match_count(text, GACHA_PAGE_KEYWORDS, fuzzy_ratio=KEYWORD_MATCH_RATIO) < 3
+        and keyword_match_count(text, BACK_PAGE_KEYWORDS, fuzzy_ratio=KEYWORD_MATCH_RATIO) < TICKET_POPUP_MIN_HITS
+    )

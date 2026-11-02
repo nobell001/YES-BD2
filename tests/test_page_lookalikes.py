@@ -84,7 +84,25 @@ CHECKS = {
         lambda nav, frame: known_popups.is_battle_menu(nav.task.ocr(frame=frame)),
         {"battle_pause_menu"},
     ),
+    # Only its lone 确认 is pressed (「当前并非赛季。，error:100019」 over a
+    # 镜中之战 battle, player report v0.2.26 2026-11-01 23:00).
+    "服务器提示": (
+        lambda nav, frame: known_popups.server_error(nav.task.ocr(frame=frame)) is not None,
+        {"server_error"},
+    ),
+    # 白嫖抽抽乐 presses back once more, then Esc, then the arrow, only while
+    # the draw result reads (player 2026-11-02: one back press did nothing).
+    "抽卡结果页": (
+        lambda nav, frame: _gacha_result(nav, frame),
+        {"gacha_result"},
+    ),
 }
+
+
+def _gacha_result(nav, frame):
+    from src.tasks.FreeGachaTask import gacha_result_page
+
+    return gacha_result_page(" ".join(box.name for box in nav.task.ocr(frame=frame)))
 
 
 def _trader(nav):

@@ -303,6 +303,9 @@ def dialogs(shell):
             ("other-mode", lambda d: d._set_mode([m for m in (run_confirm.MODE_LEFT, run_confirm.MODE_TICKED) if m != d.mode][0])),
             ("none", lambda d: d._select_all(False)),
             ("all", lambda d: d._select_all(True)),
+            # 做完关闭游戏 ticked shows 什么时候关 beside it (2026-11-02).
+            ("close-game", lambda d: d.close_game and d.close_game.setChecked(True)),
+            ("close-always", lambda d: d.close_when and d.close_when.set_value(d.close_when_options[-1])),
         ],
         "skill-interval": [
             ("max", lambda d: d.slider.setValue(d.slider.maximum())),

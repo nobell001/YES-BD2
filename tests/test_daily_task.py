@@ -8,6 +8,7 @@ from unittest.mock import patch
 import numpy as np
 from ok.util.config import Config
 
+from src.tasks import business_entry
 from src.tasks.BaseBD2Task import RECOGNITION_SETTLE_SECONDS
 from src.tasks.DailyTask import (
     BUSINESS_COLLECT_KEYWORDS,
@@ -59,6 +60,9 @@ from src.tasks.task_vision_mixin import (
 )
 from src.utils.image_utils import crop_relative
 
+
+
+ENTRY = business_entry.ENTRY_POINT
 
 class DailyTaskHelperTest(unittest.TestCase):
     def test_daily_task_is_renamed_and_has_no_quick_hunt_configuration(self):
@@ -1135,7 +1139,7 @@ class DailyTaskHelperTest(unittest.TestCase):
         )
 
         self.assertTrue(DailyTask.run_business_collect(task))
-        self.assertEqual([(165, 260)], reference_clicks)
+        self.assertEqual([ENTRY], reference_clicks)
         self.assertEqual([(1090, 900), (960, 1000), (832, 900)], clicks)
 
     def test_business_collect_unread_claim_is_pressed_in_the_cancel_row(self):
@@ -1150,7 +1154,7 @@ class DailyTaskHelperTest(unittest.TestCase):
         self.addCleanup(recheck.stop)
 
         self.assertTrue(DailyTask.run_business_collect(task))
-        self.assertEqual([(165, 260)], reference_clicks)
+        self.assertEqual([ENTRY], reference_clicks)
         self.assertEqual((1090, 760), clicks[0])
 
     def test_business_collect_waits_for_a_claim_button_that_fades_in(self):
@@ -1171,7 +1175,7 @@ class DailyTaskHelperTest(unittest.TestCase):
 
         self.assertTrue(DailyTask.run_business_collect(task))
         self.assertEqual((1090, 814), clicks[0])
-        self.assertEqual([(165, 260)], reference_clicks[:1])
+        self.assertEqual([ENTRY], reference_clicks[:1])
         self.assertEqual("按钮是灰的", statuses["一键收菜结果"])
 
     def test_business_collect_unread_lit_spot_without_reward_is_not_done(self):
@@ -1191,7 +1195,11 @@ class DailyTaskHelperTest(unittest.TestCase):
         task._home_still_showing = lambda *_args: True
 
         self.assertFalse(DailyTask.run_business_collect(task))
-        self.assertEqual([(165, 260), (165, 260)], reference_clicks)
+        # Then the 「经营管理」 word under the icon (player 2026-11-01).
+        self.assertEqual(
+            [ENTRY, ENTRY, business_entry.LABEL_POINT],
+            reference_clicks,
+        )
 
     def test_business_collect_is_not_pressed_again_once_home_is_gone(self):
         task, reference_clicks, _clicks = self._business_task([])
@@ -1199,14 +1207,14 @@ class DailyTaskHelperTest(unittest.TestCase):
         task._home_still_showing = lambda *_args: False
 
         self.assertFalse(DailyTask.run_business_collect(task))
-        self.assertEqual([(165, 260)], reference_clicks)
+        self.assertEqual([ENTRY], reference_clicks)
 
     def test_business_collect_skips_when_popup_is_not_found(self):
         task, reference_clicks, clicks = self._business_task([])
         task.config = {"一键收菜菜单等待秒数": 0.0}
 
         self.assertFalse(DailyTask.run_business_collect(task))
-        self.assertEqual([(165, 260)], reference_clicks)
+        self.assertEqual([ENTRY], reference_clicks)
         self.assertEqual([], clicks)
 
     def test_business_collect_limits_blind_taps_on_unknown_overlay(self):
@@ -1218,7 +1226,7 @@ class DailyTaskHelperTest(unittest.TestCase):
         # No reward overlay was read, so the claim is not counted.
         self.assertFalse(DailyTask.run_business_collect(task))
         self.assertEqual([(1090, 814)], clicks)
-        self.assertEqual([(165, 260), (832, 814), (832, 814)], reference_clicks)
+        self.assertEqual([ENTRY, (832, 814), (832, 814)], reference_clicks)
 
     def test_business_collect_lost_claim_click_is_not_a_success(self):
         # The popup stays as it was: 一键获得 is pressed once more, then the

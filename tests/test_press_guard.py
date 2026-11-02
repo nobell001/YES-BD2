@@ -187,6 +187,29 @@ class PressGuardTest(unittest.TestCase):
             "on the line.",
         )
 
+    def test_the_allowance_goes_down_with_each_fix(self):
+        # An old press given a remedy frees its place; left in the allowance,
+        # a new press without a remedy could take it unseen (player
+        # 2026-11-02: 白嫖抽抽乐 result back, one press, no remedy; Leo
+        # 「我之前就說要有補救措施」).  Lower the baseline with the fix.
+        for key, finder in (
+            ("presses", direct_presses),
+            ("waits", deadline_waits),
+            ("hand_waits", hand_waits),
+        ):
+            with self.subTest(kind=key):
+                current = current_counts(finder)
+                slack = {
+                    name: f"{count} allowed, {current.get(name, 0)} left"
+                    for name, count in self.allowed[key].items()
+                    if count > current.get(name, 0)
+                }
+                self.assertEqual(
+                    {},
+                    slack,
+                    f"Lower tests/fixtures/direct_press_baseline.json [{key}] to what is left.",
+                )
+
     def test_the_scan_sees_presses_reasons_and_waits(self):
         sample = ROOT / "tests" / "fixtures" / "press_guard_sample.py"
         self.assertEqual([7], direct_presses(sample))

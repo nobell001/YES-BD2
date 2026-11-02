@@ -305,7 +305,7 @@ def close_game_steps(shell) -> list[Step]:
         Step(
             start_button,
             "做完后可以关闭游戏",
-            "按「一键完成日常」后，确认视窗左下角可以勾「全部做完且没有失败后关闭游戏」。默认不勾。",
+            "按「一键完成日常」后，确认视窗左下角可以勾「做完关闭游戏」，再选什么时候关。默认不勾。",
             before=lambda: shell.navigate("home"),
         ),
     ]

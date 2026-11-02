@@ -3245,7 +3245,6 @@ msgstr "Delete this time slot"
 msgid "游戏每天重置后"
 msgstr "After the daily game reset"
 
-
 msgid "时间到自动打开游戏，跑今天还没做的"
 msgstr "Opens the game at the set time and runs what is left today"
 
@@ -3254,8 +3253,6 @@ msgstr "Add time slot"
 
 msgid "没选星期，这个时段不会跑"
 msgstr "No day picked: this slot will not run"
-
-
 
 msgid "最多 {n} 个时段"
 msgstr "At most {n} time slots"
@@ -3536,9 +3533,6 @@ msgstr "Stopped"
 msgid "第 {n} / {total} 项"
 msgstr "Item {n} / {total}"
 
-
-
-
 msgid "完成 {n}"
 msgstr "{n} done"
 
@@ -3577,7 +3571,6 @@ msgstr "Only this time slot runs it this way; the task's own settings stay as th
 
 msgid "{n} 项"
 msgstr "{n} tasks"
-
 
 msgid "任务"
 msgstr "Tasks"
@@ -3626,3 +3619,33 @@ msgstr "Less than 1 hour from another time of the same account; move one"
 
 msgid "和别的账号的时段隔不到半小时，请错开"
 msgstr "Less than 30 minutes from another account's time; move one"
+
+msgid "全部成功才关"
+msgstr "Only if all succeed"
+
+msgid "跑失败也关"
+msgstr "Even if something fails"
+
+msgid "什么时候关"
+msgstr "When to close"
+
+msgid "关闭游戏时机"
+msgstr "When to close"
+
+msgid "一键完成日常跑完后关闭游戏。"
+msgstr "Closes the game after Run All Dailies ends."
+
+msgid "全部成功才关：没有任何一项跑失败、且全部已启用子任务今日均已完成才关。跑失败也关：跑完就关，有项目跑失败或中途出错停下也关。"
+msgstr "Only if all succeed: closes only when no item failed and every enabled item is done today. Even if something fails: closes when the run ends, also when an item failed or the run stopped on an error."
+
+msgid "跑完了（有几项失败），照设定关闭了游戏"
+msgstr "Run ended (some items failed); the game was closed as set"
+
+msgid "跑完了，但游戏没能关掉，请自己关闭"
+msgstr "Run ended, but the game could not be closed; please close it yourself"
+
+msgid "定时启动跑的那次做完才会做，什么时候关照一键日常的设定"
+msgstr "Only for runs Scheduled Start begins; when to close follows the Run All Dailies setting"
+
+msgid "按「一键完成日常」后，确认视窗左下角可以勾「做完关闭游戏」，再选什么时候关。默认不勾。"
+msgstr "After pressing \"Run All Dailies\", tick \"Close the game when done\" at the bottom left of the confirm window, then pick when to close. Off by default."

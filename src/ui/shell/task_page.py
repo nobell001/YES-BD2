@@ -42,7 +42,9 @@ BATCH_OPTION_LABELS = {
     "失败后继续": "一项失败后继续跑后面的",
     # Leo 2026-10-25: players who auto-run on open never see the confirm
     # window, so 关闭游戏 sits next to 关机 here too (same config key).
-    "完成日常后关闭游戏": "全部做完且没有失败后关闭游戏",
+    "完成日常后关闭游戏": "做完关闭游戏",
+    # Leo 2026-11-02 「讓他選擇」: close only with no failure, or always.
+    "关闭游戏时机": "什么时候关",
     "完成日常后自动关机": "全部做完后自动关机",
     "启用": "允许一键运行",
 }

@@ -105,6 +105,34 @@ class ConfirmWindowTest(unittest.TestCase):
         self.assertIsNotNone(box)
         self.assertIs(True, config[CLOSE_GAME_KEY])
 
+    def test_when_to_close_shows_only_while_ticked_and_is_kept(self):
+        from src.tasks.DailyBatchTask import (
+            CLOSE_GAME_WHEN_KEY,
+            CLOSE_WHEN_ALWAYS,
+            CLOSE_WHEN_CLEAN,
+        )
+        from src.ui.shell import run_confirm
+
+        config = {CLOSE_GAME_KEY: False, CLOSE_GAME_WHEN_KEY: CLOSE_WHEN_CLEAN}
+        seen = {}
+
+        def exec_(dialog):
+            seen["hidden_at_first"] = dialog.close_when.isHidden()
+            dialog.close_game.click()
+            seen["shown_after_tick"] = not dialog.close_when.isHidden()
+            dialog.close_when._clicked(CLOSE_WHEN_ALWAYS)
+            return 0
+
+        batch = SimpleNamespace(config=config, child_tasks=())
+        with (
+            mock.patch.object(run_confirm.RunConfirm, "exec", exec_),
+            mock.patch.object(run_confirm.data, "batch_children", return_value=[]),
+        ):
+            run_confirm.ask(None, batch)
+        self.assertTrue(seen["hidden_at_first"])
+        self.assertTrue(seen["shown_after_tick"])
+        self.assertEqual(CLOSE_WHEN_ALWAYS, config[CLOSE_GAME_WHEN_KEY])
+
     def test_no_box_without_the_setting(self):
         self.assertIsNone(self._ask({}))
 
@@ -117,8 +145,15 @@ class TaskSettingsTest(unittest.TestCase):
         from src.ui.shell.task_page import BATCH_OPTION_LABELS
 
         keys = list(BATCH_OPTION_LABELS)
-        self.assertEqual(keys.index(CLOSE_GAME_KEY) + 1, keys.index("完成日常后自动关机"))
-        self.assertEqual("全部做完且没有失败后关闭游戏", BATCH_OPTION_LABELS[CLOSE_GAME_KEY])
+        self.assertLess(keys.index(CLOSE_GAME_KEY), keys.index("完成日常后自动关机"))
+        self.assertEqual("做完关闭游戏", BATCH_OPTION_LABELS[CLOSE_GAME_KEY])
+
+    def test_when_to_close_sits_right_after_the_switch(self):
+        from src.tasks.DailyBatchTask import CLOSE_GAME_WHEN_KEY
+        from src.ui.shell.task_page import BATCH_OPTION_LABELS
+
+        keys = list(BATCH_OPTION_LABELS)
+        self.assertEqual(keys.index(CLOSE_GAME_KEY) + 1, keys.index(CLOSE_GAME_WHEN_KEY))
 
 
 class CloseGameTest(unittest.TestCase):

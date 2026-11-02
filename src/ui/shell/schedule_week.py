@@ -869,8 +869,9 @@ class ScheduleDialog(Floating):
         self.wake.setToolTip(t("睡眠中会被叫醒；完全关机的电脑叫不醒"))
         self.close_game = CheckBox("做完关闭游戏", self.working.close_game)
         self.shutdown = CheckBox("做完关机", self.working.shutdown)
-        for box in (self.close_game, self.shutdown):
-            box.setToolTip(t("定时启动跑的那次，全部做完且没有失败时才会做"))
+        self.shutdown.setToolTip(t("定时启动跑的那次，全部做完且没有失败时才会做"))
+        # 什么时候关 is the one in 一键日常's own settings (Leo 2026-11-02).
+        self.close_game.setToolTip(t("定时启动跑的那次做完才会做，什么时候关照一键日常的设定"))
         options = hbox(None, (0, 2, 0, 0), OPTION_GAP)
         for box in (self.wake, self.close_game, self.shutdown):
             options.addWidget(box)

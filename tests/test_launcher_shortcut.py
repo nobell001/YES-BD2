@@ -2,7 +2,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.compat.launcher_shortcut import needs_retarget, retarget, shortcut_paths
+from src.compat.launcher_shortcut import (
+    is_launcher_shortcut_name,
+    needs_retarget,
+    remove_extra_launcher_shortcuts,
+    retarget,
+    shortcut_paths,
+)
 
 
 class FakeShortcut:
@@ -63,6 +69,93 @@ class LauncherShortcutTest(unittest.TestCase):
     def test_needs_retarget(self):
         self.assertFalse(needs_retarget("", Path("C:/a/yes-bd2.exe")))
         self.assertTrue(needs_retarget("C:/a/python/pythonw.exe", Path("C:/a/yes-bd2.exe")))
+
+
+class TargetShell:
+    """Each .lnk path has its own target, like the real WScript.Shell."""
+
+    def __init__(self, targets):
+        self.targets = targets
+
+    def CreateShortcut(self, path):
+        return FakeShortcut(self.targets.get(Path(path).name, ""))
+
+
+class DesktopDuplicateTest(unittest.TestCase):
+    """玩家 11-02：启动器每次开都在桌面再写一个「yes-bd2 启动器」，看到三个捷径。"""
+
+    def make(self, folder, names):
+        desktop = Path(folder)
+        for name in names:
+            (desktop / name).write_bytes(b"")
+        return desktop
+
+    def test_launcher_duplicates_in_every_language_are_removed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            launcher = Path(folder) / "app" / "yes-bd2.exe"
+            names = [
+                "yes-bd2.lnk",
+                "yes-bd2 启动器.lnk",
+                "yes-bd2 啟動器.lnk",
+                "yes-bd2 Launcher.lnk",
+                "yes-bd2 启动器 (2).lnk",
+            ]
+            desktop = self.make(folder, names)
+            shell = TargetShell({name: str(launcher) for name in names})
+            removed = remove_extra_launcher_shortcuts(desktop, launcher, "yes-bd2", shell)
+            self.assertEqual(4, len(removed))
+            self.assertEqual(["yes-bd2.lnk"], sorted(p.name for p in desktop.iterdir()))
+
+    def test_kept_when_the_main_shortcut_is_missing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            launcher = Path(folder) / "yes-bd2.exe"
+            desktop = self.make(folder, ["yes-bd2 启动器.lnk"])
+            shell = TargetShell({"yes-bd2 启动器.lnk": str(launcher)})
+            self.assertEqual(
+                [], remove_extra_launcher_shortcuts(desktop, launcher, "yes-bd2", shell)
+            )
+            self.assertTrue((desktop / "yes-bd2 启动器.lnk").exists())
+
+    def test_kept_while_the_main_shortcut_still_skips_the_launcher(self):
+        with tempfile.TemporaryDirectory() as folder:
+            launcher = Path(folder) / "yes-bd2.exe"
+            desktop = self.make(folder, ["yes-bd2.lnk", "yes-bd2 启动器.lnk"])
+            shell = TargetShell(
+                {"yes-bd2.lnk": "C:/x/python/pythonw.exe", "yes-bd2 启动器.lnk": str(launcher)}
+            )
+            self.assertEqual(
+                [], remove_extra_launcher_shortcuts(desktop, launcher, "yes-bd2", shell)
+            )
+
+    def test_other_shortcuts_and_other_installs_are_left_alone(self):
+        with tempfile.TemporaryDirectory() as folder:
+            launcher = Path(folder) / "yes-bd2.exe"
+            names = [
+                "yes-bd2.lnk",
+                "yes-bd2 启动器.lnk",
+                "BrownDust II.lnk",
+                "我的 yes-bd2 启动器.lnk",
+            ]
+            desktop = self.make(folder, names)
+            shell = TargetShell(
+                {
+                    "yes-bd2.lnk": str(launcher),
+                    "yes-bd2 启动器.lnk": "D:/other/yes-bd2.exe",
+                    "BrownDust II.lnk": str(launcher),
+                    "我的 yes-bd2 启动器.lnk": str(launcher),
+                }
+            )
+            self.assertEqual(
+                [], remove_extra_launcher_shortcuts(desktop, launcher, "yes-bd2", shell)
+            )
+            self.assertEqual(4, len(list(desktop.iterdir())))
+
+    def test_launcher_names(self):
+        self.assertTrue(is_launcher_shortcut_name("yes-bd2 启动器.lnk", "yes-bd2"))
+        self.assertTrue(is_launcher_shortcut_name("Lanzador de yes-bd2.lnk", "yes-bd2"))
+        self.assertTrue(is_launcher_shortcut_name("YES-BD2 Launcher (3).LNK", "yes-bd2"))
+        self.assertFalse(is_launcher_shortcut_name("yes-bd2.lnk", "yes-bd2"))
+        self.assertFalse(is_launcher_shortcut_name("yes-bd2 启动器.url", "yes-bd2"))
 
 
 if __name__ == "__main__":

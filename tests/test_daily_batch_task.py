@@ -10,9 +10,14 @@ from src.config import config
 from src.tasks import run_report, scheduler, weekly_ticks
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.DailyBatchTask import (
+    CLOSE_GAME_AFTER_FAIL_FAILED_NOTE,
+    CLOSE_GAME_AFTER_FAIL_NOTE,
     CLOSE_GAME_FAILED_NOTE,
     CLOSE_GAME_KEY,
     CLOSE_GAME_NOTE,
+    CLOSE_GAME_WHEN_KEY,
+    CLOSE_WHEN_ALWAYS,
+    CLOSE_WHEN_CLEAN,
     RUN_MODE_ALL,
     RUN_MODE_INCOMPLETE,
     SHUTDOWN_COUNTDOWN_SECONDS,
@@ -1114,7 +1119,14 @@ class DailyBatchTaskTest(unittest.TestCase):
                     DailyBatchTask.run(task)
                 shutdown.assert_not_called()
 
-    def _close_game_run(self, switch_on: bool, second_result: bool = True, closed: bool = True):
+    def _close_game_run(
+        self,
+        switch_on: bool,
+        second_result: bool = True,
+        closed: bool = True,
+        when: str | None = None,
+        before_run=None,
+    ):
         class First:
             pass
 
@@ -1127,8 +1139,16 @@ class DailyBatchTaskTest(unittest.TestCase):
         task, _resets = self.make_task(
             {First: first, Second: second},
             specs,
-            {"启用": True, CLOSE_GAME_KEY: switch_on, "第一项": True, "第二项": True},
+            {
+                "启用": True,
+                CLOSE_GAME_KEY: switch_on,
+                "第一项": True,
+                "第二项": True,
+                **({CLOSE_GAME_WHEN_KEY: when} if when else {}),
+            },
         )
+        if before_run is not None:
+            before_run(task)
         with tempfile.TemporaryDirectory() as temp_dir:
             set_default_store(RunHistoryStore(f"{temp_dir}/history.json"))
             try:
@@ -1154,6 +1174,80 @@ class DailyBatchTaskTest(unittest.TestCase):
 
     def test_close_game_not_after_a_failure(self):
         _task, close, _notice = self._close_game_run(switch_on=True, second_result=False)
+        close.assert_not_called()
+
+    def test_close_game_default_is_only_with_no_failure(self):
+        batch = DailyBatchTask(executor=SimpleNamespace(scene=None), app=SimpleNamespace())
+        self.assertEqual(CLOSE_WHEN_CLEAN, batch.default_config[CLOSE_GAME_WHEN_KEY])
+        _task, close, _notice = self._close_game_run(
+            switch_on=True, second_result=False, when=CLOSE_WHEN_CLEAN
+        )
+        close.assert_not_called()
+
+    def test_close_game_even_after_a_failure_when_chosen(self):
+        """A player asked (2026-11-02): close however the run ended."""
+        task, close, notice = self._close_game_run(
+            switch_on=True, second_result=False, when=CLOSE_WHEN_ALWAYS
+        )
+        close.assert_called_once_with()
+        notice.assert_called_once_with(CLOSE_GAME_AFTER_FAIL_NOTE)
+        self.assertIn("已关闭游戏", task.info.get("状态"))
+
+    def test_close_game_always_still_needs_the_switch(self):
+        _task, close, _notice = self._close_game_run(
+            switch_on=False, second_result=False, when=CLOSE_WHEN_ALWAYS
+        )
+        close.assert_not_called()
+
+    def test_close_game_always_also_closes_a_clean_run(self):
+        _task, close, notice = self._close_game_run(switch_on=True, when=CLOSE_WHEN_ALWAYS)
+        close.assert_called_once_with()
+        notice.assert_called_once_with(CLOSE_GAME_NOTE)
+
+    def test_close_game_always_that_will_not_close_is_told(self):
+        _task, close, notice = self._close_game_run(
+            switch_on=True, second_result=False, closed=False, when=CLOSE_WHEN_ALWAYS
+        )
+        close.assert_called_once_with()
+        notice.assert_called_once_with(CLOSE_GAME_AFTER_FAIL_FAILED_NOTE)
+
+    def test_close_game_always_waits_for_a_run_that_resumes_after_login(self):
+        def resumes(task):
+            task._resume_after_login_set = lambda: True
+
+        _task, close, _notice = self._close_game_run(
+            switch_on=True, second_result=False, when=CLOSE_WHEN_ALWAYS, before_run=resumes
+        )
+        close.assert_not_called()
+
+    def test_close_game_always_also_when_the_tool_hits_an_error(self):
+        """Leo 2026-11-02 「跑程式失敗」: the run breaking off on an error."""
+
+        def breaks(task):
+            def fail(_mode):
+                raise RuntimeError("boom")
+
+            task._run_children = fail
+
+        with (
+            mock.patch.object(DailyBatchTask, "_close_game", return_value=True) as close,
+            self.assertRaises(RuntimeError),
+        ):
+            self._close_game_run(switch_on=True, when=CLOSE_WHEN_ALWAYS, before_run=breaks)
+        close.assert_called_once()
+
+    def test_close_game_clean_only_not_when_the_tool_hits_an_error(self):
+        def breaks(task):
+            def fail(_mode):
+                raise RuntimeError("boom")
+
+            task._run_children = fail
+
+        with (
+            mock.patch.object(DailyBatchTask, "_close_game", return_value=True) as close,
+            self.assertRaises(RuntimeError),
+        ):
+            self._close_game_run(switch_on=True, when=CLOSE_WHEN_CLEAN, before_run=breaks)
         close.assert_not_called()
 
     def test_close_game_that_will_not_close_is_told(self):

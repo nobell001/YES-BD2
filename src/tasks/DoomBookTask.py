@@ -27,7 +27,7 @@ import numpy as np
 from qfluentwidgets import FluentIcon
 
 from src.tasks.RewardClaimTasks import _ClaimTaskBase
-from src.tasks.task_vision_mixin import REFERENCE_HEIGHT, REFERENCE_WIDTH
+from src.tasks.task_vision_mixin import BACK_LOOK_SECONDS, REFERENCE_HEIGHT, REFERENCE_WIDTH
 from src.utils import image_io
 from src.utils.cartridge_quick_switch import (
     BATTLE_GAMEPLAY_CATEGORY_HIGHLIGHT_REGION,
@@ -38,6 +38,7 @@ from src.utils.cartridge_quick_switch import (
 )
 from src.utils.image_utils import template_match_response
 from src.utils.ocr_utils import keyword_match_count, normalize_ocr_text
+from src.utils.press_next import Next, press_next
 from src.utils.stage_walk import (
     MARKER_TARGET,
     NUDGE_SEQUENCE,
@@ -516,20 +517,60 @@ class CartridgeFieldTask(_ClaimTaskBase):
         ):
             self.log_info(f"{self.label}：不在{self.label}地图上，不点卡带切换。")
             return False
-        self._click_reference(*FIELD_QUICK_SWITCH_POINT, after_sleep=1.5)
-        for _attempt in range(3):
-            frame = self.capture_frame()
-            text = self._text_in(frame, QUICK_BAR_ROI, "卡带快速切换")
-            if normalize_ocr_text(BATTLE_GAMEPLAY_CATEGORY_LABEL) in text:
-                if (
-                    category_highlight_ratio(frame, BATTLE_GAMEPLAY_CATEGORY_HIGHLIGHT_REGION)
-                    >= GAMEPLAY_CATEGORY_HIGHLIGHT_MIN_RATIO
-                ):
-                    return True
-                self.operate_click(*BATTLE_GAMEPLAY_CATEGORY_POINT, after_sleep=1.0)
-                continue
-            self.sleep(1.0)
-        return False
+        self._click_reference(*FIELD_QUICK_SWITCH_POINT, after_sleep=1.5)  # 不用确认：下面看快速切换栏，没开补点、按 P
+        # A press the game dropped leaves the field up: press the icon once
+        # more, then the key P (Leo 2026-10-31 「點了沒反應 … 補點」).
+        remedies = [
+            ("补点卡带切换图标", lambda: self._click_reference(*FIELD_QUICK_SWITCH_POINT, after_sleep=1.5)),  # 不用确认：接着看快速切换栏
+            ("按 P", lambda: self.tap_key("P", after_sleep=1.5)),
+        ]
+        while True:
+            for _attempt in range(3):
+                frame = self.capture_frame()
+                if self._quick_bar_shown(frame):
+                    if (
+                        category_highlight_ratio(frame, BATTLE_GAMEPLAY_CATEGORY_HIGHLIGHT_REGION)
+                        >= GAMEPLAY_CATEGORY_HIGHLIGHT_MIN_RATIO
+                    ):
+                        return True
+                    self.operate_click(*BATTLE_GAMEPLAY_CATEGORY_POINT, after_sleep=1.0)
+                    continue
+                self.sleep(1.0)
+            if not remedies or not self._wait_for_any_field(timeout=0.0):
+                return False  # only on a field is another press safe
+            remedy, press = remedies.pop(0)
+            self.log_info(f"{self.label}：点了卡带切换没看到快速切换栏，改用{remedy}。")
+            press()
+
+    def _quick_bar_shown(self, frame) -> bool:
+        text = self._text_in(frame, QUICK_BAR_ROI, "卡带快速切换")
+        return normalize_ocr_text(BATTLE_GAMEPLAY_CATEGORY_LABEL) in text
+
+    def _press_quick_slot(self, x: int, field_seen, label: str) -> bool:
+        """A cartridge slot on the quick-switch bar → that cartridge's field.
+
+        A slot press the game dropped leaves the bar up, and the field wait
+        gave up after it stood still (Leo 「其他地方也要套用」 補點): while the
+        bar still shows, the slot is pressed once more."""
+        outcome = press_next(
+            label,
+            lambda: self._click_reference(x, QUICK_SLOT_Y, after_sleep=3.0),
+            [
+                Next("地图", field_seen, goal=True),
+                Next("加载画面", is_loading_dark, loading=True),
+                Next("卡带快速切换", self._quick_bar_shown, before=True),
+            ],
+            capture=self.capture_frame,
+            sleep=self.sleep,
+            log=self.log_info,
+            timeout=BACK_LOOK_SECONDS,
+            retry_after=0.5,
+        )
+        if outcome.reached:
+            return True
+        if outcome.screen == "卡带快速切换":
+            return False
+        return self._wait_for(field_seen, timeout=PAGE_WAIT_SECONDS)
 
     def _playing_slot_x(self) -> int | None:
         """The slot of the cartridge in use: its ▶, else 「游戏中」, else the
@@ -569,11 +610,11 @@ class CartridgeFieldTask(_ClaimTaskBase):
     def _wait_for_any_field(self, timeout: float) -> bool:
         """Any cartridge field: the skill HUD labels SPACE / TAB are shown."""
 
-        def check(frame) -> bool:
-            text = self._text_in(frame, FIELD_SKILL_HUD_ROI, "技能栏")
-            return "space" in text or "tab" in text
+        return self._wait_for(self._any_field_in, timeout=timeout)
 
-        return self._wait_for(check, timeout=timeout)
+    def _any_field_in(self, frame) -> bool:
+        text = self._text_in(frame, FIELD_SKILL_HUD_ROI, "技能栏")
+        return "space" in text or "tab" in text
 
     def _reset_to_spawn(self) -> bool:
         if not self._open_quick_bar():
@@ -585,8 +626,9 @@ class CartridgeFieldTask(_ClaimTaskBase):
             return False
         other_x = neighbour_slot(doom_x)
         self.info_set("当前阶段", "临时切换到其他卡带")
-        self._click_reference(other_x, QUICK_SLOT_Y, after_sleep=3.0)
-        if not self._wait_for_any_field(timeout=PAGE_WAIT_SECONDS):
+        if not self._press_quick_slot(
+            other_x, self._any_field_in, f"{self.label}：临时切换卡带"
+        ):
             self.log_info(f"{self.label}：临时卡带未载入。")
             return False
         self.sleep(1.5)
@@ -594,8 +636,7 @@ class CartridgeFieldTask(_ClaimTaskBase):
             self.log_info(f"{self.label}：临时卡带上打不开卡带快速切换。")
             return False
         self.info_set("当前阶段", f"切回{self.label}")
-        self._click_reference(doom_x, QUICK_SLOT_Y, after_sleep=3.0)
-        return self._wait_for(self._field_visible, timeout=PAGE_WAIT_SECONDS)
+        return self._press_quick_slot(doom_x, self._field_visible, f"{self.label}：切回卡带")
 
     def _fight(self) -> bool:
         self.info_set("当前阶段", "去战斗")

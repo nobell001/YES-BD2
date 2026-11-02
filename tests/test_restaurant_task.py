@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from src.tasks import RestaurantTask as restaurant_module
+from src.tasks import business_entry
 from src.tasks.RestaurantTask import RestaurantStoneTask
 
 
@@ -99,9 +100,11 @@ class BusinessPopupTest(unittest.TestCase):
     the 守山人休息处 hunt screen; the retry check's notice tap is the only
     press in that window."""
 
-    def _task(self, narrow, wide, home):
+    def _task(self, narrow, wide, home, whole=""):
         clock = [0.0]
         task = object.__new__(RestaurantStoneTask)
+        task.config = {}
+        task.ocr = lambda **_k: [_box(whole)] if whole else []
         task.capture_frame = lambda: None
         task.info_set = lambda *_a: None
         task.log_info = lambda *_a, **_k: None
@@ -132,7 +135,46 @@ class BusinessPopupTest(unittest.TestCase):
         self.assertEqual([restaurant_module.BUSINESS_ENTRY_POINT], task.clicks)
         self.assertEqual(["restaurant_business_popup_not_open"], task.diagnostics)
 
-    def test_still_home_presses_again(self):
+    def test_still_home_presses_again_then_the_word_under_the_icon(self):
+        # Player summary v0.2.26 2026-11-01: the icon pressed three times,
+        # 主页 after each, never anything else.
         task = self._task(narrow="", wide="", home=True)
         self.assertFalse(task._open_business_popup())
-        self.assertEqual(restaurant_module.POPUP_CLICK_ATTEMPTS, len(task.clicks))
+        self.assertEqual(
+            [
+                restaurant_module.BUSINESS_ENTRY_POINT,
+                restaurant_module.BUSINESS_ENTRY_POINT,
+                business_entry.LABEL_POINT,
+            ],
+            task.clicks,
+        )
+        self.assertEqual(["restaurant_business_popup_not_open"], task.diagnostics)
+
+    def test_the_word_opens_it_when_the_icon_does_not(self):
+        task = self._task(narrow="", wide="", home=True)
+
+        def ocr(**_k):
+            # The popup only after the press on the word.
+            if task.clicks and task.clicks[-1] == business_entry.LABEL_POINT:
+                return [_box("取消"), _box("一键获得")]
+            return []
+
+        task.ocr = ocr
+        self.assertTrue(task._open_business_popup())
+        self.assertEqual(business_entry.LABEL_POINT, task.clicks[-1])
+
+    def test_popup_read_on_the_whole_picture_counts(self):
+        # 一键收菜 found the popup by reading the whole picture on the HDR
+        # screen; the two cut-outs alone are not trusted to.
+        task = self._task(narrow="", wide="", home=True, whole="")
+        task.ocr = lambda **_k: [_box("餐馆营业额现状"), _box("渔笼收获情况"), _box("取消")]
+        self.assertTrue(task._open_business_popup())
+        self.assertEqual([restaurant_module.BUSINESS_ENTRY_POINT], task.clicks)
+
+
+class BusinessPopupWordsTest(unittest.TestCase):
+    def test_home_text_is_not_the_popup(self):
+        self.assertFalse(business_entry.popup_seen("我的小屋 好友 公会 经营管理 格鲁TALK 抽抽乐 取消"))
+
+    def test_two_popup_lines_are(self):
+        self.assertTrue(business_entry.popup_seen("餐馆营业额现状 一键获得"))

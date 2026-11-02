@@ -720,3 +720,64 @@ class ClickToMoveTest(unittest.TestCase):
         self.assertEqual("键盘WASD走到舞台", task._move_mode())
         task._executor = SimpleNamespace(get_task_by_class=lambda cls: None)
         self.assertEqual("鼠标点击舞台", task._move_mode())
+
+
+class QuickSlotRemedyTest(unittest.TestCase):
+    """A dropped press on the quick-switch bar is pressed again (Leo 「補點」)."""
+
+    def _task(self, screens):
+        from contextlib import ExitStack
+        from functools import partial
+        from unittest import mock
+
+        from src.tasks import DoomBookTask as module
+        from src.utils import press_next
+
+        task = object.__new__(module.DoomBookTask)
+        task.label = "末日之书"
+        task.log_info = lambda *_a, **_k: None
+        task.sleep = lambda _s: None
+        presses = []
+        task._click_reference = lambda x, y, after_sleep=0.0: presses.append((x, y))
+        task.capture_frame = lambda: screens[min(len(presses), len(screens)) - 1]
+        task._quick_bar_shown = lambda frame: frame == "bar"
+        waits = []
+        task._wait_for = lambda check, timeout: waits.append(timeout) or False
+        clock = iter(range(0, 10000))
+        stack = ExitStack()
+        stack.enter_context(mock.patch.object(module, "is_loading_dark", lambda _f: False))
+        stack.enter_context(
+            mock.patch.object(module, "press_next", partial(press_next.press_next, clock=lambda: next(clock)))
+        )
+        self.addCleanup(stack.close)
+        return task, presses, waits
+
+    def test_slot_pressed_again_while_the_bar_stays(self):
+        task, presses, waits = self._task(["bar", "field"])
+        self.assertTrue(task._press_quick_slot(500, lambda f: f == "field", "切回卡带"))
+        self.assertEqual(2, len(presses))
+        self.assertEqual([], waits)
+
+    def test_slot_on_a_bar_that_never_goes_fails_fast(self):
+        task, presses, waits = self._task(["bar"])
+        self.assertFalse(task._press_quick_slot(500, lambda f: f == "field", "切回卡带"))
+        self.assertEqual(2, len(presses))  # the press and one more; no key here
+        self.assertEqual([], waits)
+
+    def test_unknown_screen_gets_the_field_wait_and_no_press(self):
+        task, presses, waits = self._task(["other"])
+        self.assertFalse(task._press_quick_slot(500, lambda f: f == "field", "切回卡带"))
+        self.assertEqual(1, len(presses))
+        self.assertEqual(1, len(waits))
+
+    def test_quick_bar_icon_pressed_again_then_p_on_the_field(self):
+        task, presses, _waits = self._task(["field"])
+        keys = []
+        task.tap_key = lambda key, after_sleep=0.0: keys.append(key) or True
+        task._wait_for_any_field = lambda timeout: True
+        task._field_visible = lambda frame: True
+        task.look_again = lambda check, **_k: check()
+        task._text_in = lambda *_a: ""
+        self.assertFalse(task._open_quick_bar())
+        self.assertEqual(2, len(presses))  # the icon, then once more
+        self.assertEqual(["P"], keys)

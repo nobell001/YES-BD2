@@ -171,6 +171,8 @@ class RunHistoryStoreTest(unittest.TestCase):
                         log_info=lambda *args, **kwargs: None,
                         _target_multiplier=lambda: 4,
                         _record_wish=lambda: None,
+                        # No server notice on screen.
+                        _close_server_error=lambda: None,
                     )
                     for method in methods:
                         value = False if method == failed_method else True

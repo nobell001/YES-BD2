@@ -15,7 +15,8 @@ from src.tasks.BaseBD2Task import (
     BaseBD2Task,
 )
 from src.tasks.map_trade.models import MatchResult, TemplateSpec
-from src.utils import task_vision
+from src.tasks import run_report
+from src.utils import known_popups, task_vision
 from src.utils.calibration import FHD_1080, HD_720, QHD_1440
 from src.utils.cartridge_collection import (
     BATTLE_ROW_PATTERNS,
@@ -161,6 +162,11 @@ PVP_RESULT_BASE_MINUTES = 20.0
 # more, and 正在进行 had to be gone 15 s).
 PVP_RESULT_MIN_WAIT_SECONDS = 90.0
 PVP_BATTLE_STUCK_SECONDS = STUCK_SECONDS
+# A server notice (「当前并非赛季。，error:100019」) freezes the battle screen:
+# once the screen has stood still this long, look for one every this often
+# instead of waiting out the stuck limit (player report 2026-11-01 23:00).
+PVP_SERVER_ERROR_STILL_SECONDS = 2.0
+PVP_SERVER_ERROR_LOOK_EVERY = 2.0
 PVP_RESULT_WAIT_CAP_FACTOR = 2.0
 # After a timed-out wait, this many result labels read mean the result popup
 # is up but misread: its ✕ is pressed before looking for 离开.
@@ -303,6 +309,7 @@ class PVPTask(BaseBD2Task):
         "PVP 升降级确认稳定",
         "PVP 返回主页",
         "PVP AP不足 OCR",
+        "PVP 服务器提示",
         "匹配错误",
         "Log",
         "Warning",
@@ -413,6 +420,7 @@ class PVPTask(BaseBD2Task):
 
         current_multiplier = target_multiplier
         self._battle_count_override = None
+        self._server_error_note = ""
         max_rounds = PVP_MAX_ROUNDS
         for round_index in range(1, max_rounds + 1):
             self.info_set("当前阶段", f"第 {round_index} 轮")
@@ -459,10 +467,14 @@ class PVPTask(BaseBD2Task):
                 self.log_completion("镜中之战：1 倍 AP 仍不足，流程结束。")
                 return True
             if start_state != "started":
+                if self._close_server_error() is not None:
+                    return self._leave_after_server_error()
                 self.info_set("状态", "镜中之战失败：未能开始战斗。")
                 return False
 
             if not self._wait_result_and_leave(current_multiplier):
+                if getattr(self, "_server_error_note", ""):
+                    return self._leave_after_server_error()
                 self.info_set("状态", "战斗结算或离开失败。")
                 return False
 
@@ -1913,8 +1925,14 @@ class PVPTask(BaseBD2Task):
                 )
             ],
             max_timeout=result_timeout * PVP_RESULT_WAIT_CAP_FACTOR,
+            server_error_check=True,
         )
         self.info_set("PVP 结算 OCR", result_text or "-")
+        if not result_found and (
+            getattr(self, "_server_error_note", "") or self._close_server_error()
+        ):
+            # Closed with its 确认; run() leaves 镜中之战 and says why.
+            return False
         if not result_found:
             self.log_warning("镜中之战：等待战斗结算超时，尝试离开结算画面。")
             self._leave_result_after_timeout(patterns, result_roi)
@@ -1927,6 +1945,49 @@ class PVPTask(BaseBD2Task):
             return False
         return self._return_home_from_pvp_hub()
 
+    def _close_server_error(self, frame=None):
+        """Close a server notice (「当前并非赛季。，error:100019」) with its
+        确认, the only button on it.  Returns the notice, or None when none is
+        on screen.  Leo 2026-11-02: 「看到這種 就確認 然後退出 且要和用戶說賽季
+        結算無法進行鏡中之戰」."""
+        frame = self.capture_frame() if frame is None else frame
+        if frame is None:
+            return None
+        error = known_popups.server_error(self._ocr_boxes(frame, "PVP 服务器提示"))
+        if error is None:
+            return None
+        note = known_popups.server_error_note(error)
+        self._server_error_note = note
+        self.info_set("PVP 服务器提示", f"{error.message} error:{error.code}")
+        self.log_warning(f"镜中之战：{note}，按「确认」关掉，退出镜中之战。", notify=True)
+        run_report.add_current_note(note)
+        point = self._ocr_box_center(error.confirm)
+        if point is not None:
+            self._click_frame_point(frame, point, after_sleep=1.0)
+        return error
+
+    def _leave_after_server_error(self) -> bool:
+        """After a server notice: leave the battle and go home.  The rest of
+        一键日常 goes on from 主页; anything this cannot leave is left to the
+        batch's way home (which closes such notices too)."""
+        note = getattr(self, "_server_error_note", "") or "游戏弹出服务器提示"
+        self.info_set("当前阶段", "服务器提示后退出")
+        # What the game shows after this 确认 has not been seen yet
+        # (不确定): a result page, the hub, or the title screen.  Each is
+        # left the usual way; a second notice is closed the same way.
+        for _ in range(2):
+            if self._close_server_error() is None:
+                break
+        battles = getattr(self, "_verified_battles", None) or 1
+        patterns = self._pvp_result_patterns(battles)
+        roi = self._screen_reference_roi_to_reference_roi(PVP_RESULT_SCREEN_ROI)
+        if self._leave_result_after_timeout(patterns, roi):
+            self.info_set("状态", f"{note}，已回到主页。")
+            self.log_completion(f"镜中之战：{note}，已退出并回到主页。")
+            return True
+        self.info_set("状态", f"{note}。")
+        return False
+
     def _close_result_page(self) -> None:
         self.info_set("当前阶段", "关闭战斗结算")
         self.sleep(1.0)
@@ -1935,7 +1996,7 @@ class PVPTask(BaseBD2Task):
             after_sleep=PVP_RESULT_CLOSE_AFTER_SECONDS,
         )
 
-    def _leave_result_after_timeout(self, patterns: list[str], roi) -> None:
+    def _leave_result_after_timeout(self, patterns: list[str], roi) -> bool:
         """Leave a result screen the wait did not confirm, the normal way.
 
         Recovery cannot press the result's ✕ or 离开, so a late or misread
@@ -1948,7 +2009,8 @@ class PVPTask(BaseBD2Task):
         if self._ocr_pattern_match_count(text, patterns) >= PVP_RESULT_PARTIAL_MATCHES:
             self._close_result_page()
         if self._click_leave_button() and self._ensure_pvp_hub_after_leave():
-            self._return_home_from_pvp_hub()
+            return bool(self._return_home_from_pvp_hub())
+        return False
 
     def _result_wait_timeout(self, battles: int) -> float:
         base_minutes = float(
@@ -2531,8 +2593,10 @@ class PVPTask(BaseBD2Task):
         interval: float = 0.5,
         extra_wait_patterns: list[tuple[str, tuple[int, int, int, int], str]] | None = None,
         max_timeout: float | None = None,
+        server_error_check: bool = False,
     ) -> tuple[bool, str]:
         started = monotonic()
+        next_look = 0.0
         end_at = started + max(0.0, timeout)
         # A read extra pattern, or a battle that keeps the screen moving, is
         # progress: it moves the end on (up to max_timeout) until neither is
@@ -2542,8 +2606,18 @@ class PVPTask(BaseBD2Task):
         last_text = ""
         while monotonic() <= end_at:
             frame = self.capture_frame()
-            if still is not None and still.still_for(frame, monotonic()) < 1.0:
+            still_for = still.still_for(frame, monotonic()) if still is not None else 0.0
+            if still is not None and still_for < 1.0:
                 end_at = min(cap_at, max(end_at, monotonic() + PVP_BATTLE_STUCK_SECONDS))
+            if (
+                server_error_check
+                and still_for >= PVP_SERVER_ERROR_STILL_SECONDS
+                and monotonic() >= next_look
+            ):
+                # A server notice stops the battle and freezes the screen.
+                next_look = monotonic() + PVP_SERVER_ERROR_LOOK_EVERY  # 自己等：隔一会再看
+                if self._close_server_error(frame) is not None:
+                    return False, last_text
             text = self._ocr_text(frame, name=name, roi=roi)
             last_text = text or last_text
             self.info_set(f"{name} OCR", text or "-")

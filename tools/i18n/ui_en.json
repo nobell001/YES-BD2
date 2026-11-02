@@ -560,7 +560,17 @@
   "没选星期，这个时段不会跑": "No day picked: this slot will not run",
   "和另一个时段隔不到 1 小时，请错开": "Less than 1 hour from another slot; move one of them",
   "电脑完全关机时不会启动；睡眠中可以叫醒": "Does not start while the PC is shut down; a sleeping PC can be woken",
-  "最多 {n} 个时段": "At most {n} time slots"
+  "最多 {n} 个时段": "At most {n} time slots",
+  "全部成功才关": "Only if all succeed",
+  "跑失败也关": "Even if something fails",
+  "什么时候关": "When to close",
+  "关闭游戏时机": "When to close",
+  "一键完成日常跑完后关闭游戏。": "Closes the game after Run All Dailies ends.",
+  "全部成功才关：没有任何一项跑失败、且全部已启用子任务今日均已完成才关。跑失败也关：跑完就关，有项目跑失败或中途出错停下也关。": "Only if all succeed: closes only when no item failed and every enabled item is done today. Even if something fails: closes when the run ends, also when an item failed or the run stopped on an error.",
+  "跑完了（有几项失败），照设定关闭了游戏": "Run ended (some items failed); the game was closed as set",
+  "跑完了，但游戏没能关掉，请自己关闭": "Run ended, but the game could not be closed; please close it yourself",
+  "定时启动跑的那次做完才会做，什么时候关照一键日常的设定": "Only for runs Scheduled Start begins; when to close follows the Run All Dailies setting",
+  "按「一键完成日常」后，确认视窗左下角可以勾「做完关闭游戏」，再选什么时候关。默认不勾。": "After pressing \"Run All Dailies\", tick \"Close the game when done\" at the bottom left of the confirm window, then pick when to close. Off by default."
  },
  "not_on_souseha": {
   "小屋": "House",

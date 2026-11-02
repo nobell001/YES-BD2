@@ -3254,9 +3254,10 @@ class TradeMerchantNavigationTest(unittest.TestCase):
         located = self._located_trade_card()
         clock = [0.0]
         still = np.full((720, 1280, 3), 120, np.uint8)
+        self.trade_card_clicks = []
         navigator = self._navigator(
             SimpleNamespace(
-                click_client=lambda *_args, **_kwargs: None,
+                click_client=lambda *_args, **_kwargs: self.trade_card_clicks.append(clock[0]),
                 capture=lambda: still,
             )
         )
@@ -3277,7 +3278,22 @@ class TradeMerchantNavigationTest(unittest.TestCase):
         result, now = self._timed_trade_card_entry(lambda _t: next(looks))
         self.assertFalse(result.success)
         self.assertEqual("剧情游戏卡1入场确认超时", result.message)
-        self.assertLessEqual(now, STUCK_SECONDS + 1.0)
+        # At most one more press (the card page was what it last saw).
+        self.assertLessEqual(len(self.trade_card_clicks), 2)
+        self.assertLessEqual(now, 2 * STUCK_SECONDS + 2.0)
+
+    def test_enter_trade_card_presses_again_while_the_card_page_stays(self):
+        # A dropped press leaves the card page up (Leo 2026-10-31 「補點」).
+        result, _now = self._timed_trade_card_entry(
+            lambda t: ScreenState.CARD_MENU if not self.trade_card_clicks[1:] else ScreenState.SANDBOX
+        )
+        self.assertTrue(result.success)
+        self.assertEqual(2, len(self.trade_card_clicks))
+
+    def test_enter_trade_card_does_not_press_again_off_the_card_page(self):
+        result, _now = self._timed_trade_card_entry(lambda _t: ScreenState.UNKNOWN)
+        self.assertFalse(result.success)
+        self.assertEqual(1, len(self.trade_card_clicks))
 
     def test_enter_trade_card_does_not_count_the_loading_screen(self):
         # Leo 2026-10-15 「我說的10秒是卡死 或者辨識不到」: 2K, the field came

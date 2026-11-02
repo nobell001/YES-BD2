@@ -49,6 +49,12 @@ SHUTDOWN_COUNTDOWN_SECONDS = 60
 # with no failure (off by default); the tool says so once after the update.
 CLOSE_GAME_KEY = "完成日常后关闭游戏"
 CLOSE_GAME_NOTICE_KEY = "_关闭游戏新设定提示"
+# A player asked (2026-11-02, Leo 「讓他選擇」): close the game when the run
+# ends even if some item failed.  The old rule stays the default.
+CLOSE_GAME_WHEN_KEY = "关闭游戏时机"
+CLOSE_WHEN_CLEAN = "全部成功才关"
+CLOSE_WHEN_ALWAYS = "跑失败也关"
+CLOSE_WHEN_OPTIONS = (CLOSE_WHEN_CLEAN, CLOSE_WHEN_ALWAYS)
 # 跑完通知 (设置 page) shown once to players from before it (Leo 2026-10-22
 # 「用戶引導甚麼的 都要做好」); new installs are not asked.
 RUN_NOTIFY_NOTICE_KEY = "_跑完通知新设定提示"
@@ -59,6 +65,8 @@ SCHEDULE_NOTICE_KEY = "_定时启动新设定提示"
 STATUS_BAR_NOTICE_KEY = "_游戏状态条新设定提示"
 CLOSE_GAME_NOTE = "全部做完了，照设定关闭了游戏"
 CLOSE_GAME_FAILED_NOTE = "全部做完了，但游戏没能关掉，请自己关闭"
+CLOSE_GAME_AFTER_FAIL_NOTE = "跑完了（有几项失败），照设定关闭了游戏"
+CLOSE_GAME_AFTER_FAIL_FAILED_NOTE = "跑完了，但游戏没能关掉，请自己关闭"
 # Leo 2026-10-21 「這次新增兩個功能 更新上去和以前一樣 要跳窗告訴用戶」: a
 # player from before 救赎之塔 and 亲密度谈心 is shown them once.
 NEW_DAILIES = ("救赎之塔", "亲密度谈心")
@@ -227,6 +235,7 @@ class ChildBatchTask(BaseTask):
                 "启用": True,
                 "失败后继续": True,
                 CLOSE_GAME_KEY: False,
+                CLOSE_GAME_WHEN_KEY: CLOSE_WHEN_CLEAN,
                 "完成日常后自动关机": False,
                 CLOSE_GAME_NOTICE_KEY: False,
                 NEW_DAILIES_NOTICE_KEY: False,
@@ -245,9 +254,10 @@ class ChildBatchTask(BaseTask):
                     "某个子任务失败时，先尝试回到主页（关闭弹窗、按返回、从地图回主页），"
                     "成功回到主页就继续执行后面的子任务；回不到主页才停止。"
                 ),
-                CLOSE_GAME_KEY: (
-                    "一键完成日常没有任何一项失败、且全部已启用子任务今日均已完成"
-                    "（含运行前就已完成的项目）后，关闭游戏。"
+                CLOSE_GAME_KEY: "一键完成日常跑完后关闭游戏。",
+                CLOSE_GAME_WHEN_KEY: (
+                    "全部成功才关：没有任何一项跑失败、且全部已启用子任务今日均已完成才关。"
+                    "跑失败也关：跑完就关，有项目跑失败或中途出错停下也关。"
                 ),
                 "完成日常后自动关机": (
                     "一键完成日常运行成功且全部已启用子任务今日均已完成"
@@ -270,7 +280,11 @@ class ChildBatchTask(BaseTask):
                     "sub_configs": {
                         True: child_keys,
                     }
-                }
+                },
+                CLOSE_GAME_WHEN_KEY: {
+                    "type": "drop_down",
+                    "options": list(CLOSE_WHEN_OPTIONS),
+                },
             }
         )
 
@@ -455,6 +469,11 @@ class ChildBatchTask(BaseTask):
             except (TaskDisabledException, FinishedException):
                 self._report_ended = run_report.ENDED_STOPPED
                 self._record_stopped_progress()
+                raise
+            except Exception:
+                # The tool itself broke off (Leo 2026-11-02 「跑程式失敗」):
+                # 跑失败也关 still closes the game before the error goes on.
+                self._maybe_close_game_after_failures()
                 raise
             finally:
                 run_report.finish(self._report_ended)
@@ -768,6 +787,7 @@ class ChildBatchTask(BaseTask):
             else:
                 self.info_set("状态", f"{self.batch_label}完成（{len(failed)}项失败）。")
                 self._report_ended = run_report.ENDED_FAILED
+            self._maybe_close_game_after_failures()
             return False
 
         self.info_set("状态", f"{self.batch_label}完成。")
@@ -1052,6 +1072,15 @@ class ChildBatchTask(BaseTask):
             return False
         return bool(getattr(scheduled_start.load(), name, False))
 
+    def _close_game_wanted(self) -> bool:
+        return bool(self.config.get(CLOSE_GAME_KEY, False)) or self._scheduled_option(
+            "close_game"
+        )
+
+    def _close_even_after_failure(self) -> bool:
+        """关闭游戏时机 is 跑失败也关 (定时启动 runs use the same choice)."""
+        return self.config.get(CLOSE_GAME_WHEN_KEY, CLOSE_WHEN_CLEAN) == CLOSE_WHEN_ALWAYS
+
     def _maybe_close_game_after_daily(
         self,
         completed: list[str],
@@ -1060,28 +1089,51 @@ class ChildBatchTask(BaseTask):
         """Leo 2026-10-20: close the game once everything is done.
 
         Only called after a run with no failed child, so together with
-        _all_done_today this is 「全部完成無異常錯誤才關」.
+        _all_done_today this is 「全部完成無異常錯誤才關」.  With
+        跑失败也关 the run ending is enough.
         """
-        if not bool(self.config.get(CLOSE_GAME_KEY, False)) and not self._scheduled_option(
-            "close_game"
-        ):
+        if not self._close_game_wanted():
             return
         if self._others_in_line("关闭游戏"):
             return
-        if not self._all_done_today(completed, pre_completed, "关闭游戏"):
+        if not self._close_even_after_failure() and not self._all_done_today(
+            completed, pre_completed, "关闭游戏"
+        ):
             return
+        if self._close_game(CLOSE_GAME_FAILED_NOTE):
+            self.info_set("状态", "今日日常已全部完成，已关闭游戏。")
+            self.log_info(f"{self.batch_label}：{CLOSE_GAME_NOTE}。")
+            run_report.set_notice(CLOSE_GAME_NOTE)
+
+    def _maybe_close_game_after_failures(self) -> None:
+        """跑失败也关: the run ended with failed items (stopped early or
+        ran to the end) or the tool hit an error.  Not after a 闪退 / title screen that is reopened
+        and run again, and never after the player's own Stop."""
+        if not getattr(self, "config", None) or not self._close_game_wanted():
+            return
+        if not self._close_even_after_failure():
+            self.log_info(f"{self.batch_label}：有几项失败，设定是全部成功才关，不关闭游戏。")
+            return
+        if self._resume_after_login_set():
+            self.log_info(f"{self.batch_label}：重新登录后还要接着跑，先不关闭游戏。")
+            return
+        if self._others_in_line("关闭游戏"):
+            return
+        if self._close_game(CLOSE_GAME_AFTER_FAIL_FAILED_NOTE):
+            self.info_set("状态", f"{self.batch_label}跑完了，有几项失败，已关闭游戏。")
+            self.log_info(f"{self.batch_label}：{CLOSE_GAME_AFTER_FAIL_NOTE}。")
+            run_report.set_notice(CLOSE_GAME_AFTER_FAIL_NOTE)
+
+    def _close_game(self, failed_note: str) -> bool:
         try:
             closed = game_process.close_game()
         except Exception as exc:
             self.log_error(f"{self.batch_label}：关闭游戏失败。", exc)
             closed = False
         if not closed:
-            self.log_warning(f"{self.batch_label}：{CLOSE_GAME_FAILED_NOTE}。")
-            run_report.set_notice(CLOSE_GAME_FAILED_NOTE)
-            return
-        self.info_set("状态", "今日日常已全部完成，已关闭游戏。")
-        self.log_info(f"{self.batch_label}：{CLOSE_GAME_NOTE}。")
-        run_report.set_notice(CLOSE_GAME_NOTE)
+            self.log_warning(f"{self.batch_label}：{failed_note}。")
+            run_report.set_notice(failed_note)
+        return closed
 
     def _maybe_shutdown_after_daily(
         self,

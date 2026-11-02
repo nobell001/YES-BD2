@@ -107,8 +107,14 @@ def _handle_dialog(task, vision: Vision) -> str:
     if center is None:
         return "none"
     quit_dialog = known_popups.is_quit_dialog(boxes)
+    error = known_popups.server_error(boxes)
     if quit_dialog:
         task.log_info("恢复主页：游戏问要不要关闭游戏，点击「取消」，不再按 Esc。")
+    elif error is not None:
+        task.log_warning(
+            f"恢复主页：{known_popups.server_error_note(error)}，点击「确认」关闭。",
+            notify=True,
+        )
     else:
         task.log_info(f"恢复主页：点击「{press.label}」关闭弹窗。")
     task.operate_click(center[0] / width, center[1] / height, after_sleep=1.0)

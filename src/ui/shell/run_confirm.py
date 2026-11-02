@@ -190,6 +190,7 @@ class RunConfirm(Floating):
         parent: QWidget | None = None,
         open_guide: Callable[[], None] | None = None,
         close_game: bool | None = None,
+        close_when: str | None = None,
     ):
         super().__init__(parent)
         self._open_guide = open_guide
@@ -296,9 +297,24 @@ class RunConfirm(Floating):
         buttons = hbox(None, (0, 2, 0, 0), 10)
         # Leo 2026-10-21 「藏在...誰看的到 改放這裡」: 关闭游戏 next to 开始.
         self.close_game = None
+        self.close_when = None
         if close_game is not None:
-            self.close_game = CheckBox("全部做完且没有失败后关闭游戏", close_game)
+            self.close_game = CheckBox("做完关闭游戏", close_game)
             buttons.addWidget(self.close_game, 0, Qt.AlignVCenter)
+            # A player asked to close even after a failure (Leo 2026-11-02
+            # 「讓他選擇」); shown only while the box is ticked.
+            from src.tasks.DailyBatchTask import CLOSE_WHEN_CLEAN, CLOSE_WHEN_OPTIONS
+
+            self.close_when_options = CLOSE_WHEN_OPTIONS
+            self.close_when = Segmented(
+                CLOSE_WHEN_OPTIONS, close_when or CLOSE_WHEN_CLEAN, accent=True
+            )
+            self.close_when.setStyleSheet(
+                "QPushButton { min-height: 26px; max-height: 26px; padding: 0 10px; font-size: 12px; }"
+            )
+            self.close_when.setVisible(close_game)
+            self.close_game.toggled.connect(self.close_when.setVisible)
+            buttons.addWidget(self.close_when, 0, Qt.AlignVCenter)
         buttons.addStretch(1)
         buttons.addWidget(Button("取消", "secondary", on_click=self.reject))
         self.start = Button("", "primary", "play", "lg", on_click=self.accept)
@@ -390,14 +406,26 @@ def ask(
             if child.weekly and data.day_text(finished) != "今天":
                 when = data.day_text(finished) or when
             done_text[child.key] = when
-    from src.tasks.DailyBatchTask import CLOSE_GAME_KEY
+    from src.tasks.DailyBatchTask import CLOSE_GAME_KEY, CLOSE_GAME_WHEN_KEY
 
     config = getattr(batch, "config", None) or {}
     close_game = bool(config[CLOSE_GAME_KEY]) if CLOSE_GAME_KEY in config else None
-    dialog = RunConfirm(children, done, done_text, clone, window, open_guide, close_game)
+    dialog = RunConfirm(
+        children,
+        done,
+        done_text,
+        clone,
+        window,
+        open_guide,
+        close_game,
+        config.get(CLOSE_GAME_WHEN_KEY),
+    )
     if dialog.close_game is not None:
         # Kept as soon as it is clicked, like 打开就自动跑日常 on 首页.
         dialog.close_game.toggled.connect(lambda on: config.__setitem__(CLOSE_GAME_KEY, on))
+        dialog.close_when.changed.connect(
+            lambda value: config.__setitem__(CLOSE_GAME_WHEN_KEY, value)
+        )
     if not dialog.exec():
         return None
     return dialog.mode, dict(dialog.ticks)

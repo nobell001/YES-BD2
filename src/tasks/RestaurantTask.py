@@ -12,11 +12,15 @@ from time import monotonic
 
 from qfluentwidgets import FluentIcon
 
+from ok.task.exceptions import FinishedException, TaskDisabledException
+
+from src.tasks import business_entry
 from src.tasks.recovery import recover_to_home
 from src.tasks.RewardClaimTasks import _ClaimTaskBase
 from src.utils.ocr_utils import keyword_match_count
+from src.utils.press_next import Next, press_next
 
-BUSINESS_ENTRY_POINT = (165, 262)
+BUSINESS_ENTRY_POINT = business_entry.ENTRY_POINT
 BUSINESS_POPUP_ROI = (650, 240, 640, 110)
 BUSINESS_POPUP_KEYWORDS = ("餐馆营业额现状", "立刻前往")
 # The whole popup, read when the restaurant row was not: the popup grows with
@@ -98,43 +102,75 @@ class RestaurantStoneTask(_ClaimTaskBase):
         boxes = self._roi_boxes(self.capture_frame(), BUSINESS_POPUP_ROI, "经营管理")
         return self._boxes_text(boxes)
 
-    def _popup_open(self) -> bool:
-        if keyword_match_count(self._popup_text(), BUSINESS_POPUP_KEYWORDS) >= 2:
+    def _popup_open(self, frame=None) -> bool:
+        frame = self.capture_frame() if frame is None else frame
+        # The whole picture first, read like 一键收菜 reads it: that read
+        # found the popup on the HDR screen where this task's cut-outs did
+        # not open it (player summary v0.2.26 2026-11-01, see business_entry).
+        if business_entry.popup_seen(self._whole_frame_text(frame)):
             return True
-        boxes = self._roi_boxes(self.capture_frame(), BUSINESS_POPUP_WIDE_ROI, "经营管理整窗")
+        boxes = self._roi_boxes(frame, BUSINESS_POPUP_ROI, "经营管理")
+        if keyword_match_count(self._boxes_text(boxes), BUSINESS_POPUP_KEYWORDS) >= 2:
+            return True
+        boxes = self._roi_boxes(frame, BUSINESS_POPUP_WIDE_ROI, "经营管理整窗")
         return keyword_match_count(self._boxes_text(boxes), BUSINESS_POPUP_WIDE_KEYWORDS) >= 2
 
-    def _home_without_taps(self, timeout: float) -> bool:
-        """Home on screen, only read.
+    def _whole_frame_text(self, frame) -> str:
+        try:
+            boxes = self.ocr(
+                frame=frame,
+                threshold=float(self.config.get("日常 OCR 阈值", 0.2)),
+                target_height=720,
+                log=False,
+                name="经营管理弹窗",
+            )
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception as exc:
+            self.info_set("经营管理弹窗 OCR 错误", str(exc))
+            return ""
+        return self._boxes_text(list(boxes or []))
 
-        The shared home check taps the left column to clear a login notice
-        when home reads dimmed, and an open 经营管理 popup dims home too: with
-        the popup up but not read, that tap could open something else (live
-        4K 2026-10-10 13:33: it ended on the 守山人休息处 hunt screen; the
-        tap is the only press in that window, inferred, not seen).
-        """
-        end_at = monotonic() + timeout
-        while True:
-            if self._home_confirmation_signals(self.capture_frame(), "经营管理重试前主页确认")[0]:
-                return True
-            if monotonic() >= end_at:
-                return False
-            self.sleep(0.35)
+    def _home_only_read(self, frame) -> bool:
+        """主页 on this frame, only read: the shared check that taps the
+        left column on a dimmed home could open something else under an
+        unread popup (live 4K 2026-10-10 13:33, 守山人休息处)."""
+        return bool(self._home_confirmation_signals(frame, "经营管理重试前主页确认")[0])
 
     def _open_business_popup(self) -> bool:
-        for attempt in range(1, POPUP_CLICK_ATTEMPTS + 1):
-            self._sleep_after_recognition()
-            self._click_reference(*BUSINESS_ENTRY_POINT, after_sleep=1.2)
-            end_at = monotonic() + 4.0
-            while monotonic() <= end_at:
-                if self._popup_open():
-                    return True
-                self.sleep(0.5)
-            if not self._home_without_taps(2.0):
-                self.log_info("领取常客圣石：点了经营管理，弹窗没认到，也不在主页，停下不再点。")
-                self._save_flow_diagnostic("restaurant_business_popup_not_open")
-                return False
-            self.log_info(f"领取常客圣石：第{attempt}次点击经营管理未打开，重试。")
+        """Press 经营管理 until its popup shows, with the shared remedies.
+
+        Still 主页 after a press: the icon once more, then the 「经营管理」
+        word under it.  A screen that is neither (something opened) is never
+        pressed: a press there could land on something else.
+        """
+        self._sleep_after_recognition()
+        outcome = press_next(
+            "领取常客圣石：经营管理",
+            lambda: self._click_reference(*BUSINESS_ENTRY_POINT, after_sleep=1.2),
+            [
+                Next("经营管理弹窗", self._popup_open, goal=True),
+                Next("主页", self._home_only_read, before=True),
+            ],
+            capture=self.capture_frame,
+            sleep=self.sleep,
+            log=self.log_info,
+            fixed=lambda: self._click_reference(*business_entry.LABEL_POINT, after_sleep=1.2),
+            timeout=business_entry.POPUP_LOOK_SECONDS,
+            clock=lambda: monotonic(),
+        )
+        if outcome:
+            return True
+        if outcome.screen == "主页":
+            self.log_info(
+                "领取常客圣石：点了经营管理图标两次、再点下面的「经营管理」字，"
+                "游戏都没打开经营管理，画面还在主页。"
+            )
+        else:
+            self.log_info(
+                f"领取常客圣石：点了经营管理，没认出经营管理弹窗，画面是{outcome.screen}，停下不再点。"
+            )
+        self._save_flow_diagnostic("restaurant_business_popup_not_open")
         return False
 
     def _find_go_button(self):

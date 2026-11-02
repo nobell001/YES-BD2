@@ -615,11 +615,15 @@ class TradeNavigationMixin:
                 False, ScreenState.CARD_MENU, "剧情游戏卡1点击前角标复核失败，已停止点击"
             )
         badge_frame, badge = confirmed
-        self.vision.click_client(badge.best.result.center, badge_frame.shape, after_sleep=1.0)
+        def press_badge() -> None:
+            self.vision.click_client(badge.best.result.center, badge_frame.shape, after_sleep=1.0)  # 不用确认：下面等地图，还在卡带页补点
+
+        press_badge()
         # Loading does not count as stuck (Leo 2026-10-15 「我說的10秒是卡死
         # 或者辨識不到」): 2K 10-15 the field came 13 s after the click and was
         # given up on at 10 s.
         wait = ProgressWait(monotonic(), before=scene_at_press(self.task))
+        repressed = False
         hits = 0
         while True:
             frame = self.vision.capture()
@@ -634,7 +638,16 @@ class TradeNavigationMixin:
                 continue  # the field is read: take the second frame at once
             hits = 0
             if wait.over(frame, monotonic(), loading=state == ScreenState.LOADING):
-                break
+                if repressed or state != ScreenState.CARD_MENU:
+                    break
+                # The press was dropped: the card page is still up (Leo
+                # 2026-10-31 「點了沒反應 … 補點」).  Same badge, once more.
+                repressed = True
+                self._status("导航状态", "点了剧情游戏卡1还在卡带页，补点一次")
+                self.task.log_info("跑商：点了剧情游戏卡1还在卡带页，补点一次。")
+                press_badge()
+                wait = ProgressWait(monotonic(), before=scene_at_press(self.task))
+                continue
             self.task.sleep(0.5)
         return NavigationResult(False, self.classify(), "剧情游戏卡1入场确认超时")
 

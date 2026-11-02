@@ -8,11 +8,19 @@ Leo 4K 10-09 实际点开确认）。启动器是别人的程序，没法改它�
 启动器 exe，图示留着（Leo 10-09：只让启动器带这个图示，避免点错）。
 
 只在安装版、不在桌面分身里做；源码版找不到启动器就什么都不做。
+
+桌面上多出来的「yes-bd2 启动器」：启动器每次开工具，只要桌面有「yes-bd2」
+捷径，就会在旁边再写一个「yes-bd2 启动器」（启动器语言换过，名字就变成
+「啟動器」「Launcher」……，越积越多）。玩家删掉，下次开又出现（玩家回报
+11-02「桌面有三个快捷」）。把「yes-bd2」改成开启动器之后，两个捷径开的是
+同一个东西，所以只留「yes-bd2」，把指向同一个启动器的「启动器」捷径删掉。
+桌面没有「yes-bd2」时不删（玩家自己只留启动器那个，启动器也不会再写）。
 """
 
 from __future__ import annotations
 
 import os
+import re
 import threading
 from pathlib import Path
 
@@ -27,6 +35,66 @@ CHECK_AFTER_SECONDS = (20, 60, 180)
 
 def shortcut_paths(app_name: str, start_menu: Path, desktop: Path) -> list[Path]:
     return [start_menu / f"{app_name}.lnk", desktop / f"{app_name}.lnk"]
+
+
+# PyAppify's message.app_launcher_name in every launcher language (locales/app.yml).
+LAUNCHER_NAME_FORMS = (
+    "{app} 启动器",
+    "{app} 啟動器",
+    "{app} Launcher",
+    "Lanzador de {app}",
+    "{app} ランチャー",
+    "{app} 런처",
+)
+
+
+def is_launcher_shortcut_name(file_name: str, app_name: str) -> bool:
+    """「yes-bd2 启动器.lnk」各语言的名字，含 Windows 复制出来的「 (2)」。"""
+    stem, ext = os.path.splitext(file_name)
+    if ext.casefold() != ".lnk":
+        return False
+    stem = re.sub(r" \(\d+\)$", "", stem).casefold()
+    return any(stem == form.format(app=app_name).casefold() for form in LAUNCHER_NAME_FORMS)
+
+
+def same_path(a: str, b: Path) -> bool:
+    return bool(a) and os.path.normcase(os.path.abspath(a)) == os.path.normcase(
+        os.path.abspath(str(b))
+    )
+
+
+def extra_launcher_shortcuts(desktop: Path, launcher: Path, app_name: str, shell) -> list[Path]:
+    """桌面上跟「yes-bd2」重复的启动器捷径；「yes-bd2」本身不开启动器时为空。"""
+    main = desktop / f"{app_name}.lnk"
+    if not main.is_file():
+        return []
+    if not same_path(str(shell.CreateShortcut(str(main)).TargetPath or ""), launcher):
+        return []
+    extra = []
+    for link in sorted(desktop.iterdir()):
+        if not link.is_file() or not is_launcher_shortcut_name(link.name, app_name):
+            continue
+        if same_path(str(shell.CreateShortcut(str(link)).TargetPath or ""), launcher):
+            extra.append(link)
+    return extra
+
+
+def remove_extra_launcher_shortcuts(
+    desktop: Path, launcher: Path, app_name: str, shell
+) -> list[Path]:
+    removed = []
+    for link in extra_launcher_shortcuts(desktop, launcher, app_name, shell):
+        try:
+            link.unlink()
+            removed.append(link)
+        except OSError as exc:
+            logger.warning(f"launcher shortcut: could not remove duplicate {link} ({exc})")
+    if removed:
+        logger.info(
+            "launcher shortcut: removed desktop duplicates of "
+            f"{app_name}.lnk (same launcher): {[p.name for p in removed]}"
+        )
+    return removed
 
 
 def needs_retarget(target: str, launcher: Path) -> bool:
@@ -73,6 +141,11 @@ def fix_shortcuts(launcher: Path, app_name: str) -> list[Path]:
             logger.warning(f"launcher shortcut: could not update {link} ({exc})")
     if changed:
         logger.info(f"launcher shortcut: now opens the launcher: {[str(p) for p in changed]}")
+    try:
+        if desktop.is_dir() and str(desktop) not in ("", "."):
+            remove_extra_launcher_shortcuts(desktop, launcher, app_name, shell)
+    except Exception as exc:
+        logger.warning(f"launcher shortcut: could not check desktop duplicates ({exc})")
     return changed
 
 

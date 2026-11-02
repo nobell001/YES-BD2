@@ -729,7 +729,8 @@ class CollectorSkillTest(unittest.TestCase):
             if icon.name in executed_icons:
                 state = ActionIconState.ABSENT if icon is SEARCH_ICON else ActionIconState.USED
             else:
-                state = states[icon.name]
+                # 探查's glyph is covered by its countdown ("87") while it runs.
+                state = states.get(icon.name, ActionIconState.ABSENT)
             return ActionIconDetection(
                 state,
                 MatchResult(

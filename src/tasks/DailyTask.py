@@ -6,6 +6,7 @@ import numpy as np
 from ok.task.exceptions import FinishedException, TaskDisabledException
 from qfluentwidgets import FluentIcon
 
+from src.tasks import business_entry
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.claim_page import CONFIRM_TEXT, OVERLAY_DISMISS_KEYWORDS, REWARD_DIALOG_TITLES
 from src.tasks.map_trade.models import TemplateSpec
@@ -79,16 +80,9 @@ GUILD_SUCCESS_KEYWORDS = ["签到成功", "奖励已发放至邮箱"]
 # OCR 均可读到），用于返回主页失败时判断是否仍滞留公会页。
 GUILD_PAGE_KEYWORDS = ["公告事项", "进入公会联合战", "公会商店"]
 
-# 经营管理弹窗实际文案（国服简体，BUG-20260829-011 实测转录）：
-# 餐馆营业额现状/渔笼收获情况/助手工作情况/取消/一键获得。
+# 经营管理弹窗实际文案：shared with 领取常客圣石 (src/tasks/business_entry.py).
 BUSINESS_CLAIM_RECHECK_SECONDS = 2.5
-BUSINESS_COLLECT_KEYWORDS = [
-    "餐馆营业额现状",
-    "渔笼收获情况",
-    "助手工作情况",
-    "取消",
-    "一键获得",
-]
+BUSINESS_COLLECT_KEYWORDS = list(business_entry.POPUP_KEYWORDS)
 
 # 以下点击点均为 1920×1080 参考（_click_reference 按当前客户区归一）。
 GUILD_SIGN_IN_ENTRY_REFERENCE_POINT = (370, 155)
@@ -102,7 +96,7 @@ MY_HOME_TITLE_RELATIVE_ROI = (0.11, 0.01, 0.25, 0.10)
 MY_HOME_TITLE_OCR_RETRY_INTERVAL = 0.4
 MY_HOME_ENTRY_CLICK_ATTEMPTS = 3
 MY_HOME_ENTRY_RETRY_SECONDS = 4.0
-BUSINESS_COLLECT_ENTRY_REFERENCE_POINT = (165, 260)
+BUSINESS_COLLECT_ENTRY_REFERENCE_POINT = business_entry.ENTRY_POINT
 # How long a 经营管理 press waits for the popup before a lost press is redone.
 BUSINESS_ENTRY_RETRY_SECONDS = 4.0
 # Fallback only: closes the popup when 取消 is not read, and taps away an
@@ -771,6 +765,13 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             found, frame, boxes = self._wait_business_collect_popup(
                 max(first_wait, wait - first_wait)
             )
+            # Still 主页: the 「经营管理」 word under the icon, another part of
+            # the same button (player 2026-11-01: six presses on the icon
+            # left 主页 up in 领取常客圣石, see business_entry).
+            if not found and self._home_still_showing():
+                self.log_info("一键收菜：点了两次经营管理图标还在主页，改点下面的「经营管理」字。")
+                self._click_reference(*business_entry.LABEL_POINT, after_sleep=1.0)  # 不用确认：下一行等弹窗
+                found, frame, boxes = self._wait_business_collect_popup(first_wait)
         elif not found and wait > first_wait:
             found, frame, boxes = self._wait_business_collect_popup(wait - first_wait)
         self.info_set("一键收菜 OCR", self._boxes_text(boxes) or "-")
