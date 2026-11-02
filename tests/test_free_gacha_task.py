@@ -274,6 +274,7 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
                 task._wait_for_gacha_page = lambda *_args, **_kwargs: False
                 task.capture_frame = lambda: "screen"
                 task._home_confirmation_ok = lambda *_args: False
+                task._home_for_entry_retry = lambda _name: False
 
                 self.assertFalse(FreeGachaTask.run(task))
                 self.assertIn(("状态", expected_status), statuses)
@@ -611,7 +612,7 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
         self.assertFalse(free_gacha_module.result_page_text("付费 891 免费 87,152 154 D-11"))
         self.assertFalse(free_gacha_module.result_page_text(""))
 
-    def _entry_task(self, waits, home):
+    def _entry_task(self, waits, home, home_again=False):
         task = object.__new__(FreeGachaTask)
         task.config = {}
         task.log_info = lambda *_args, **_kwargs: None
@@ -624,6 +625,8 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
         task._home_confirmation_ok = lambda *_args: next(homes)
         long_waits = []
         task._wait_for_gacha_page = lambda name: long_waits.append(name) or False
+        task.home_returns = []
+        task._home_for_entry_retry = lambda name: task.home_returns.append(name) or home_again
         return task, presses, long_waits
 
     def test_swallowed_entry_press_is_pressed_again_while_home_shows(self):
@@ -640,11 +643,32 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
         self.assertEqual(3, len(presses))
         self.assertEqual([], long_waits)
 
-    def test_entry_off_home_gets_the_page_wait_and_no_press(self):
+    def test_entry_off_home_waits_for_the_page_then_cannot_get_home(self):
         task, presses, long_waits = self._entry_task([("none", False, "")], [False])
         self.assertFalse(FreeGachaTask._enter_gacha_page(task))
         self.assertEqual([(162, 986)], presses)
         self.assertEqual(["进入抽卡页"], long_waits)
+        self.assertEqual(["进入抽卡页"], task.home_returns)
+
+    def test_entry_off_home_goes_home_and_presses_once_more(self):
+        # Player 2026-11-02 (v0.2.26): 「进入抽卡页：未确认抽卡页面」; off home
+        # and off the gacha page the entry was never pressed again (Leo
+        # 2026-10-31 「總之最少都要補按」).
+        task, presses, long_waits = self._entry_task(
+            [("none", False, ""), ("target", True, "抽抽乐")], [False], home_again=True
+        )
+        self.assertTrue(FreeGachaTask._enter_gacha_page(task))
+        self.assertEqual([(162, 986), (162, 986)], presses)
+        self.assertEqual(["进入抽卡页"], task.home_returns)
+
+    def test_entry_goes_home_only_once(self):
+        task, presses, long_waits = self._entry_task(
+            [("none", False, "")] * 2, [False] * 2, home_again=True
+        )
+        self.assertFalse(FreeGachaTask._enter_gacha_page(task))
+        self.assertEqual(2, len(presses))
+        self.assertEqual(1, len(task.home_returns))
+        self.assertEqual(2, len(long_waits))
 
     def test_result_picture_failure_does_not_stop_the_claim(self):
         task = object.__new__(FreeGachaTask)

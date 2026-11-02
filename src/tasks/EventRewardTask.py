@@ -452,7 +452,7 @@ class EventRewardTask(_ClaimTaskBase):
         )
         return red_share(self._reference(frame), cost) < RED_COST_SHARE
 
-    def _press_what_is_lit(self, label: str) -> bool:
+    def _press_what_is_lit(self, label: str) -> bool:  # 会补点：循环里还亮着就再按
         """Leo 2026-10-08: on a badged page press whatever is lit (哪裡亮了點哪裡),
         即刻刷新 first.  False when the page was skipped for 钻石."""
         skip: set[str] = set()
@@ -465,7 +465,7 @@ class EventRewardTask(_ClaimTaskBase):
             if lit:
                 word, box = lit[0]
                 self.log_info(f"活动「{label}」：{word}。")
-                self._click_reference_box(box, after_sleep=1.2)
+                self._click_reference_box(box, after_sleep=1.2)  # 不用确认：循环里还亮着就再按
                 if word in CONFIRM_BUTTONS or word.startswith(EXCHANGE_WORD):
                     if not self._confirm_dialog(label) and word.startswith(EXCHANGE_WORD):
                         # No confirm box: the tokens ran out (Leo 10-05).
@@ -532,11 +532,11 @@ class EventRewardTask(_ClaimTaskBase):
                 self.log_info(f"活动「{label}」：确认框有钻石图案或字样，或认不出有没有钻石，取消。")
                 cancel = self._box_with(boxes, ("取消",))
                 if cancel is not None:
-                    self._click_reference_box(cancel, after_sleep=0.8)
+                    self._click_reference_box(cancel, after_sleep=0.8)  # 不用确认：有钻石的确认框只按读到的取消，不碰别处；没关掉留给回主页
                 return False
             confirm = self._box_with(boxes, ("确认",))
             if confirm is not None and previous is not None and _same_place(previous, confirm):
-                self._click_reference_box(confirm, after_sleep=1.5)
+                self._click_reference_box(confirm, after_sleep=1.5)  # 不用确认：确认会花活动代币，不重按
                 return True
             previous = confirm
             self.sleep(0.4)

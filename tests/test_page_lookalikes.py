@@ -39,6 +39,9 @@ TRADE_STATES = {
     # The minimap's ≡ menu, open over the field.
     "field_nav_menu": ScreenState.SANDBOX,
     "merchant_menu": ScreenState.MERCHANT_DIALOG,
+    # The discount shop's 购买 page (a player's 1080p frame, 2026-11-02):
+    # 跑商 presses its back once more, then Esc, only while it reads SHOP.
+    "shop": ScreenState.SHOP,
     # The 价目表 opens over the shop's sell page.
     "price_list": ScreenState.SHOP,
     "teleport_map": ScreenState.AREA_MAP,

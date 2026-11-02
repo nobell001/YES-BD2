@@ -117,7 +117,7 @@ class NGearCraftMixin:
             if button is None:
                 self.log_info(f"{LABEL}：背包里找不到「装备制作」按钮。")
                 return False
-            self._click_reference_box(button, after_sleep=1.5)
+            self._click_reference_box(button, after_sleep=1.5)  # 不用确认：循环三次，没进制作页再点
             if self._wait_for_title("装备制作", CRAFT_TITLE_KEYWORDS, timeout=6.0, quiet=True):
                 return True
         return False
@@ -203,10 +203,22 @@ class NGearCraftMixin:
         )
         if settings is None:
             return False
-        self._click_reference_box(settings, after_sleep=1.5)
+        self._click_reference_box(settings, after_sleep=1.5)  # 不用确认：没打开且按钮还在会再按一次
         if not self._wait_dialog():
-            self.log_info(f"{LABEL}：强化设置没有打开。")
-            return False
+            # A press the game dropped: 强化设置 only opens a dialog, so it is
+            # pressed once more while its button still shows (Leo 2026-11-02).
+            again = self._box_with(
+                self._reference_boxes(self.capture_frame(), RECIPE_BUTTONS_ROI, "制作按钮"),
+                (ENHANCE_SETTINGS_TEXT,),
+            )
+            if again is None:
+                self.log_info(f"{LABEL}：强化设置没有打开。")
+                return False
+            self.log_info(f"{LABEL}：点了「{ENHANCE_SETTINGS_TEXT}」没打开，再点一次。")
+            self._click_reference_box(again, after_sleep=1.5)  # 不用确认：只补这一次
+            if not self._wait_dialog():
+                self.log_info(f"{LABEL}：强化设置点了两次都没有打开。")
+                return False
         ready = (
             self._enable_auto_dismantle(LABEL, CRAFT_COUNT_ROW)
             and self._set_target_level(target, LABEL)
@@ -226,7 +238,7 @@ class NGearCraftMixin:
             self._cancel_settings()
             return False
         self.info_set("当前阶段", "制作、强化并自动分解")
-        self._click_reference_box(start, after_sleep=2.5)
+        self._click_reference_box(start, after_sleep=2.5)  # 不用确认：开始制作会花素材、分解，不重按
         return self._settle_result(count)
 
     def _cancel_settings(self) -> bool:
@@ -274,7 +286,7 @@ class NGearCraftMixin:
                 confirm = self._box_with(boxes, ("确认",))
                 if confirm is not None:
                     unread_confirm = 0
-                    self._click_reference_box(confirm, after_sleep=1.5)
+                    self._click_reference_box(confirm, after_sleep=1.5)  # 不用确认：循环里结果还在就再按确认
                 else:
                     # The fixed point only after the result showed twice
                     # without a readable 确认 (not a frame mid-transition).

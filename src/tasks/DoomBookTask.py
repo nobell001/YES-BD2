@@ -416,7 +416,7 @@ class CartridgeFieldTask(_ClaimTaskBase):
         for index, way in enumerate(ways):
             if index:
                 self.log_info(f"{self.label}：{ways[0]}没走到战斗标记，改用{way}再试。")
-            arrived = self._click_to_marker() if way == STAGE_MOVE_CLICK else self._walk_to_marker()
+            arrived = self._click_to_marker() if way == STAGE_MOVE_CLICK else self._walk_to_marker()  # 不用确认：没走到会换另一种走法
             if arrived:
                 return True
             if self._keys_refused or not self.look_again(
@@ -540,7 +540,7 @@ class CartridgeFieldTask(_ClaimTaskBase):
                 return False  # only on a field is another press safe
             remedy, press = remedies.pop(0)
             self.log_info(f"{self.label}：点了卡带切换没看到快速切换栏，改用{remedy}。")
-            press()
+            press()  # 不用确认：这就是补救
 
     def _quick_bar_shown(self, frame) -> bool:
         text = self._text_in(frame, QUICK_BAR_ROI, "卡带快速切换")
@@ -683,7 +683,7 @@ class CartridgeFieldTask(_ClaimTaskBase):
             leave = self._box_with(buttons, (LEAVE_TEXT,))
             if leave is not None:
                 self.info_set("当前阶段", "离开结算")
-                self._click_reference_box(leave, after_sleep=2.0)
+                self._click_reference_box(leave, after_sleep=2.0)  # 不用确认：循环里结算还在就再按离开
                 # Stop waiting as soon as the 末日之书 page shows instead of
                 # the field; the next loop presses its back arrow.
                 if self._wait_for(
@@ -760,7 +760,7 @@ class CartridgeFieldTask(_ClaimTaskBase):
             buttons = self._reference_boxes(frame, RESULT_BUTTONS_ROI, "结算按钮")
             leave = self._box_with(buttons, (LEAVE_TEXT,))
             if leave is not None:
-                self._click_reference_box(leave, after_sleep=2.0)
+                self._click_reference_box(leave, after_sleep=2.0)  # 不用确认：循环里结算还在就再按离开
                 if self._wait_for(
                     self._field_or_doom_page, timeout=PAGE_WAIT_SECONDS
                 ) and self._field_visible(

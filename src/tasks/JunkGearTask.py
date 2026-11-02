@@ -762,14 +762,21 @@ class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRef
         return []
 
     def _pick_sort_option(self, option) -> list:
-        """Click an option and wait for the active label to change."""
+        """Click an option and wait for the active label to change; the
+        label unchanged (a press the game dropped): once more."""
         before = active_sort_label(self._sort_menu_boxes())
-        self._click_reference_box(option, after_sleep=0.6)
-        end_at = monotonic() + SORT_MENU_WAIT_SECONDS
-        boxes = self._sort_menu_boxes()
-        while active_sort_label(boxes) == before and monotonic() < end_at:
-            self.sleep(0.4)
+        boxes: list = []
+        for attempt in range(2):
+            if attempt:
+                self.log_info(f"{LABEL}：点了排序选项没变，再点一次。")
+            self._click_reference_box(option, after_sleep=0.6)  # 不用确认：没变会再点一次
+            end_at = monotonic() + SORT_MENU_WAIT_SECONDS
             boxes = self._sort_menu_boxes()
+            while active_sort_label(boxes) == before and monotonic() < end_at:
+                self.sleep(0.4)
+                boxes = self._sort_menu_boxes()
+            if active_sort_label(boxes) != before:
+                break
         return boxes
 
     def _find_sort_option(self, keyword: str) -> list:
@@ -1404,7 +1411,7 @@ class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRef
             self._click_reference(*ENHANCE_CANCEL_POINT, after_sleep=1.0)
             return None if self._cancel_selection() else False
         self.info_set("当前阶段", "强化并自动分解")
-        self._click_reference_box(start, after_sleep=2.5)
+        self._click_reference_box(start, after_sleep=2.5)  # 不用确认：强化并分解，不重按
         return self._settle_enhance_result(len(cells))
 
     def _pick_selection(self, cells, classified_frame, slow: bool) -> str:

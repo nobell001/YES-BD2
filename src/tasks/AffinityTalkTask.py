@@ -571,7 +571,7 @@ class AffinityTalkTask(_ClaimTaskBase):
 
     # -- one talk ------------------------------------------------------------------------
 
-    def _press_talk(self, card) -> bool:
+    def _press_talk(self, card) -> bool:  # 会补点：快捷键没反应改按钮，再按确认
         """谈心 by its key first, then the button, then 确认 on the dialog it
         opens (「将与 X 进行谈心」, 取消 / 确认; 2K clone 2026-10-21); True
         once the talk has started (the panel left)."""
@@ -726,7 +726,7 @@ class AffinityTalkTask(_ClaimTaskBase):
             if keyword_match_count(text, SKIP_WORD) >= 1 and self._box_with(boxes, (CONFIRM_TEXT,)):
                 # A 「跳过」 question after F2: 确认.
                 self.log_info(f"{LABEL}：跳过要确认，按确认。")
-                self._click_box(self._box_with(boxes, (CONFIRM_TEXT,)), after_sleep=0.8)
+                self._click_box(self._box_with(boxes, (CONFIRM_TEXT,)), after_sleep=0.8)  # 不用确认：循环里还在就再按
                 continue
             choices = self._choices(frame)
             retry = False
@@ -790,7 +790,7 @@ class AffinityTalkTask(_ClaimTaskBase):
             return False
         self._save_reward_picture(frame)
         self.log_info(f"{LABEL}：关闭奖励弹窗（{getattr(press, 'name', '')}）。")
-        self._click_box(press, after_sleep=0.8)
+        self._click_box(press, after_sleep=0.8)  # 不用确认：调用处循环，弹窗还在下一轮再关
         return True
 
     def _keep_probe_frame(self, name: str, frame) -> None:

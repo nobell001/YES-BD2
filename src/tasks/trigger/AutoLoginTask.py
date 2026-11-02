@@ -367,7 +367,7 @@ class AutoLoginTask(BaseBD2Task):
         if self._passes(touch_to_start, TOUCH_TO_START_TEMPLATE):
             self.info_set("更新下载", "-")
             self.info_set("下载进度", "-")
-            self._click_login_after_touch(touch_to_start)
+            self._click_login_after_touch(touch_to_start)  # 不用确认：登录轮询里画面还在会再点（_touch_to_start_still_shown）
             return False
 
         if self._is_browndustx_present(browndustx):
@@ -412,7 +412,7 @@ class AutoLoginTask(BaseBD2Task):
             return False
         if not notice.now_in(now):
             self._maintenance_hits = 0
-            return self._press_notice_confirm(boxes)
+            return self._press_notice_confirm(boxes)  # 不用确认：登录轮询里公告还在每 2 秒再按
         self._maintenance_hits = getattr(self, "_maintenance_hits", 0) + 1
         if self._maintenance_hits < MAINTENANCE_HITS_NEEDED:
             return True
@@ -450,7 +450,7 @@ class AutoLoginTask(BaseBD2Task):
         self._set_stage("关闭维护预告")
         self._set_action("公告说的是之后的维护，按确认后接着登录。")
         self.log_info("自动登录：公告事项是之后的维护预告，按确认。")
-        if self._click_ocr_box_center(button, status_key="公告确认点击", after_sleep=1.0):
+        if self._click_ocr_box_center(button, status_key="公告确认点击", after_sleep=1.0):  # 不用确认：登录轮询里公告还在每 2 秒再按
             self._last_confirm_click_at = now
         return True
 
@@ -583,7 +583,7 @@ class AutoLoginTask(BaseBD2Task):
         if now - self._last_confirm_click_at < 2.0:
             return
         self._sleep_after_recognition()
-        self._click_match_center(confirm, after_sleep=1.0)
+        self._click_match_center(confirm, after_sleep=1.0)  # 不用确认：登录轮询里确认页还在每 2 秒再按
         self._last_confirm_click_at = now
 
     def _handle_browndustx_confirm_ocr(self, confirm_box) -> None:
@@ -595,7 +595,7 @@ class AutoLoginTask(BaseBD2Task):
             return
         self.log_info("自动登录：通过 BrownDustX 上下文与精确 CONFIRM OCR 处理确认页。")
         self._sleep_after_recognition()
-        if self._click_ocr_box_center(
+        if self._click_ocr_box_center(  # 不用确认：登录轮询里确认页还在每 2 秒再按
             confirm_box,
             status_key="BrownDustX Confirm 点击",
             after_sleep=1.0,
@@ -613,7 +613,7 @@ class AutoLoginTask(BaseBD2Task):
             return
         self.log_info("自动登录：检测到游戏数据下载确认页，点击 OCR 下载按钮中心。")
         self._sleep_after_recognition()
-        if self._click_ocr_box_center(
+        if self._click_ocr_box_center(  # 不用确认：登录轮询里下载页还在每 3 秒再按
             download_button,
             status_key="更新下载点击",
             after_sleep=1.0,
@@ -836,7 +836,7 @@ class AutoLoginTask(BaseBD2Task):
         self._touch_still_hits = getattr(self, "_touch_still_hits", 0) + 1
         if self._touch_still_hits < LOGIN_RECLICK_HITS:
             return False
-        self._click_login_after_touch(touch, retry=True)
+        self._click_login_after_touch(touch, retry=True)  # 不用确认：这就是补点
         return True
 
     def _login_wait_timed_out(self, now: float) -> bool:

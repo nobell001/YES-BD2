@@ -220,6 +220,19 @@ class MapAutomationTaskBase(BaseBD2Task):
             returned = navigator.return_home()
         except (TaskDisabledException, FinishedException):
             raise
+        except FrozenScreen as exc:
+            # The stuck guard, not a program error: say why in player words
+            # (a player's v0.2.27 run logged it as 「返回章节主页异常。
+            # Traceback」), and start the watch over, or the fired watch failed
+            # the screenshot and the phase run again from home at once.
+            why = str(exc) or (
+                f"画面 {FROZEN_SCREEN_SECONDS:.0f} 秒没有变化（点了没反应或认不出画面）"
+            )
+            self.log_warning(f"{self.task_log_name}：返回章节主页时{why}，改用通用返回。")
+            self._save_diagnostic(f"{self.diagnostic_prefix}_return_home_frozen")
+            if getattr(self, "_frozen_watch", None) is not None:
+                self._frozen_watch = FrozenWatch()
+            return self._recover_home_after_trade()
         except Exception as exc:
             self.log_error(f"{self.task_log_name}：返回章节主页异常。", exc)
             self._save_diagnostic(f"{self.diagnostic_prefix}_return_home_error")
@@ -252,7 +265,9 @@ class MapAutomationTaskBase(BaseBD2Task):
 
     def _save_diagnostic(self, name: str) -> None:
         try:
-            self.save_frame(name, self.capture_frame())
+            self.save_frame(name, self.diagnostic_frame())
+        except (TaskDisabledException, FinishedException):
+            raise
         except Exception as exc:
             self.log_warning(f"诊断截图保存失败：{exc}")
 

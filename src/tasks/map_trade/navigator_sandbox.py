@@ -814,6 +814,7 @@ class SandboxNavigationMixin:
         last_state = ScreenState.UNKNOWN
         sandbox_hits = 0
         skill_group_switch_attempted = False
+        skill_group_repressed = False
         switch_group_one_history: list[bool] = []
         group_two_streak = 0
         while monotonic() <= end_at:
@@ -826,7 +827,7 @@ class SandboxNavigationMixin:
                     confirmation.skill_group == 2
                     and not skill_group_switch_attempted
                 ):
-                    self._click_sandbox_skill_group_1()
+                    self._click_sandbox_skill_group_1()  # 不用确认：还是技能组2会再点一次
                     skill_group_switch_attempted = True
                     sandbox_hits = 0
                     switch_group_one_history.clear()
@@ -845,6 +846,18 @@ class SandboxNavigationMixin:
                     sandbox_hits = 0
                     if confirmation.skill_group == 2:
                         group_two_streak += 1
+                        if (
+                            group_two_streak >= STORY_SANDBOX_SWITCH_WINDOW
+                            and not skill_group_repressed
+                        ):
+                            # Still group 2: the press was dropped.  Once more
+                            # (Leo 2026-11-02 「說了10次以上」).
+                            skill_group_repressed = True
+                            group_two_streak = 0
+                            switch_group_one_history.clear()
+                            self._status("箱庭技能组切换", "点了技能组1还是技能组2，再点一次")
+                            self._click_sandbox_skill_group_1()  # 不用确认：只补这一次，下面再看
+                            continue
                         if group_two_streak >= STORY_SANDBOX_SWITCH_WINDOW:
                             self._status(
                                 "箱庭技能组切换",
@@ -1718,7 +1731,7 @@ class SandboxNavigationMixin:
         # The minimap itself opens the area map (as M does).  The icon
         # templates matched beside the ≡ button in 阿尔卡迪亚居住区域 and opened
         # the navigation menu instead (live 2K 2026-09-30).
-        if self._open_field_map() is None and not self._click_sandbox_navigation_map():
+        if self._open_field_map() is None and not self._click_sandbox_navigation_map():  # 不用确认：先点小地图，这是第二条路
             return NavigationResult(
                 False,
                 ScreenState.SANDBOX,
@@ -1820,7 +1833,7 @@ class SandboxNavigationMixin:
                 ScreenState.SANDBOX,
                 "走向传送阵时两次撞到怪进了战斗，都已逃跑，没走到传送阵",
             )
-        if not self._click_sandbox_teleport_interaction(timeout=self._loading_timeout()):
+        if not self._click_sandbox_teleport_interaction(timeout=self._loading_timeout()):  # 不用确认：读不到改按 F，再取消走路
             if walked == "done" and self._press_interact_key_on_circle():
                 # The walk ended on the circle: its hand may just not read
                 # (player 1080p 125% 2026-10-17 at the hunting ground's).
@@ -1858,7 +1871,7 @@ class SandboxNavigationMixin:
                 # One click on the map icon already started the walk: no
                 # menu and no confirm button follow.
                 return True, False
-            if self._click_sandbox_navigation_menu_teleport(menu_frame):
+            if self._click_sandbox_navigation_menu_teleport(menu_frame):  # 不用确认：循环里菜单还在再点
                 self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
                 continue
             if self._click_sandbox_navigation_destination_confirmation(menu_frame):
@@ -2052,7 +2065,7 @@ class SandboxNavigationMixin:
         """Open the teleport map through the circle's 交互 button."""
 
         self._status("导航状态", "优先识别箱庭传送阵交互按钮")
-        if self._click_sandbox_teleport_interaction():
+        if self._click_sandbox_teleport_interaction():  # 不用确认：_open_circle_page 没打开会再按交互、按 F
             opened = self._open_circle_page("传送阵交互按钮")
             if opened.success:
                 return opened
@@ -2155,7 +2168,7 @@ class SandboxNavigationMixin:
             "|".join(labels),
         )
 
-    def _click_teleport_generation(
+    def _click_teleport_generation(  # 会补点：没出弹窗再点传送阵，弹窗还在再点生成
         self,
         teleport: MatchResult,
         frame_shape: tuple[int, ...],
@@ -2169,6 +2182,10 @@ class SandboxNavigationMixin:
             after_sleep=AREA_MAP_CLICK_SETTLE_SECONDS,
         )
         end_at = monotonic() + max(0.0, timeout)
+        # Nothing of the dialog by half the wait: the press was dropped, the
+        # map icon is pressed once more (Leo 2026-11-02 「說了10次以上」).
+        reclick_at = monotonic() + max(0.0, timeout) / 2  # 自己等：等到一半没弹窗再点
+        reclicked = False
         last_text = ""
         while monotonic() <= end_at:
             frame = self.vision.capture()
@@ -2189,7 +2206,17 @@ class SandboxNavigationMixin:
                     frame.shape,
                     after_sleep=TELEPORT_MAP_TRAVEL_SETTLE_SECONDS,
                 )
+                self._repress_generation_if_still_up()
                 return True
+            if not reclicked and not matched_keywords and monotonic() >= reclick_at:
+                reclicked = True
+                self._status("传送阵生成弹窗", "点了传送阵没出弹窗，再点一次")
+                self.vision.click_client(  # 不用确认：只补这一次，下面接着看弹窗
+                    teleport.center,
+                    frame_shape,
+                    after_sleep=AREA_MAP_CLICK_SETTLE_SECONDS,
+                )
+                continue
             self.task.sleep(TELEPORT_GENERATION_OCR_INTERVAL)
         self._status(
             "传送阵生成弹窗",
@@ -2197,7 +2224,23 @@ class SandboxNavigationMixin:
         )
         return False
 
-    def _click_teleport_map_destination(
+    def _repress_generation_if_still_up(self) -> None:
+        """The 生成魔法阵 dialog still there after its press: once more."""
+        try:
+            frame = self.vision.capture()
+            again, _matched, _text = self._teleport_generation_boxes(frame)
+        except Exception:
+            return
+        if again is None:
+            return
+        self._status("传送阵生成弹窗", "点了生成弹窗还在，再点一次")
+        self.vision.click_client(  # 不用确认：只补这一次
+            again,
+            frame.shape,
+            after_sleep=TELEPORT_MAP_TRAVEL_SETTLE_SECONDS,
+        )
+
+    def _click_teleport_map_destination(  # 会补点：没开始传送再点一次
         self,
         teleport: MatchResult,
         frame_shape: tuple[int, ...],
@@ -2218,6 +2261,14 @@ class SandboxNavigationMixin:
         self._teleport_loading_seen = self._wait_for_loading_screen(
             TELEPORT_MAP_TRAVEL_SETTLE_SECONDS
         )
+        if not self._teleport_loading_seen:
+            # No loading screen: the game dropped the press and the map is
+            # still up (Leo 2026-11-02 「說了10次以上」).  Once more.
+            self._status("传送阵地图传送阵", "点了没开始传送，再点一次")
+            self.vision.click_client(teleport.center, frame_shape, after_sleep=0.0)  # 不用确认：只补这一次
+            self._teleport_loading_seen = self._wait_for_loading_screen(
+                TELEPORT_MAP_TRAVEL_SETTLE_SECONDS
+            )
         self._status(
             "传送阵地图传送阵",
             f"交互入口直接点击中心={teleport.center}，等待传送完成",
@@ -3002,7 +3053,7 @@ class SandboxNavigationMixin:
         if entry == HUNTING_GROUND_NAV_ENTRY:
             return self._open_teleport_map_at_hunting_ground(card)
         # 艾琳 stands in the town: its circle, walking there if needed.
-        if self._click_sandbox_teleport_interaction():
+        if self._click_sandbox_teleport_interaction():  # 不用确认：没打开就走过去
             return self._open_circle_page("传送阵交互按钮")
         walked = self._walk_to_sandbox_teleport_interaction()
         if walked.success:
@@ -3456,14 +3507,14 @@ class SandboxNavigationMixin:
                     False, ScreenState.SANDBOX, f"区域地图不是{current.title}：{header}"
                 )
             self.last_loading_title = ""
-            if not self._click_walk_exit(edge, target, here):
+            if not self._click_walk_exit(edge, target, here):  # 不用确认：没反应经艾琳再走一次
                 self._close_field_map()
                 header = self._retry_walk_from_town(card, current, target)
                 if header is None:
                     return NavigationResult(
                         False, ScreenState.SANDBOX, f"区域地图上点{target.title}出口没有反应"
                     )
-                if not self._click_walk_exit(edge, target, here):
+                if not self._click_walk_exit(edge, target, here):  # 不用确认：这就是重走
                     self._close_field_map()
                     return NavigationResult(
                         False,
@@ -3539,7 +3590,7 @@ class SandboxNavigationMixin:
             self.vision.click_client(point, frame.shape, after_sleep=WALK_CLICK_SETTLE_SECONDS)
             if here not in self._field_map_header() or self._confirm_exit_walk_question(here):
                 return True
-            if picker and self._click_exit_picker(target) and (
+            if picker and self._click_exit_picker(target) and (  # 不用确认：每个出口点都试一次
                 here not in self._field_map_header() or self._confirm_exit_walk_question(here)
             ):
                 return True
@@ -3709,7 +3760,7 @@ class SandboxNavigationMixin:
             if not self._back_to_field_after_failed_open(opened):
                 break
             if again == "hand":
-                if not self._click_sandbox_teleport_interaction():
+                if not self._click_sandbox_teleport_interaction():  # 不用确认：这就是再按一次交互
                     continue
                 how = "再按一次交互手势"
             else:
@@ -3762,7 +3813,7 @@ class SandboxNavigationMixin:
             self._status("导航状态", f"经{npc}未到{card.targets[0].title}，改用原来的回城方式")
         if via_hunting_ground:
             opened = None
-            if self._click_sandbox_teleport_interaction():
+            if self._click_sandbox_teleport_interaction():  # 不用确认：没打开改走小地图导航
                 # Already on a teleport circle: its map reaches the town
                 # directly, no need for the hunting ground.
                 opened = self._open_circle_page("传送阵交互按钮")

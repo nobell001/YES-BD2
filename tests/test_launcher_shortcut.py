@@ -1,3 +1,4 @@
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -156,6 +157,31 @@ class DesktopDuplicateTest(unittest.TestCase):
         self.assertTrue(is_launcher_shortcut_name("YES-BD2 Launcher (3).LNK", "yes-bd2"))
         self.assertFalse(is_launcher_shortcut_name("yes-bd2.lnk", "yes-bd2"))
         self.assertFalse(is_launcher_shortcut_name("yes-bd2 启动器.url", "yes-bd2"))
+
+
+@unittest.skipUnless(sys.platform == "win32", "real .lnk files need Windows")
+class RealShortcutFileTest(unittest.TestCase):
+    """Real .lnk files: WScript.Shell reads a name outside the system code
+    page (启 on a 繁中 Windows) as an empty shortcut (Leo 4K 11-02)."""
+
+    def test_simplified_and_traditional_duplicates_are_both_removed(self):
+        import win32com.client
+
+        shell = win32com.client.Dispatch("WScript.Shell")
+        with tempfile.TemporaryDirectory() as folder:
+            desktop = Path(folder)
+            launcher = Path(folder) / "yes-bd2.exe"
+            launcher.write_bytes(b"")
+            names = ["yes-bd2.lnk", "yes-bd2 启动器.lnk", "yes-bd2 啟動器 (2).lnk", "yes-bd2 Launcher.lnk"]
+            for name in names:
+                saved = desktop / "ascii.lnk"
+                shortcut = shell.CreateShortcut(str(saved))  # ASCII name: WScript can save it
+                shortcut.TargetPath = str(launcher)
+                shortcut.Save()
+                saved.rename(desktop / name)
+            removed = remove_extra_launcher_shortcuts(desktop, launcher, "yes-bd2", shell)
+            self.assertEqual(sorted(names[1:]), sorted(p.name for p in removed))
+            self.assertTrue((desktop / "yes-bd2.lnk").is_file())
 
 
 if __name__ == "__main__":

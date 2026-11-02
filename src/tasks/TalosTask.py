@@ -323,7 +323,7 @@ class TalosTask(_ClaimTaskBase):
             if self._popup_visible(frame):
                 self._click_reference(*POPUP_CLOSE_POINT, after_sleep=1.0)  # 不用确认：下面再看
                 continue
-            if self._press_back_on_result(frame):
+            if self._press_back_on_result(frame):  # 不用确认：循环三次，再 Esc，再回主页重进
                 continue
             self.tap_escape(after_sleep=1.5)
         if self._wait_for_title(LABEL, TITLE_KEYWORDS, timeout=STUCK_SECONDS, quiet=True):
@@ -418,7 +418,7 @@ class TalosTask(_ClaimTaskBase):
             f"{LABEL}：第 {stage} 关一进去游戏就在自己打（左下「自动战斗中」），"
             "按右下「结束自动战斗」关掉，退出这关重进，照轴从第 1 回合打"
         )
-        self._press_text(
+        self._press_text(  # 不用确认：还在就按 Esc
             "结束自动战斗", AUTO_BATTLE_STOP_ROI, AUTO_BATTLE_STOP_WORDS, AUTO_BATTLE_STOP_POINT
         )
         if not self._wait_for(lambda: not self._auto_battle_visible(), timeout=STUCK_SECONDS):
@@ -459,7 +459,7 @@ class TalosTask(_ClaimTaskBase):
         for _ in range(3):
             if self._wait_for(self._list_visible, timeout=1.5):
                 return True
-            self._press_back_on_result(self.capture_frame())
+            self._press_back_on_result(self.capture_frame())  # 不用确认：循环三次再等
         return self._wait_for(self._list_visible, timeout=STUCK_SECONDS)
 
     def _leave_fight(self, why: str) -> None:
@@ -474,7 +474,7 @@ class TalosTask(_ClaimTaskBase):
             self._fighting = None
             return
         self._fighting = None
-        if self._press_back_on_result(frame):
+        if self._press_back_on_result(frame):  # 不用确认：后面还有暂停离开、Esc、回主页
             if self._back_to_list():
                 return
         if self._leave_by_pause():
@@ -524,13 +524,24 @@ class TalosTask(_ClaimTaskBase):
             if not self._wait_for(self._pause_visible, timeout=4.0):
                 self.log_info(f"{LABEL}：按了右上角暂停，没出现暂停画面")
                 return False
-        self._press_text("离开", PAUSE_LEAVE_ROI, LEAVE_WORDS, PAUSE_LEAVE_POINT)
+        self._press_text("离开", PAUSE_LEAVE_ROI, LEAVE_WORDS, PAUSE_LEAVE_POINT)  # 不用确认：暂停画面还在会再按一次
         if not self._wait_for(self._leave_dialog_visible, timeout=4.0):
-            self.log_info(f"{LABEL}：按了离开，没出现「是否中断」")
-            return False
-        self._press_text("确认", LEAVE_DIALOG_ROI, CONFIRM_WORDS, LEAVE_CONFIRM_POINT)
+            if not self._pause_visible():
+                self.log_info(f"{LABEL}：按了离开，没出现「是否中断」")
+                return False
+            self.log_info(f"{LABEL}：按了离开还在暂停画面，再按一次")
+            self._press_text("离开", PAUSE_LEAVE_ROI, LEAVE_WORDS, PAUSE_LEAVE_POINT)  # 不用确认：只补这一次
+            if not self._wait_for(self._leave_dialog_visible, timeout=4.0):
+                self.log_info(f"{LABEL}：按了两次离开，没出现「是否中断」")
+                return False
+        self._press_text("确认", LEAVE_DIALOG_ROI, CONFIRM_WORDS, LEAVE_CONFIRM_POINT)  # 不用确认：「是否中断」还在会再按一次
         if self._wait_for(self._list_visible, timeout=PLANNING_WAIT):
             return True
+        if self._leave_dialog_visible():
+            self.log_info(f"{LABEL}：按了确认「是否中断」还在，再按一次")
+            self._press_text("确认", LEAVE_DIALOG_ROI, CONFIRM_WORDS, LEAVE_CONFIRM_POINT)  # 不用确认：只补这一次
+            if self._wait_for(self._list_visible, timeout=PLANNING_WAIT):
+                return True
         self.log_info(f"{LABEL}：确认离开后没回到关卡列表")
         return False
 
@@ -541,7 +552,7 @@ class TalosTask(_ClaimTaskBase):
             self.log_info(f"{LABEL}：没读到「{label}」，点它的固定位置。")
             self._click_reference(*point, after_sleep=1.0)  # 不用确认：调用处等下一个画面
         else:
-            self._click_reference_box(box, after_sleep=1.0)
+            self._click_reference_box(box, after_sleep=1.0)  # 不用确认：helper 本身，调用处检查
 
     def _claim_missions(self) -> bool | None:
         if not self._to_list():

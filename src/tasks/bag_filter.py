@@ -240,7 +240,7 @@ class BagFilterMixin:
                 if self.category_tick_disabled or taps_left[tap] <= 0:
                     return False  # not confirmed: the caller goes on without it
                 taps_left[tap] -= 1
-                self._tap_category(tap, tap in state.get("categories", []))
+                self._tap_category(tap, tap in state.get("categories", []))  # 不用确认：循环里勾选没对上会再点（taps_left 次数内）
                 changed = True
         return changed and filter_matches(self._filter_state_now(), wanted)
 

@@ -206,7 +206,7 @@ class TakeoverMonitor:
                 action = game_status_bar.button_at(mouse_guard.player_point())
                 if action is not None and msg == 0x0201:
                     logger.info(f"takeover: {action} pressed on the status bar (tool on the mouse)")
-                    game_status_bar.press(action)
+                    game_status_bar.press(action)  # 不用确认：点的是工具自己的状态栏，不是游戏
                 else:
                     logger.info("takeover: a press while the tool is on the mouse, kept off")
             return True
@@ -217,7 +217,7 @@ class TakeoverMonitor:
                 # The press beat the button waking up: it would go through to the game.
                 logger.info(f"takeover: {action} pressed on the status bar before it took clicks")
                 self._swallow_up.add(BUTTON_UP[msg])
-                game_status_bar.press(action)
+                game_status_bar.press(action)  # 不用确认：点的是工具自己的状态栏，不是游戏
                 return True
         return False
 

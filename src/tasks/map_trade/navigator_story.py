@@ -336,7 +336,7 @@ class StoryCardNavigationMixin:
     def _open_story_quick_switcher(self, category: str = "story") -> NavigationResult:
         opened = self.task.open_cartridge_quick_switcher(
             ensure_home=self._wait_for_cartridge_home,
-            click_quick_switch=lambda: self._click_quick_switch(
+            click_quick_switch=lambda: self._click_quick_switch(  # 不用确认：open_cartridge_quick_switcher 页面没出来会用 repress 钩子重按
                 QUICK_SWITCH_CLICK_TIMEOUT, QUICK_SWITCH_CLICK_AFTER_SLEEP
             ),
             confirm_quick_switch_page=self._wait_for_quick_switch_page,
@@ -2380,7 +2380,7 @@ class StoryCardNavigationMixin:
             return returned
         opened = self.task.open_cartridge_quick_switcher(
             ensure_home=self._wait_for_cartridge_home,
-            click_quick_switch=lambda: self._click_quick_switch(10.0, 1.0),
+            click_quick_switch=lambda: self._click_quick_switch(10.0, 1.0),  # 不用确认：open_cartridge_quick_switcher 页面没出来会用 repress 钩子重按
             confirm_quick_switch_page=self._wait_for_quick_switch_page,
             **self._quick_switch_repress_hooks(),
         )
@@ -2835,7 +2835,7 @@ class StoryCardNavigationMixin:
         # still has to pass.
         # A click the game did not take, or a button that never read, falls
         # back to the P key (YES-BD2 #23).
-        if not self._click_quick_switch(
+        if not self._click_quick_switch(  # 不用确认：点不到改按 P 键
             QUICK_SWITCH_CLICK_TIMEOUT,
             QUICK_SWITCH_CLICK_AFTER_SLEEP,
         ):

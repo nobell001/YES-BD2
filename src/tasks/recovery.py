@@ -261,11 +261,19 @@ def recover_to_home(task, attempts: int = RECOVERY_ATTEMPTS) -> bool:
     if watch is None:
         return _recover_to_home(task, attempts)
     watch.paused += 1
+    home = False
     try:
-        return _recover_to_home(task, attempts)
+        home = _recover_to_home(task, attempts)
+        return home
     finally:
         watch.paused -= 1
         watch.pressed()
+        if home:
+            # Home reached: a stuck screen caught earlier as a plain error is
+            # over.  Left fired, the next look raised it again and the step
+            # run from home failed at once (player v0.2.27 2026-11-02, 料理).
+            watch.fired = False
+            watch.loading_hold = False
 
 
 def _recover_to_home(task, attempts: int) -> bool:

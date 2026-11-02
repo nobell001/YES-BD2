@@ -54,7 +54,7 @@ from src.utils.image_utils import (
 )
 from src.utils.ocr_utils import normalize_ocr_text
 from src.utils.press_confirm import POLL_SECONDS as LOOK_AGAIN_POLL_SECONDS
-from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS, PressOutcome
+from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS, PressOutcome, wait_for
 from src.utils.press_confirm import press_and_confirm as _press_and_confirm
 from src.utils.template_resolution import offline_template_scale
 from src.utils.wait_limits import STUCK_SECONDS, scene, set_loading_reader, set_popup_closer
@@ -71,6 +71,8 @@ RECENT_CARTRIDGE_SPECIAL_PAGE_SECONDS = 3.0
 # now stays on the point this long before the first wheel and after the last.
 SCROLL_POINTER_SETTLE_SECONDS = 0.15
 RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS = 3
+# A field battle's 逃跑 / its confirm still there this long: pressed once more.
+FLEE_REPRESS_SECONDS = 3.0
 # A popup's 确认 pressed once is still read on the next frames while the page
 # fades out; pressed again, the press lands on whatever sits under it (live 4K
 # clone 2026-10-23: 恭喜晋级's 确认 pressed twice, the second press opened the
@@ -634,6 +636,23 @@ class BaseBD2Task(BaseTask):
             self.save_frame(screenshot_name, frame)
         return frame
 
+    def diagnostic_frame(self):
+        """The game picture for a failure screenshot.
+
+        Taken with the stuck-screen watch resting: once the watch has fired,
+        every later look raises FrozenScreen again, so the picture of the
+        very moment it fired was lost too (player v0.2.27 2026-11-02: 「诊断截图
+        保存失败」 with no reason, right after 「画面 10 秒没有变化」).
+        """
+        watch = getattr(self, "_frozen_watch", None)
+        if watch is None:
+            return self.capture_frame()
+        watch.paused += 1
+        try:
+            return self.capture_frame()
+        finally:
+            watch.paused -= 1
+
     def save_frame(self, name: str, frame) -> Path:
         PROBE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = PROBE_OUTPUT_DIR / f"{name}.png"
@@ -974,7 +993,7 @@ class BaseBD2Task(BaseTask):
         if center is None:
             return False
         height, width = frame.shape[:2]
-        if not self.press_dismiss(center[0] / width, center[1] / height, 1.0, press.label):
+        if not self.press_dismiss(center[0] / width, center[1] / height, 1.0, press.label):  # 不用确认：调用方接着重看页面，弹窗还在会再关
             return False  # 刚按过：调用方接着重看页面
         self.log_info(f"{label}：画面被弹窗挡住，点击「{press.label}」关闭后再看。")
         return True
@@ -1024,24 +1043,41 @@ class BaseBD2Task(BaseTask):
             return (
                 f"按了{field_battle.ESC_PRESSES_MAX}次 Esc 都没看到「逃跑」（读到：{seen}）"
             )
-        self._click_battle_box(flee, after_sleep=1.5)
+        self._click_battle_box(flee, after_sleep=1.5)  # 不用确认：_confirm_flee 没见确认框会再点逃跑
         return self._confirm_flee(label, self._battle_boxes())
 
     def _confirm_flee(self, label: str, boxes) -> str:
-        """After 「逃跑」: press the dialog's 逃跑 (once) and wait for the map."""
+        """After 「逃跑」: press the dialog's 逃跑 and wait for the map.
+
+        A press the game dropped (the dialog, or the menu's 逃跑, still there
+        FLEE_REPRESS_SECONDS later) is pressed once more; both are harmless
+        (Leo 2026-11-02 「說了10次以上」)."""
         end_at = monotonic() + STUCK_SECONDS
-        confirmed = False
+        confirms = 0
+        flee_repressed = False
+        last_press = monotonic()
         while True:
             confirm = field_battle.flee_confirm_button(boxes)
-            if confirm is not None and not confirmed:
-                confirmed = True
-                self.log_info(f"{label}：逃跑确认框，按「{getattr(confirm, 'name', '')}」。")
-                self._click_battle_box(confirm, after_sleep=1.5)
+            waited = monotonic() - last_press >= FLEE_REPRESS_SECONDS
+            if confirm is not None and (confirms == 0 or (confirms < 2 and waited)):
+                confirms += 1
+                last_press = monotonic()
+                again = "还在，再" if confirms > 1 else ""
+                self.log_info(f"{label}：逃跑确认框{again}按「{getattr(confirm, 'name', '')}」。")
+                self._click_battle_box(confirm, after_sleep=1.5)  # 不用确认：确认框还在会再按一次
                 boxes = self._battle_boxes()
                 continue
             if not field_battle.in_battle(boxes) and field_battle.flee_button(boxes) is None:
                 self.log_info(f"{label}：已逃跑，回到地图继续。")
                 return "left"
+            flee = field_battle.flee_button(boxes)
+            if confirm is None and flee is not None and not flee_repressed and waited:
+                flee_repressed = True
+                last_press = monotonic()
+                self.log_info(f"{label}：点了「逃跑」没出确认框，再点一次。")
+                self._click_battle_box(flee, after_sleep=1.5)  # 不用确认：只补这一次
+                boxes = self._battle_boxes()
+                continue
             if monotonic() >= end_at:
                 return f"按了「逃跑」{STUCK_SECONDS:.0f}秒还在战斗画面"
             self.sleep(0.5)
@@ -1059,11 +1095,24 @@ class BaseBD2Task(BaseTask):
         self.operate_click(center[0] / width, center[1] / height, after_sleep=after_sleep)  # 不用确认：调用方接着看画面
         return True
 
-    def _press_battle_leave(self, label: str, button) -> str:
+    def _press_battle_leave(self, label: str, button) -> str:  # 会补点：离开还在再按一次
         self.log_info(f"{label}：野外战斗已结束，点击「离开」回到地图。")
-        if not self._click_battle_box(button, after_sleep=2.0):
+        if not self._click_battle_box(button, after_sleep=2.0):  # 不用确认：下面看离开还在不在
             return "战斗结算的「离开」位置读不到"
-        return "left"
+        still = {"button": None}
+
+        def gone() -> bool:
+            still["button"] = field_battle.leave_button(self._battle_boxes())
+            return still["button"] is None
+
+        if wait_for(gone, SLOW_PC_GRACE_SECONDS, sleep=self.sleep, poll=0.5):
+            return "left"
+        self.log_info(f"{label}：点了「离开」结算还在，再点一次。")
+        if not self._click_battle_box(still["button"], after_sleep=2.0):  # 不用确认：只补这一次，下面再看
+            return "战斗结算的「离开」位置读不到"
+        if wait_for(gone, SLOW_PC_GRACE_SECONDS, sleep=self.sleep, poll=0.5):
+            return "left"
+        return "点了两次「离开」，战斗结算还在"
 
     def _close_popup_in_wait(self) -> bool:
         """A page wait (wait_limits.load_wait) that has not seen its page:
@@ -1493,7 +1542,7 @@ class BaseBD2Task(BaseTask):
             return False
         self.info_set("当前阶段", "寻找快速切换按钮")
         quick_switch_opened = click_quick_switch()
-        if not quick_switch_opened and self._press_field_quick_switch_by_keycaps():
+        if not quick_switch_opened and self._press_field_quick_switch_by_keycaps():  # 不用确认：本身就是补救（按键打开快速切换）
             quick_switch_opened = True
         if not quick_switch_opened:
             special_pages = self._handle_recent_cartridge_special_pages(
@@ -1737,7 +1786,7 @@ class BaseBD2Task(BaseTask):
         The frame is also what the 问题摘要 shows if this run fails.
         """
         try:
-            frame = self.capture_frame()
+            frame = self.diagnostic_frame()
             problem_report.note_give_up(self, frame)
             self.save_frame(name, frame)
         except (TaskDisabledException, FinishedException):
@@ -1859,6 +1908,12 @@ class BaseBD2Task(BaseTask):
         """
         end_at = monotonic() + max(0.0, float(timeout))
         handled: set[str] = set()
+        # A page still there after its press gets one more (the game dropped
+        # it; Leo 2026-11-02 「說了10次以上」), not counted as a new page.
+        presses: dict[str, int] = {}
+        # When each page was pressed, stamped by the loop's own clock read.
+        pressed_at: dict[str, float | None] = {}
+        last_now: float | None = None
         action_count = 0
         reward_pending: str | None = None
         reward_clear_frames = 0
@@ -1897,29 +1952,50 @@ class BaseBD2Task(BaseTask):
 
             if (
                 action_name
-                and action_name not in handled
+                and (
+                    action_name not in presses
+                    or (
+                        presses[action_name] < 2
+                        and last_now is not None
+                        and pressed_at.get(action_name) is not None
+                        and last_now - pressed_at[action_name] >= DISMISS_REPRESS_SECONDS
+                    )
+                )
                 and target_box is not None
-                and action_count < RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS
+                and (
+                    action_name in handled
+                    or action_count < RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS
+                )
             ):
                 point = self._ocr_box_center(target_box)
                 if point is not None:
                     frame_width = max(1, int(self.width))
                     frame_height = max(1, int(self.height))
                     self.info_set("当前阶段", f"处理最近卡带{action_name}")
-                    pressed = self.press_dismiss(
+                    if presses.get(action_name):
+                        # press_dismiss waits out the page's fade first.
+                        self.info_set("最近卡带特殊页面", f"{action_name}点了还在，再点一次")
+                    pressed = self.press_dismiss(  # 不用确认：页面还在会再点一次（最多两次）
                         max(0.0, min(1.0, point[0] / frame_width)),
                         max(0.0, min(1.0, point[1] / frame_height)),
                         0.5,
                         action_name,
                     )
                 if point is not None and pressed:
+                    presses[action_name] = presses.get(action_name, 0) + 1
+                    pressed_at[action_name] = None
+                    if action_name not in handled:
+                        action_count += 1
                     handled.add(action_name)
-                    action_count += 1
                     if action_name in (FIEND_HUNT_REWARD_TITLE, GOLDEN_ARENA_REWARD_TITLE):
                         end_at = max(end_at, monotonic() + max(0.0, float(timeout)))
 
+            last_now = monotonic()
+            for name, at in pressed_at.items():
+                if at is None:
+                    pressed_at[name] = last_now
             if (
-                monotonic() >= end_at
+                last_now >= end_at
                 or (
                     action_count >= RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS
                     and not reward_pending

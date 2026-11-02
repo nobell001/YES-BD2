@@ -180,7 +180,7 @@ class TradeNavigationMixin:
         # does not wait for that dialog.
         self.shop_bargained = bargain
         if not bargain:
-            if not self._click_plain_shop_option():
+            if not self._click_plain_shop_option():  # 不用确认：下面等商店页时 reclick_plain_option 会再点
                 return NavigationResult(False, self.classify(), "商人菜单未找到「商店」选项")
             if not self._wait_for_bargain_shop_confirmation(reclick_plain_option=True):
                 return NavigationResult(False, self.classify(), "进入商店后未通过OCR确认商店页面")
@@ -267,7 +267,7 @@ class TradeNavigationMixin:
         log_timeout: bool,
         interval: float = 0.5,
     ) -> bool:
-        if not self._click_merchant_interaction(
+        if not self._click_merchant_interaction(  # 不用确认：读不到改按 F，_confirm_merchant_menu 菜单没开会补点
             timeout,
             after_sleep=0.0,
             interval=interval,
@@ -375,7 +375,7 @@ class TradeNavigationMixin:
             if monotonic() >= end_at:
                 break
             self.task.sleep(MERCHANT_MENU_RECHECK_SECONDS)
-            if presses < MERCHANT_MENU_REPRESSES and self._click_merchant_interaction(
+            if presses < MERCHANT_MENU_REPRESSES and self._click_merchant_interaction(  # 不用确认：这就是补点
                 0.0, after_sleep=0.0
             ):
                 presses += 1
@@ -618,7 +618,7 @@ class TradeNavigationMixin:
         def press_badge() -> None:
             self.vision.click_client(badge.best.result.center, badge_frame.shape, after_sleep=1.0)  # 不用确认：下面等地图，还在卡带页补点
 
-        press_badge()
+        press_badge()  # 不用确认：还在卡带页会补点一次
         # Loading does not count as stuck (Leo 2026-10-15 「我說的10秒是卡死
         # 或者辨識不到」): 2K 10-15 the field came 13 s after the click and was
         # given up on at 10 s.
@@ -645,7 +645,7 @@ class TradeNavigationMixin:
                 repressed = True
                 self._status("导航状态", "点了剧情游戏卡1还在卡带页，补点一次")
                 self.task.log_info("跑商：点了剧情游戏卡1还在卡带页，补点一次。")
-                press_badge()
+                press_badge()  # 不用确认：这就是补点
                 wait = ProgressWait(monotonic(), before=scene_at_press(self.task))
                 continue
             self.task.sleep(0.5)
@@ -677,7 +677,7 @@ class TradeNavigationMixin:
                 self.task.log_warning("跑商：小地图导航按钮和地图商人图标都没找到，无法前往商店。")
                 return False
             outcome = "walked"
-        elif not self._click_merchant_nav_destination():
+        elif not self._click_merchant_nav_destination():  # 不用确认：前往后没到商人旁改点地图商人图标、按 F
             # 商店 unread in the ≡ list (Leo 2026-10-20 「讀不到也要有備案」).
             self._status("导航状态", "导航菜单读不到商店，改点地图商人图标")
             if not self._walk_via_area_map():
@@ -1116,7 +1116,7 @@ class TradeNavigationMixin:
             if state == ScreenState.MERCHANT_DIALOG:
                 # The merchant's 对话/商店 menu closes with the shop's
                 # top-left control, back to the field.
-                self._click_shop_close_control(after_sleep=0.8)
+                self._click_shop_close_control(after_sleep=0.8)  # 不用确认：回主页会跑多轮，没离开下一轮再按
             else:
                 # Confirmed cooking page: its back arrow goes from the detail
                 # to the list, and from the list to the field.
@@ -1176,7 +1176,7 @@ class TradeNavigationMixin:
                 "当前页面没有已确认的安全返回路径，未执行点击",
             )
 
-        self._click_chapter_home_button()
+        self._click_chapter_home_button()  # 不用确认：没回主页改按 H
         if self._wait_for_cartridge_home(
             timeout=RETURN_HOME_TIMEOUT,
             allow_return_announcement_cleanup=True,
@@ -1201,7 +1201,58 @@ class TradeNavigationMixin:
 
         if not self._close_sale_dialog_before_return():
             return NavigationResult(False, ScreenState.SHOP, "返回前未确认出售弹窗已关闭")
-        self._click_shop_close_control()
+        if self._press_shop_back(self._shop_close_answered, self._back_at_merchant_after_close):  # 不用确认：_press_shop_back 自己补按、再按 Esc
+            self._click_shop_close_control(after_sleep=0.8)
+            return NavigationResult(True, ScreenState.SANDBOX, "已关闭商店")
+        return NavigationResult(
+            False,
+            self.classify(),
+            "点击返回后未识别到折扣商店关闭确认",
+        )
+
+    def _press_shop_back(self, answered, arrived) -> bool:
+        """Press the discount shop's back until ``answered`` says it closed
+        (True), or that it was closed but led elsewhere (None: stop).
+
+        A player's 1080p run (v0.2.27, 2026-11-02): the back pill was found
+        on the 购买 page (the template matches that very frame at 0.97) and
+        pressed, and the page stayed for 13 s; one press and the step gave
+        up.  Leo 「每個無害的按鍵都要有補救」: while the shop page is still read,
+        press it once more, then Esc (bug-prevention.md, 3 and 4).
+        ``arrived`` looks for where the back leads, without a press: after
+        a late 是否关闭折扣商店 is answered, or once the page is not the shop.
+        """
+
+        tap_escape = getattr(self.task, "tap_escape", None)
+        presses = [("", self._click_shop_close_control), ("补按", self._click_shop_close_control)]
+        if callable(tap_escape):
+            presses.append(("快捷键 Esc", lambda: tap_escape(after_sleep=0.5)))
+        for index, (remedy, press) in enumerate(presses):
+            if index:
+                if self._discount_close_dialog_shown():
+                    # The earlier press opened it late: answer it, never
+                    # press beside it (a click outside could cancel it).
+                    self.task.operate_click(*DISCOUNT_SHOP_CLOSE_POINT, after_sleep=0.8)  # 不用确认：下一行看去了哪
+                    # Answered and nothing came: press no more here.
+                    return bool(arrived())
+                if self.classify_trade() != ScreenState.SHOP:
+                    # Not the shop any more, or not read: a press could land
+                    # on something else.  Look once more for where the back
+                    # leads (slow to show), press nothing.
+                    return bool(arrived())
+                self.task.log_info(f"跑商：点了商店的返回，画面还是商店页，改用{remedy}。")
+            press()  # 不用确认：这就是补按循环，下一行看结果
+            done = answered()
+            if done is None:
+                return False  # closed, but not where it should lead: no more presses
+            if done:
+                return True
+        return False
+
+    def _shop_close_answered(self) -> bool:
+        """After the shop's back press: its 是否关闭折扣商店 answered, or the
+        merchant menu (or the field) back without one."""
+
         # Only the bargained (discount) shop asks 是否关闭折扣商店; the plain
         # shop used for selling closes straight back to the merchant menu.
         if getattr(self, "shop_bargained", True) and self._wait_for_ocr_keywords(
@@ -1213,23 +1264,20 @@ class TradeNavigationMixin:
             quiet=True,
         ):
             self.task.operate_click(*DISCOUNT_SHOP_CLOSE_POINT, after_sleep=0.8)
-        elif not wait_for(
-            # The discount shop closed earlier this visit asks nothing: the
-            # merchant menu comes straight back, a moment later (live 2K
-            # 2026-10-22: read once mid-change, a whole return pass redone).
+            return True
+        return self._back_at_merchant_after_close()
+
+    def _back_at_merchant_after_close(self) -> bool:
+        # The discount shop closed earlier this visit asks nothing: the
+        # merchant menu comes straight back, a moment later (live 2K
+        # 2026-10-22: read once mid-change, a whole return pass redone).
+        return bool(wait_for(
             lambda: self.classify_trade() in (ScreenState.MERCHANT_DIALOG, ScreenState.SANDBOX),
             MERCHANT_BACK_LOOK_SECONDS,
             sleep=self.task.sleep,
             poll=0.4,
             clock=monotonic,
-        ):
-            return NavigationResult(
-                False,
-                self.classify(),
-                "点击返回后未识别到折扣商店关闭确认",
-            )
-        self._click_shop_close_control(after_sleep=0.8)
-        return NavigationResult(True, ScreenState.SANDBOX, "已关闭商店")
+        ))
 
     def close_discount_shop_to_menu(self) -> NavigationResult:
         """Close only the discount shop; stay in the merchant's 砍价 menu.
@@ -1240,24 +1288,30 @@ class TradeNavigationMixin:
 
         if not self._close_sale_dialog_before_return():
             return NavigationResult(False, ScreenState.SHOP, "关闭前未确认出售弹窗已关闭")
-        self._click_shop_close_control()
-        if not self._wait_for_ocr_keywords(
-            DISCOUNT_SHOP_CLOSE_KEYWORDS,
-            DISCOUNT_SHOP_CLOSE_TIMEOUT,
-            "折扣商店关闭确认",
-            interval=0.25,
-            relative_roi=DISCOUNT_SHOP_CLOSE_DIALOG_REGION,
-            quiet=True,
-        ):
-            if self._menu_bargain_readable():
-                return NavigationResult(True, ScreenState.MERCHANT_DIALOG, "已回到商人菜单")
-            return NavigationResult(
-                False, self.classify(), "点击返回后未识别到折扣商店关闭确认"
-            )
-        self.task.operate_click(*DISCOUNT_SHOP_CLOSE_POINT, after_sleep=0.8)  # 不用确认：下一行读商人菜单
-        if self._menu_bargain_readable():
+
+        def answered() -> bool:
+            if self._wait_for_ocr_keywords(
+                DISCOUNT_SHOP_CLOSE_KEYWORDS,
+                DISCOUNT_SHOP_CLOSE_TIMEOUT,
+                "折扣商店关闭确认",
+                interval=0.25,
+                relative_roi=DISCOUNT_SHOP_CLOSE_DIALOG_REGION,
+                quiet=True,
+            ):
+                self.task.operate_click(*DISCOUNT_SHOP_CLOSE_POINT, after_sleep=0.8)  # 不用确认：下一行读商人菜单
+                # None: the shop was answered closed, so no back again.
+                return True if self._menu_bargain_readable() else None
+            # No dialog: a short look, the shop page may still be there (a
+            # menu slow to show is read again below before any press).
+            return self._menu_bargain_readable(MERCHANT_BACK_LOOK_SECONDS)
+
+        # The same back press as leaving the shop: pressed once more, then
+        # Esc, while the shop page stays (循环砍价 gave up after one).
+        if self._press_shop_back(answered, self._menu_bargain_readable):  # 不用确认：_press_shop_back 自己补按、再按 Esc
             return NavigationResult(True, ScreenState.MERCHANT_DIALOG, "已回到商人菜单")
-        return NavigationResult(False, self.classify(), "关闭折扣商店后没看到商人菜单（砍价）")
+        return NavigationResult(
+            False, self.classify(), "点击返回后没回到商人菜单（砍价），也没看到折扣商店关闭确认"
+        )
 
     def _menu_bargain_readable(self, timeout: float = Q_SP6_BARGAIN_OCR_TIMEOUT) -> bool:
         end_at = monotonic() + timeout
@@ -1328,7 +1382,7 @@ class TradeNavigationMixin:
         closed = self._close_shop_to_field()
         if not closed.success:
             return closed
-        self._click_chapter_home_button()
+        self._click_chapter_home_button()  # 不用确认：没回主页由回主页流程接手
         if self._wait_for_cartridge_home(
             timeout=RETURN_HOME_TIMEOUT,
             allow_return_announcement_cleanup=True,

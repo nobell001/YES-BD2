@@ -22,10 +22,20 @@ press ``press_next`` (src/utils/press_next.py: the screens that can follow,
 then the remedies in order), otherwise ``wait_for`` or ``load_wait``.  A wait
 that really needs its own deadline carries ``# 自己等：<reason>`` on that line.
 The baseline counts the old ones under ``hand_waits``; a file may only go down.
+
+A press wrapped in a helper of our own (``_click_shop_close_control``,
+``_press_quick_slot``…) hid from the scan: the click inside the helper was
+counted once, every place that used it was not.  Player 2026-11-02 (v0.2.27):
+the 折扣商店 back went through such a helper, pressed once, no remedy, and
+跑商 failed.  So a function named ``click_* / press_* / tap_*`` that presses
+is a press too, at every call: through press_next / press_and_confirm, with
+``# 不用确认：<reason>``, or counted under ``helper_presses`` (only goes down).
+A helper that re-presses by itself carries ``# 会补点：<how>`` on its def line.
 """
 
 import ast
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -72,6 +82,75 @@ def _call_name(node: ast.Call) -> str:
 
 def direct_presses(path: Path) -> list[int]:
     """Lines in ``path`` that press without press_and_confirm or a reason."""
+    return _unconfirmed_calls(path, PRESS_CALLS)
+
+
+# On a helper's ``def`` line: it looks after its own press and presses again
+# when the game dropped it, so its callers need nothing more.
+SELF_REMEDY_MARK = "# 会补点"
+HELPER_NAME = re.compile(r"^_?(click|press|tap)(_|$)")
+NOT_HELPERS = CONFIRMED_BY | PRESS_CALLS
+
+
+def press_helpers(paths=None) -> frozenset[str]:
+    """Names of our own functions that send a press (by the naming rule).
+
+    A helper calling another helper (``_click_ocr_pattern_center`` →
+    ``_click_client`` → ``operate_click``) is one too."""
+    if paths is None:
+        paths = [path for folder in SCANNED for path in sorted(folder.rglob("*.py"))]
+    named = []
+    for path in paths:
+        source = path.read_text(encoding="utf-8")
+        lines = source.splitlines()
+        for node in ast.walk(ast.parse(source)):
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name not in NOT_HELPERS
+                and HELPER_NAME.match(node.name)
+                and SELF_REMEDY_MARK not in lines[node.lineno - 1]
+            ):
+                # Presses made through press_next / press_and_confirm have
+                # their remedy: they don't make a helper.  A 不用确认 mark
+                # inside one does not count: callers are checked instead.
+                confirmed: set[int] = set()
+                for call in ast.walk(node):
+                    if isinstance(call, ast.Call) and _call_name(call) in CONFIRMED_BY:
+                        for argument in [*call.args, *(k.value for k in call.keywords)]:
+                            confirmed.update(id(n) for n in ast.walk(argument))
+                calls = {
+                    _call_name(n)
+                    for n in ast.walk(node)
+                    if isinstance(n, ast.Call)
+                    and id(n) not in confirmed
+                }
+                named.append((node.name, calls))
+    names: set[str] = set()
+    pressing = set(PRESS_CALLS)
+    while True:
+        found = {name for name, calls in named if calls & pressing} - names
+        if not found:
+            return frozenset(names)
+        names |= found
+        pressing |= found
+
+
+_HELPERS: frozenset[str] | None = None
+
+
+def helper_presses(path: Path, helpers: frozenset[str] | None = None) -> list[int]:
+    """Lines in ``path`` that call a press helper without a remedy or reason."""
+    global _HELPERS
+    if path in WAIT_TOOLS:
+        return []
+    if helpers is None:
+        if _HELPERS is None:
+            _HELPERS = press_helpers()
+        helpers = _HELPERS
+    return _unconfirmed_calls(path, helpers)
+
+
+def _unconfirmed_calls(path: Path, names) -> list[int]:
     source = path.read_text(encoding="utf-8")
     lines = source.splitlines()
     tree = ast.parse(source)
@@ -82,7 +161,7 @@ def direct_presses(path: Path) -> list[int]:
                 inside_confirm.update(id(n) for n in ast.walk(argument))
     found = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or _call_name(node) not in PRESS_CALLS:
+        if not isinstance(node, ast.Call) or _call_name(node) not in names:
             continue
         if id(node) in inside_confirm:
             continue
@@ -167,6 +246,16 @@ class PressGuardTest(unittest.TestCase):
             "or put `# 不用确认：<reason>` on the line when the result is checked elsewhere.",
         )
 
+    def test_no_file_uses_press_helpers_more_than_before(self):
+        over = _over(self.allowed["helper_presses"], helper_presses)
+        self.assertEqual(
+            {},
+            over,
+            "New calls of a press helper (click_* / press_* / tap_*) with no remedy. "
+            "Call it through press_next (src/utils/press_next.py) so a swallowed press "
+            "is pressed again, or put `# 不用确认：<reason>` on the line.",
+        )
+
     def test_no_file_has_more_waits_that_may_never_look(self):
         over = _over(self.allowed["waits"], deadline_waits)
         self.assertEqual(
@@ -194,6 +283,7 @@ class PressGuardTest(unittest.TestCase):
         # 「我之前就說要有補救措施」).  Lower the baseline with the fix.
         for key, finder in (
             ("presses", direct_presses),
+            ("helper_presses", helper_presses),
             ("waits", deadline_waits),
             ("hand_waits", hand_waits),
         ):
@@ -215,6 +305,11 @@ class PressGuardTest(unittest.TestCase):
         self.assertEqual([7], direct_presses(sample))
         self.assertEqual([9], deadline_waits(sample))
         self.assertEqual([8], hand_waits(sample))
+        helpers = press_helpers([sample])
+        # _press_twice re-presses by itself; _click_via_helper presses through
+        # another helper.
+        self.assertEqual(frozenset({"_click_close", "_click_via_helper"}), helpers)
+        self.assertEqual([20, 35], helper_presses(sample, helpers))
 
 
 if __name__ == "__main__":

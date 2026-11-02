@@ -384,7 +384,7 @@ class RedemptionTowerTask(CartridgeFieldTask):
         self._click_reference(*down, after_sleep=STEP_BACK_SETTLE_SECONDS)  # 不用确认：再往上走
         return self._click_up()
 
-    def _click_up(self) -> bool:
+    def _click_up(self) -> bool:  # 会补点：循环往上点到看见标记
         """Click straight up until the marker shows, then on it."""
         self.info_set("当前阶段", "鼠标往上走到祭坛")
         for click in range(1, CLICK_UP_MAX + 1):

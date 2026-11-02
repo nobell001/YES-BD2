@@ -1025,7 +1025,7 @@ class QuickHuntFeatureMixin:
         if any(word in self._normalize_text(popup) for word in ("不足", "无法", "耗尽")):
             # The same tap that puts the shortage popup away after a hunt.
             self.log_info("快速狩猎：资源不足提示还在，先点掉再找圣石洞穴。")
-            self._click_mf_reference(1, 1, after_sleep=0.5)
+            self._click_mf_reference(1, 1, after_sleep=0.5)  # 不用确认：下一步找圣石洞穴前会再看，提示还在会再点
 
     def _quick_hunt_log_screen(self, what: str) -> None:
         """One log line with the words on screen, so a 问题摘要 shows where it was."""
@@ -1323,7 +1323,7 @@ class QuickHuntFeatureMixin:
                 keyword in self._normalize_text(dialog_text)
                 for keyword in ("不足", "无法", "耗尽")
             ):
-                self._click_mf_reference(1, 1, after_sleep=0.5)
+                self._click_mf_reference(1, 1, after_sleep=0.5)  # 不用确认：资源用完就结束，提示留给回主页关
                 return "depleted"
             if wait.over(frame, monotonic(), loading=is_loading_dark(frame)):
                 break

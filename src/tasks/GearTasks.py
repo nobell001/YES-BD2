@@ -569,10 +569,25 @@ class DailyRefineTask(_ClaimTaskBase):
             )
             self._save_flow_diagnostic("daily_refine_no_refine_button")
             return "no_button" if self._close_item_popup(detail) else "failed"
-        self._click_box(button, after_sleep=1.5)
+        self._click_box(button, after_sleep=1.5)  # 不用确认：没进精炼页、详情还在会再按一次
         if not self._wait_for_title("精炼", REFINE_PAGE_TITLE):
-            self._why = "点了精炼后，精炼页没出来"
-            return "failed"
+            # 精炼 here only opens the refine page (nothing is spent yet): a
+            # press the game dropped leaves the detail up, press it once more.
+            again = plain_refine_box(
+                self._wait_boxes(
+                    DETAIL_BUTTONS_ROI,
+                    "装备详情按钮",
+                    lambda boxes: plain_refine_box(boxes) is not None,
+                )
+            )
+            if again is None:
+                self._why = "点了精炼后，精炼页没出来"
+                return "failed"
+            self.log_info("每日精炼：点了精炼还在装备详情，再按一次。")
+            self._click_box(again, after_sleep=1.5)  # 不用确认：只补这一次
+            if not self._wait_for_title("精炼", REFINE_PAGE_TITLE):
+                self._why = "点了两次精炼，精炼页都没出来"
+                return "failed"
         return self._refine_on_page()
 
     def _open_item_popup(self, row: int, column: int) -> tuple[str, list]:

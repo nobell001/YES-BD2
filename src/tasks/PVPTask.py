@@ -12,6 +12,7 @@ from src.tasks.BaseBD2Task import (
     FIEND_HUNT_REWARD_DISMISS_TEXT,
     FIEND_HUNT_REWARD_TITLE,
     RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS,
+    DISMISS_REPRESS_SECONDS,
     BaseBD2Task,
 )
 from src.tasks.map_trade.models import MatchResult, TemplateSpec
@@ -823,6 +824,10 @@ class PVPTask(BaseBD2Task):
         2026-10-15 「你單純等載入怎麼可以改成只等10秒」), see load_wait."""
         wait = load_wait(monotonic(), timeout, before=scene_at_press(self))
         handled: set[str] = set()
+        # Each page is pressed twice at most: the second is the remedy for a
+        # press the game dropped (Leo 2026-11-02 「說了10次以上」).
+        presses: dict[str, int] = {}
+        pressed_at: dict[str, float] = {}
         action_count = 0
         last_text = ""
         last_hub_score = -1.0
@@ -850,7 +855,13 @@ class PVPTask(BaseBD2Task):
             if action_name:
                 hub_candidate_at = None
                 if (
-                    action_name not in handled
+                    (
+                        action_name not in presses
+                        or (
+                            presses[action_name] < 2
+                            and now - pressed_at[action_name] >= DISMISS_REPRESS_SECONDS
+                        )
+                    )
                     and target_box is not None
                     and action_count < RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS
                 ):
@@ -863,13 +874,18 @@ class PVPTask(BaseBD2Task):
                             if action_name in ("赛季奖励", FIEND_HUNT_REWARD_TITLE)
                             else PVP_RANK_PAGE_AFTER_CLICK_SECONDS
                         )
-                        if self.press_dismiss(
+                        if presses.get(action_name):
+                            # press_dismiss waits out the page's fade first.
+                            self.info_set("PVP 入场特殊页面", f"{action_name}点了还在，再点一次")
+                        if self.press_dismiss(  # 不用确认：页面还在会再点一次（最多两次）
                             max(0.0, min(1.0, point[0] / max(1, frame_width))),
                             max(0.0, min(1.0, point[1] / max(1, frame_height))),
                             after_sleep,
                             action_name,
                         ):
                             handled.add(action_name)
+                            presses[action_name] = presses.get(action_name, 0) + 1
+                            pressed_at[action_name] = now
                             action_count += 1
                         continue
                 # The hub artwork can remain visible behind these overlays. Never
@@ -934,7 +950,7 @@ class PVPTask(BaseBD2Task):
         if self._pre_battle_visible():
             self.info_set("PVP 舞台", "已在战前画面")
             return True
-        return self._click_template_until(
+        return self._click_template_until(  # 不用确认：helper 本身，调用处检查
             PVP_STAGE_TEMPLATE,
             timeout=timeout,
             name="PVP 舞台",
@@ -1010,9 +1026,9 @@ class PVPTask(BaseBD2Task):
                 self._save_flow_diagnostic("pvp_stage_walk_failed")
                 self.log_info("镜中之战：键盘移动未能走到舞台正中。")
                 return "failed"
-        elif not self._click_pvp_stage_once(STUCK_SECONDS):
+        elif not self._click_pvp_stage_once(STUCK_SECONDS):  # 不用确认：没出自动战斗菜单会定位修正、重点舞台、再走到台上
             self._recover_stage_position()
-            if not self._click_pvp_stage_once(8.0):
+            if not self._click_pvp_stage_once(8.0):  # 不用确认：同上，外层循环重点舞台
                 # BUG-20260908-04：舞台纹理小条失配时无图可查，落帧留存用户
                 # 箱庭实景以定位根因（对照 pvp_hub_entry_failed 等埋点）。
                 self._save_flow_diagnostic("pvp_stage_not_found")
@@ -1047,9 +1063,9 @@ class PVPTask(BaseBD2Task):
                     self._save_flow_diagnostic("pvp_stage_walk_failed")
                     self.log_info("镜中之战：重试时键盘移动未能走到舞台正中。")
                     return "failed"
-            elif not self._click_pvp_stage_once(8.0):
+            elif not self._click_pvp_stage_once(8.0):  # 不用确认：外层循环重点舞台，最后走到台上
                 self._recover_stage_position()
-                if not self._click_pvp_stage_once(8.0):
+                if not self._click_pvp_stage_once(8.0):  # 不用确认：外层循环重点舞台，最后走到台上
                     self._save_flow_diagnostic("pvp_stage_not_found")
                     self.log_info("镜中之战：重试点击时未找到 PVP 舞台物件。")
                     return "failed"
@@ -1073,14 +1089,14 @@ class PVPTask(BaseBD2Task):
         auto_battle_clicks = (
             (
                 "图标校准点",
-                lambda: self._click_screen_reference(
+                lambda: self._click_screen_reference(  # 不用确认：循环里轮流两种落点重点
                     *PVP_AUTO_BATTLE_CLICK_REFERENCE,
                     after_sleep=1.0,
                 ),
             ),
             (
                 "OCR标签中心",
-                lambda: self._click_ocr_pattern_center(
+                lambda: self._click_ocr_pattern_center(  # 不用确认：循环里轮流两种落点重点
                     [r"自动战斗", r"自动"],
                     name="PVP 自动战斗",
                     roi=PVP_AUTO_BATTLE_SCREEN_ROI,
@@ -1158,7 +1174,7 @@ class PVPTask(BaseBD2Task):
             )
             if not open_:
                 return
-            if not self._click_ocr_pattern_center(
+            if not self._click_ocr_pattern_center(  # 不用确认：循环两层，取消没关掉下一轮再按
                 [r"^取消$"], name="PVP 取消", roi=None, after_sleep=1.0
             ):
                 self.log_info("镜中之战：失败后未读到「取消」，弹窗留给回到主页处理。")
@@ -1174,7 +1190,7 @@ class PVPTask(BaseBD2Task):
         """
         self.info_set("当前阶段", "关闭 AP 不足弹窗（仅取消）")
         for attempt in range(1, PVP_AP_SHORTAGE_CLOSE_ATTEMPTS + 1):
-            clicked = self._click_ocr_pattern_center(
+            clicked = self._click_ocr_pattern_center(  # 不用确认：循环里不足弹窗还在就再按取消
                 PVP_AP_SHORTAGE_CLOSE_PATTERNS,
                 name="PVP AP不足取消",
                 roi=None,
@@ -1314,7 +1330,7 @@ class PVPTask(BaseBD2Task):
         if ensure_free_switch_on(
             "镜中之战：免费AP开关",
             self._free_ap_switch_ratio,
-            lambda: self._click_screen_reference(
+            lambda: self._click_screen_reference(  # 不用确认：开关只按一次，多按会关掉（review #28）
                 *PVP_FREE_AP_SWITCH_SCREEN_POINT,
                 after_sleep=1.0,
             ),
@@ -1404,7 +1420,7 @@ class PVPTask(BaseBD2Task):
     def _open_multiplier_setting(self) -> bool:
         # BUG-20260906-01：倍率按钮点击被网络吞掉时设置弹窗不会出现，重试点击。
         for attempt in range(1, PVP_CLICK_VERIFY_ATTEMPTS + 1):
-            self._click_screen_reference(
+            self._click_screen_reference(  # 不用确认：循环里没见设置弹窗就重点
                 *PVP_MULTIPLIER_BUTTON_SCREEN_POINT,
                 after_sleep=0.8,
             )
@@ -1434,7 +1450,7 @@ class PVPTask(BaseBD2Task):
         )
         option_value = 40 if multiplier == 40 else 1
         for attempt in range(1, PVP_CLICK_VERIFY_ATTEMPTS + 1):
-            self._click_screen_reference(*option_point, after_sleep=0.5)
+            self._click_screen_reference(*option_point, after_sleep=0.5)  # 不用确认：循环里没读到倍率就重点
             if self._setting_multiplier_matches(option_value):
                 break
             seen = str(getattr(self, "_multiplier_last_text", "") or "").strip()
@@ -1498,13 +1514,13 @@ class PVPTask(BaseBD2Task):
         # main value is not read is confirmed by the cost on 战斗开始
         # (checked again before the start in any case).
         for attempt in range(1, PVP_CLICK_VERIFY_ATTEMPTS + 1):
-            if not self._click_ocr_pattern_center(
+            if not self._click_ocr_pattern_center(  # 不用确认：循环里倍率没对上就重点
                 PVP_SETTING_CONFIRM_PATTERNS,
                 name="PVP 倍率确认",
                 roi=PVP_SETTING_CONFIRM_REFERENCE_ROI,
                 after_sleep=1.0,
             ):
-                self._click_screen_reference(
+                self._click_screen_reference(  # 不用确认：循环里倍率没对上就重点
                     *PVP_MULTIPLIER_CONFIRM_SCREEN_POINT,
                     after_sleep=1.0,
                 )
@@ -1939,8 +1955,10 @@ class PVPTask(BaseBD2Task):
             return False
 
         self._close_result_page()
-        if not self._click_leave_button():
-            return False
+        if not self._click_leave_button():  # 不用确认：没看到离开，按结算字样再关一次再找离开
+            # The ✕ was dropped: the result stays up and 离开 never shows.
+            self.log_info("镜中之战：关了结算后没看到「离开」，结算还在就再关一次。")
+            return self._leave_result_after_timeout(patterns, result_roi)
         if not self._ensure_pvp_hub_after_leave():
             return False
         return self._return_home_from_pvp_hub()
@@ -1963,7 +1981,7 @@ class PVPTask(BaseBD2Task):
         run_report.add_current_note(note)
         point = self._ocr_box_center(error.confirm)
         if point is not None:
-            self._click_frame_point(frame, point, after_sleep=1.0)
+            self._click_frame_point(frame, point, after_sleep=1.0)  # 不用确认：调用处循环两次，弹窗还在再按确认
         return error
 
     def _leave_after_server_error(self) -> bool:
@@ -1991,7 +2009,7 @@ class PVPTask(BaseBD2Task):
     def _close_result_page(self) -> None:
         self.info_set("当前阶段", "关闭战斗结算")
         self.sleep(1.0)
-        self._click_screen_reference(
+        self._click_screen_reference(  # 不用确认：调用处没看到离开会按结算字样再关一次
             *PVP_RESULT_CLOSE_SCREEN_POINT,
             after_sleep=PVP_RESULT_CLOSE_AFTER_SECONDS,
         )
@@ -2008,7 +2026,7 @@ class PVPTask(BaseBD2Task):
         text = self._ocr_text(frame, name="PVP 结算", roi=roi) if frame is not None else ""
         if self._ocr_pattern_match_count(text, patterns) >= PVP_RESULT_PARTIAL_MATCHES:
             self._close_result_page()
-        if self._click_leave_button() and self._ensure_pvp_hub_after_leave():
+        if self._click_leave_button() and self._ensure_pvp_hub_after_leave():  # 不用确认：本身就是结算超时的补救
             return bool(self._return_home_from_pvp_hub())
         return False
 
@@ -2048,7 +2066,7 @@ class PVPTask(BaseBD2Task):
                     "PVP 离开点击",
                     f"OCR中心=({matched_point[0]:.0f},{matched_point[1]:.0f})",
                 )
-                self._click_frame_point(frame, matched_point, after_sleep=2.0)
+                self._click_frame_point(frame, matched_point, after_sleep=2.0)  # 不用确认：调用处 _ensure_pvp_hub_after_leave 没离开会重点离开
                 return True
 
             if wait.over(frame, monotonic(), loading=is_loading_dark(frame)):
@@ -2104,6 +2122,7 @@ class PVPTask(BaseBD2Task):
         timeout = float(self.config.get("PVP 返回箱庭等待秒数", 10.0))
         end_at = monotonic() + max(0.0, timeout)
         leave_retried = False
+        confirm_retried = False
         passes = 0
         while True:
             passes += 1
@@ -2132,7 +2151,7 @@ class PVPTask(BaseBD2Task):
                     f"首次点击未生效，重试OCR中心=({retry_point[0]:.0f},"
                     f"{retry_point[1]:.0f})",
                 )
-                self._click_frame_point(frame, retry_point, after_sleep=2.0)
+                self._click_frame_point(frame, retry_point, after_sleep=2.0)  # 不用确认：这就是离开的补点
                 continue
 
             if state == "leave":
@@ -2162,12 +2181,19 @@ class PVPTask(BaseBD2Task):
                     "PVP 升降级确认",
                     f"稳定新帧OCR中心=({point[0]:.0f},{point[1]:.0f})",
                 )
-                self._click_frame_point(frame, point, after_sleep=1.0)
-                return self._wait_for_template(
+                self._click_frame_point(frame, point, after_sleep=1.0)  # 不用确认：没回箱庭会再看一次，确认还在就再按
+                if self._wait_for_template(
                     PVP_MEDALS_TEMPLATE,
                     timeout=timeout,
                     name="PVP 箱庭",
-                )
+                ):
+                    return True
+                if confirm_retried:
+                    return False
+                confirm_retried = True
+                self.log_info("镜中之战：按了升降级确认没回箱庭，再看一次，确认还在就再按。")
+                end_at = monotonic() + max(1.0, timeout)  # 自己等：同一个等待再给一轮
+                continue
 
             break
 
@@ -2206,7 +2232,7 @@ class PVPTask(BaseBD2Task):
                 reward_taps += 1
                 self.info_set("PVP 结算后奖励页", f"第{reward_taps}次点掉")
                 self.log_info("镜中之战：打完回来出现赛季奖励页面，点画面关掉。")
-                self._click_frame_point(
+                self._click_frame_point(  # 不用确认：循环里奖励页还在就再点，最多 PVP_REWARD_PAGE_MAX_TAPS 次
                     frame, point, after_sleep=PVP_SEASON_REWARD_AFTER_CLICK_SECONDS
                 )
                 # The tap and its wait must not use up the hub wait.
@@ -2419,7 +2445,7 @@ class PVPTask(BaseBD2Task):
         return confirmed, left_hits, p95_brightness, gacha_text
 
     def _recover_stage_position(self) -> None:
-        if self._click_template_until(
+        if self._click_template_until(  # 不用确认：本身就是补救（定位修正）
             PVP_LOC_RESET_TEMPLATE,
             timeout=2.0,
             name="PVP 定位修正",
@@ -2429,7 +2455,7 @@ class PVPTask(BaseBD2Task):
             return
 
         for spec in PVP_NO_FIND_TEMPLATES:
-            if self._click_template_until(
+            if self._click_template_until(  # 不用确认：本身就是补救（舞台搜索）
                 spec,
                 timeout=0.8,
                 name="PVP 舞台搜索",
@@ -2524,7 +2550,7 @@ class PVPTask(BaseBD2Task):
                         + target_offset[1]
                         + reference_offset_y
                     )
-                    self._click_client(x, y, frame_width, frame_height, after_sleep=after_sleep)
+                    self._click_client(x, y, frame_width, frame_height, after_sleep=after_sleep)  # 不用确认：helper 本身，调用处检查
                 return True
             self.sleep(interval)
 
@@ -2789,7 +2815,7 @@ class PVPTask(BaseBD2Task):
                 "PVP 自动战斗点击",
                 f"OCR中心=({point[0]:.0f},{point[1]:.0f})",
             )
-            self._click_client(
+            self._click_client(  # 不用确认：helper 本身，调用处检查
                 int(round(point[0])),
                 int(round(point[1])),
                 frame_width,

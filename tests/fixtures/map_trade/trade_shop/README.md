@@ -33,3 +33,11 @@ while that title reads.
 fifteen star ROIs around `SHOP_FAVORITE_POINTS` are retained; every other
 pixel is black. Slots 1-7 read gray: the buy stops with the reason instead of
 pressing the fixed 确认.
+
+`bought_page_player_1080_v0227.jpg` is the game picture from a player's
+v0.2.27 问题摘要 (2026-11-02, 1920x1080 fullscreen at 125%): the discount
+shop's 购买 page after 一键购买全部收藏, everything 售罄.  It is the summary's
+own downscaled copy (1488x836); the gold total and status at the top right
+are blacked out.  The shop's back pill stayed pressed-and-ignored on this
+page for 13 s; tests/test_page_lookalikes.py checks that classify_trade reads
+it as SHOP, the screen 跑商 presses its back once more, then Esc, on.

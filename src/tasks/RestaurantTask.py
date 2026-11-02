@@ -194,7 +194,7 @@ class RestaurantStoneTask(_ClaimTaskBase):
             go = self._find_go_button()
             if go is None:
                 return False
-            self._click_box(go, after_sleep=2.0)
+            self._click_box(go, after_sleep=2.0)  # 不用确认：循环里弹窗还在就再点立刻前往
             if self._wait_for_title("餐厅", RESTAURANT_TITLE, timeout=8.0, quiet=True):
                 return True
             # A swallowed click leaves the popup open: press 立刻前往 again.

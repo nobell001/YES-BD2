@@ -335,7 +335,7 @@ class SquareGoddessTask(BaseBD2Task):
         self.info_set("当前阶段", "打开卡带快速切换")
         if not self.open_cartridge_quick_switcher(
             ensure_home=self._wait_for_cartridge_home,
-            click_quick_switch=lambda: self._click_template_until(
+            click_quick_switch=lambda: self._click_template_until(  # 不用确认：open_cartridge_quick_switcher 页面没出来会用下面的 repress 重按
                 QUICK_SWITCH_TEMPLATE,
                 timeout=float(self.config.get("快速卡带等待秒数", 10.0)),
                 name="快速切换按钮",
@@ -346,7 +346,7 @@ class SquareGoddessTask(BaseBD2Task):
             quick_switch_page_shown=lambda seconds: self._wait_for_quick_switch_page(
                 timeout=seconds, quiet=True
             ),
-            repress_quick_switch=lambda: self._click_template_until(
+            repress_quick_switch=lambda: self._click_template_until(  # 不用确认：这就是重按
                 QUICK_SWITCH_TEMPLATE,
                 timeout=QUICK_SWITCH_REPRESS_LOOK_SECONDS,
                 name="快速切换按钮",
@@ -650,7 +650,7 @@ class SquareGoddessTask(BaseBD2Task):
         self._click_square_notice_if_present()
 
         self.info_set("当前阶段", "检查女神像每日导航")
-        navigation_result = self._click_goddess_daily_navigation_until(
+        navigation_result = self._click_goddess_daily_navigation_until(  # 不用确认：下面许愿等待里提示不出来会重点导航、按 E
             timeout=float(self.config.get("女神像导航入口等待秒数", 8.0))
         )
         if navigation_result != GODDESS_NAVIGATION_CLICKED and self._prayer_prompt_steady():
@@ -669,7 +669,7 @@ class SquareGoddessTask(BaseBD2Task):
         if navigation_result != GODDESS_NAVIGATION_CLICKED and self._walk_by_key():
             navigation_result = GODDESS_NAVIGATION_CLICKED
         if navigation_result != GODDESS_NAVIGATION_CLICKED and (
-            self._press_row_where_it_usually_is()
+            self._press_row_where_it_usually_is()  # 不用确认：本身就是补救（按平常位置）
         ):
             navigation_result = GODDESS_NAVIGATION_CLICKED
         if navigation_result != GODDESS_NAVIGATION_CLICKED and row_absent and (
@@ -774,7 +774,7 @@ class SquareGoddessTask(BaseBD2Task):
         height, width = frame.shape[:2]
         x, y = GODDESS_ROW_USUAL_POINT
         self.log_info("广场女神像：每日导航读不到，照它平常的位置点一下。")
-        self._click_client(round(x * width), round(y * height), width, height, after_sleep=1.0)
+        self._click_client(round(x * width), round(y * height), width, height, after_sleep=1.0)  # 不用确认：helper 本身就是补救
         if self._walk_or_prompt_within(GODDESS_ROW_PRESS_CONFIRM_SECONDS):
             self.log_info("广场女神像：点了以后开始走向女神像了。")
             return True
@@ -804,7 +804,7 @@ class SquareGoddessTask(BaseBD2Task):
             if nav is not None and previous is not None:
                 tolerance = max(nav.height, previous.height)
                 if all(abs(a - b) <= tolerance for a, b in zip(nav.center, previous.center)):
-                    self._click_client(*nav.center, frame.shape[1], frame.shape[0], after_sleep=2.0)
+                    self._click_client(*nav.center, frame.shape[1], frame.shape[0], after_sleep=2.0)  # 不用确认：helper 本身，调用处检查
                     return GODDESS_NAVIGATION_CLICKED
             previous = nav
             self.sleep(interval)
@@ -872,7 +872,7 @@ class SquareGoddessTask(BaseBD2Task):
                     continue
                 self.log_info(f"{stuck}，已按掉自动移动，重新点每日导航。")
                 renav_left -= 1
-                navigation = self._click_goddess_daily_navigation_until(
+                navigation = self._click_goddess_daily_navigation_until(  # 不用确认：这就是重点导航
                     timeout=float(self.config.get("女神像导航入口等待秒数", 8.0))
                 )
                 if navigation != GODDESS_NAVIGATION_CLICKED:
@@ -884,7 +884,7 @@ class SquareGoddessTask(BaseBD2Task):
             walk_still.reset()
 
             if point is not None and click_count < max_clicks:
-                self._click_client(
+                self._click_client(  # 不用确认：循环里提示还在就再按，最多 女神像许愿最多点击次数
                     point[0],
                     point[1],
                     frame_width,
@@ -942,7 +942,7 @@ class SquareGoddessTask(BaseBD2Task):
                     if observation.navigation is not None:
                         renav_left -= 1
                         self.log_info("广场女神像：许愿提示迟迟未出现，补点每日导航。")
-                        self._click_client(
+                        self._click_client(  # 不用确认：这就是补点导航
                             *observation.navigation.center,
                             frame_width,
                             frame_height,
@@ -1102,7 +1102,7 @@ class SquareGoddessTask(BaseBD2Task):
                 )
                 x = center_x + offset_x
                 y = center_y + offset_y
-                self._click_client(x, y, frame_width, frame_height, after_sleep=after_sleep)
+                self._click_client(x, y, frame_width, frame_height, after_sleep=after_sleep)  # 不用确认：helper 本身，调用处检查
                 return True
             self.sleep(interval)
 

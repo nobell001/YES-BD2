@@ -184,19 +184,40 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
         whole chore failed (same class as the result-page back, player
         2026-11-02).  While home still shows, the entry is pressed again."""
         name = "进入抽卡页"
-        for attempt in range(ENTRY_REPRESSES + 1):
+        from_home_again = True
+        attempt = 0
+        while attempt <= ENTRY_REPRESSES:
             if attempt:
                 self.log_info(f"{name}：点了抽抽乐入口还在主页，补点一次（{attempt}/{ENTRY_REPRESSES}）。")
-            self._click_reference(*GACHA_ENTRY_REFERENCE_POINT, after_sleep=0.5)  # 不用确认：下面等抽卡页，还在主页补点
+            self._click_reference(*GACHA_ENTRY_REFERENCE_POINT, after_sleep=0.5)  # 不用确认：下面等抽卡页，还在主页补点，别的画面回主页再点
+            attempt += 1
             loading_state, gacha_found, _ = self._wait_loading_or_gacha_page(name)
             if loading_state == "stuck":
                 return False
             if gacha_found:
                 return True
-            if not self._home_confirmation_ok(self.capture_frame(), name):
-                return self._wait_for_gacha_page(name)
+            if self._home_confirmation_ok(self.capture_frame(), name):
+                continue
+            if self._wait_for_gacha_page(name):
+                return True
+            # Neither home nor the gacha page: the press opened something
+            # else, or the page did not read.  Leo 2026-10-31 「總之最少都要補按」:
+            # back to 主页 and press the entry once more, once.
+            if not from_home_again:
+                return False
+            from_home_again = False
+            self.log_info(f"{name}：点了抽抽乐入口后不在主页也不是抽卡页，回主页再点一次。")
+            if not self._home_for_entry_retry(name):
+                self.log_info(f"{name}：回不到主页，不再点入口。")
+                return False
+            attempt = 0
         self.log_info(f"{name}：补点 {ENTRY_REPRESSES} 次后还在主页。")
         return False
+
+    def _home_for_entry_retry(self, name: str) -> bool:
+        from src.tasks.recovery import recover_to_home
+
+        return bool(recover_to_home(self)) and self._home_confirmation_ok(self.capture_frame(), name)
 
     def _pool_seen(self, frame, keywords: list[str], name: str) -> bool:
         return self._ocr_keywords_in_frame(frame, keywords, 1, name)[0]
@@ -682,7 +703,7 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
 
         run_report.save_picture(frame, "gacha")
 
-    def _click_skip_until_back_page(self, section_name: str) -> tuple[bool, str]:
+    def _click_skip_until_back_page(self, section_name: str) -> tuple[bool, str]:  # 会补点：连续点跳过
         duration = max(
             0.0, float(self.config.get(RESULT_SKIP_BURST_KEY, RESULT_SKIP_BURST_SECONDS))
         )

@@ -611,7 +611,7 @@ class EventBattleTask(_ClaimTaskBase):
                     return "no_event"
                 return self._failed("点了活动横幅没进去，之后横幅也找不到了")
             self._sleep_after_recognition()
-            self._click_box(banner, after_sleep=1.0)
+            self._click_box(banner, after_sleep=1.0)  # 不用确认：循环里还在主页就再点横幅
             if self._wait_for_hub(timeout=HUB_RETRY_SECONDS):
                 return "ok"
             if self._wait_for_home_confirmation("活动横幅重试前主页确认", timeout=2.0):
@@ -663,7 +663,7 @@ class EventBattleTask(_ClaimTaskBase):
             if button is None:
                 return self._failed(missed)
             self._sleep_after_recognition()
-            self._click_box(button, after_sleep=1.5)
+            self._click_box(button, after_sleep=1.5)  # 不用确认：循环里还在活动页就再点
             if self._wait_for_stage_page(mode, timeout=HUB_RETRY_SECONDS, quiet=True):
                 return "ok"
             if usual:
@@ -1045,7 +1045,7 @@ class EventBattleTask(_ClaimTaskBase):
             start = self._box_with(boxes, ("战斗",))
             if start is None:
                 break
-            self._click_box(start, after_sleep=1.5)
+            self._click_box(start, after_sleep=1.5)  # 不用确认：循环里没开打、窗口还在就再点
             end_at = monotonic() + START_CONFIRM_SECONDS
             while monotonic() <= end_at:
                 if self._dismiss_ap_shortage():
@@ -1289,7 +1289,7 @@ class EventBattleTask(_ClaimTaskBase):
                 return True
             if attempt > 1:
                 self.log_info(f"活动每日战斗：第{attempt}次点击返回。")
-            self._click_box(back, after_sleep=2.5)
+            self._click_box(back, after_sleep=2.5)  # 不用确认：循环里返回还在就再点
         buttons = self._roi_boxes(self.capture_frame(), RESULT_BUTTONS_ROI, "战斗结果")
         if self._box_with(buttons, (RESULT_BACK_TEXT,)) is None:
             return True
@@ -1349,7 +1349,7 @@ class EventBattleTask(_ClaimTaskBase):
                 leave = self._box_with(buttons, (RESULT_BACK_TEXT,))
             if leave is not None:
                 self.log_info(f"活动每日战斗：失败画面按「{leave.name}」。")
-                self._click_box(leave, after_sleep=2.0)
+                self._click_box(leave, after_sleep=2.0)  # 不用确认：循环里没离开就点空白、按 Esc
             elif attempt == 1:
                 self.log_info("活动每日战斗：失败画面没读到离开的按钮，点空白处。")
                 self._click_reference(  # 不用确认：下面 wait_for 看画面有没有离开
@@ -1377,7 +1377,7 @@ class EventBattleTask(_ClaimTaskBase):
         for _read in range(AP_SHORT_CANCEL_READS):
             cancel = self._box_with(boxes, (CANCEL_TEXT,))
             if cancel is not None:
-                self._click_box(cancel, after_sleep=1.0)
+                self._click_box(cancel, after_sleep=1.0)  # 不用确认：调用处循环，弹窗还在下一轮再按读到的取消；旁边是补充，不点固定位置
                 return True
             self.sleep(0.5)
             boxes = self._roi_boxes(self.capture_frame(), DIALOG_ROI, "AP不足")
@@ -1450,7 +1450,7 @@ class EventBattleTask(_ClaimTaskBase):
             return self._failed("快速战斗窗口里没找到「战斗」")
         self._pause_guard()
         try:
-            self._click_box(start, after_sleep=1.0)
+            self._click_box(start, after_sleep=1.0)  # 不用确认：开始快速战斗会花活动 AP，不重按
             result = self._wait_quick_result()
         finally:
             self._resume_guard()
@@ -1517,7 +1517,7 @@ class EventBattleTask(_ClaimTaskBase):
             if button is None:
                 return False
             self._sleep_after_recognition()
-            self._click_box(button, after_sleep=1.0)
+            self._click_box(button, after_sleep=1.0)  # 不用确认：循环里窗口没开就再点
             end_at = monotonic() + 4.0
             while monotonic() <= end_at:
                 if self._dismiss_ap_shortage():

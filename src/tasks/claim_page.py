@@ -317,7 +317,7 @@ class ClaimPageMixin(TaskVisionMixin):
             for a, b in zip(before, after)
         )
 
-    def _click_until_changed(
+    def _click_until_changed(  # 会补点：画面没变就再点
         self,
         label: str,
         click,
@@ -599,7 +599,7 @@ class ClaimPageMixin(TaskVisionMixin):
             if dismiss is not None:
                 self._save_reward_picture(frame)
                 self.log_info(f"{label}：关闭奖励弹窗（{getattr(dismiss, 'name', '')}）。")
-                self._click_box(dismiss, after_sleep=0.8)
+                self._click_box(dismiss, after_sleep=0.8)  # 不用确认：循环里弹窗还在下一轮再关
                 stable_frames = unknown_frames = 0
                 handled += 1
                 continue
@@ -608,7 +608,7 @@ class ClaimPageMixin(TaskVisionMixin):
                 if confirm is not None:
                     self._save_reward_picture(frame)
                     self.log_info(f"{label}：确认奖励弹窗。")
-                    self._click_box(confirm, after_sleep=0.8)
+                    self._click_box(confirm, after_sleep=0.8)  # 不用确认：循环里弹窗还在下一轮再按确认
                     stable_frames = unknown_frames = 0
                     handled += 1
                     continue

@@ -359,6 +359,7 @@ class SandboxConfirmationTest(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn("点击技能组1后连续", result.message)
         self.assertIn("帧仍识别为技能组2，切换失败", result.message)
+        # Pressed once more after the first press changed nothing.
         self.assertEqual(
             [
                 (
@@ -366,10 +367,11 @@ class SandboxConfirmationTest(unittest.TestCase):
                     SANDBOX_SKILL_SLOT_1_RELATIVE_POINT[1],
                     0.5,
                 )
-            ],
+            ]
+            * 2,
             clicks,
         )
-        self.assertEqual(1 + STORY_SANDBOX_SWITCH_WINDOW, len(captures))
+        self.assertEqual(1 + 2 * STORY_SANDBOX_SWITCH_WINDOW, len(captures))
 
     def test_story_sandbox_group_two_alternating_with_none_does_not_fail_early(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)

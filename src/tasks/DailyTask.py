@@ -600,7 +600,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             if page_hits >= 2:
                 return "page", text
             if toast:
-                self._tap_away_popup()
+                self._tap_away_popup()  # 不用确认：循环里弹窗还在会再点（同处 2 秒内不重点）
             if wait is not None:
                 if wait.over(frame, monotonic(), loading=is_loading_dark(frame)):
                     return None, text
@@ -994,7 +994,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
     def _close_business_popup(self, boxes: list, frame) -> None:
         cancel = self._business_popup_box(boxes, frame, BUSINESS_COLLECT_CANCEL_TEXT)
         if cancel is not None:
-            self._click_ocr_box(cancel, frame, after_sleep=1.0)
+            self._click_ocr_box(cancel, frame, after_sleep=1.0)  # 不用确认：调用处循环，弹窗还在下一轮再关
             return
         self.log_info("一键收菜：未识别到「取消」，点击原关闭位置。")
         self._click_reference(*BUSINESS_COLLECT_CLOSE_REFERENCE_POINT, after_sleep=1.0)
@@ -1021,14 +1021,14 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             dismiss = self._first_box_with(boxes, OVERLAY_DISMISS_KEYWORDS)
             if dismiss is not None:
                 self.log_info(f"一键收菜：关闭奖励弹窗（{getattr(dismiss, 'name', '')}）。")
-                self._click_ocr_box(dismiss, frame, after_sleep=1.0)
+                self._click_ocr_box(dismiss, frame, after_sleep=1.0)  # 不用确认：循环里弹窗还在下一轮再关
                 unknown_frames = 0
                 continue
             if self._keyword_match_count(text, list(REWARD_DIALOG_TITLES)) >= 1:
                 confirm = self._first_box_with(boxes, (CONFIRM_TEXT,))
                 if confirm is not None:
                     self.log_info("一键收菜：确认奖励弹窗。")
-                    self._click_ocr_box(confirm, frame, after_sleep=1.0)
+                    self._click_ocr_box(confirm, frame, after_sleep=1.0)  # 不用确认：循环里弹窗还在下一轮再按确认
                     unknown_frames = 0
                     continue
             if self._keyword_match_count(text, BUSINESS_COLLECT_KEYWORDS) >= 2:

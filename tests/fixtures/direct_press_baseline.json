@@ -92,5 +92,8 @@
     "src/tasks/trigger/AutoLoginTask.py": 1,
     "src/utils/clone_desktop.py": 1,
     "src/utils/game_size.py": 1
+  },
+  "helper_presses": {
+    "src/tasks/map_trade/navigator_trade.py": 1
   }
 }

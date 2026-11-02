@@ -217,7 +217,7 @@ class BuyFlowMixin:
                 if (nothing := self._nothing_favorited()) is not None:
                     return nothing
                 return self._confirm_unread_purchase_dialog()
-        return self._press_purchase_confirm()
+        return self._press_purchase_confirm()  # 不用确认：购买确认会花钱，不重按
 
     def _buy_all_favorites_at_fixed_point(self, *, pressed_before: bool = False) -> bool:
         """The 一键购买全部收藏 words were not read: press where it sits,
@@ -232,7 +232,7 @@ class BuyFlowMixin:
             if self._wait_for_purchase_confirmation(
                 BUY_CONFIRM_FIRST_TIMEOUT, log_timeout=False
             ) or self._purchase_dialog_partly_read():
-                return self._press_purchase_confirm()
+                return self._press_purchase_confirm()  # 不用确认：购买确认会花钱，不重按
         if (nothing := self._nothing_favorited()) is not None:
             return nothing
         return self._confirm_unread_purchase_dialog()

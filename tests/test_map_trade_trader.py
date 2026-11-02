@@ -5107,7 +5107,9 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         result = navigator._return_home_pass()
 
         self.assertFalse(result.success)
-        self.assertEqual([(82, 36, 0.0)], actions)
+        # The shop page stayed: its back pressed once more (bug-prevention.md
+        # 3), never the dialog's 确认 that was not read.
+        self.assertEqual([(82, 36, 0.0), (82, 36, 0.0)], actions)
 
     def test_return_home_closes_sale_popup_before_discount_shop(self):
         actions = []
@@ -5130,9 +5132,13 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         navigator.classify_trade = lambda: ScreenState.SHOP
         with patch("src.tasks.map_trade.navigator_trade.monotonic", lambda: clock[0]):
             navigator._return_home_pass()
-        self.assertEqual([("popup", SALE_CLOSE_POINT), ("shop",)], actions)
-        # The sale popup's two looks, then the merchant menu looked for.
-        self.assertAlmostEqual(2 * SALE_OCR_INTERVAL + MERCHANT_BACK_LOOK_SECONDS, clock[0], places=6)
+        # The shop stayed after its back: pressed once more.
+        self.assertEqual([("popup", SALE_CLOSE_POINT), ("shop",), ("shop",)], actions)
+        # The sale popup's two looks, then the merchant menu looked for after
+        # each back.
+        self.assertAlmostEqual(
+            2 * SALE_OCR_INTERVAL + 2 * MERCHANT_BACK_LOOK_SECONDS, clock[0], places=6
+        )
 
     def test_return_home_stops_if_sale_popup_close_is_unconfirmed(self):
         for after_click in ("姜黄 拥有54个 可购买54个 出售", ""):

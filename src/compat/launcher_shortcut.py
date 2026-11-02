@@ -63,18 +63,43 @@ def same_path(a: str, b: Path) -> bool:
     )
 
 
+def _shell_link_target(link: Path) -> str:
+    """The .lnk target through IShellLinkW, which takes any file name."""
+    import pythoncom
+    from win32com.shell import shell as win_shell
+
+    shell_link = pythoncom.CoCreateInstance(
+        win_shell.CLSID_ShellLink, None, pythoncom.CLSCTX_INPROC_SERVER, win_shell.IID_IShellLink
+    )
+    shell_link.QueryInterface(pythoncom.IID_IPersistFile).Load(str(link))
+    return str(shell_link.GetPath(win_shell.SLGP_RAWPATH)[0] or "")
+
+
+def link_target(link: Path, shell) -> str:
+    """WScript.Shell only opens names in the system code page: on a 繁中
+    Windows 「yes-bd2 启动器.lnk」 reads as an empty shortcut (Leo 4K 11-02,
+    the 简体 duplicate stayed on the desktop).  IShellLinkW first."""
+    try:
+        target = _shell_link_target(link)
+        if target:
+            return target
+    except Exception:
+        pass
+    return str(shell.CreateShortcut(str(link)).TargetPath or "")
+
+
 def extra_launcher_shortcuts(desktop: Path, launcher: Path, app_name: str, shell) -> list[Path]:
     """桌面上跟「yes-bd2」重复的启动器捷径；「yes-bd2」本身不开启动器时为空。"""
     main = desktop / f"{app_name}.lnk"
     if not main.is_file():
         return []
-    if not same_path(str(shell.CreateShortcut(str(main)).TargetPath or ""), launcher):
+    if not same_path(link_target(main, shell), launcher):
         return []
     extra = []
     for link in sorted(desktop.iterdir()):
         if not link.is_file() or not is_launcher_shortcut_name(link.name, app_name):
             continue
-        if same_path(str(shell.CreateShortcut(str(link)).TargetPath or ""), launcher):
+        if same_path(link_target(link, shell), launcher):
             extra.append(link)
     return extra
 
