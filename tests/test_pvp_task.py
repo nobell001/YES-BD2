@@ -911,6 +911,7 @@ class PVPTaskHelperTest(unittest.TestCase):
         task = object.__new__(PVPTask)
         # The F / P shortcut fallback is not sent here (game not in front).
         task.tap_key = lambda *_args, **_kwargs: False
+        task.leave_field_battle = lambda *_args, **_kwargs: "none"
         task.log_info = lambda *_args, **_kwargs: None
         calls = []
         home_results = iter((True, False, False))  # the last: the key fallback
