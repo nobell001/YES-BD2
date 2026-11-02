@@ -57,9 +57,27 @@ def is_launcher_shortcut_name(file_name: str, app_name: str) -> bool:
     return any(stem == form.format(app=app_name).casefold() for form in LAUNCHER_NAME_FORMS)
 
 
+def long_path(path: str) -> str:
+    """The long form of a short (8.3) name such as RUNNER~1:
+    a shortcut keeps the long form, so the two never read equal otherwise
+    (YES-BD2 Build v0.2.28 2026-11-02: the launcher in the runner's 8.3
+    temp folder, its shortcuts not removed).  Unchanged when not on Windows
+    or when the path does not exist."""
+    if os.name != "nt" or not path:
+        return path
+    try:
+        import ctypes
+
+        buffer = ctypes.create_unicode_buffer(32768)
+        size = ctypes.windll.kernel32.GetLongPathNameW(path, buffer, len(buffer))
+    except Exception:
+        return path
+    return buffer.value if 0 < size < len(buffer) else path
+
+
 def same_path(a: str, b: Path) -> bool:
-    return bool(a) and os.path.normcase(os.path.abspath(a)) == os.path.normcase(
-        os.path.abspath(str(b))
+    return bool(a) and os.path.normcase(os.path.abspath(long_path(a))) == os.path.normcase(
+        os.path.abspath(long_path(str(b)))
     )
 
 

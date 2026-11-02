@@ -2,12 +2,15 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from src.compat.launcher_shortcut import (
     is_launcher_shortcut_name,
+    long_path,
     needs_retarget,
     remove_extra_launcher_shortcuts,
     retarget,
+    same_path,
     shortcut_paths,
 )
 
@@ -157,6 +160,28 @@ class DesktopDuplicateTest(unittest.TestCase):
         self.assertTrue(is_launcher_shortcut_name("YES-BD2 Launcher (3).LNK", "yes-bd2"))
         self.assertFalse(is_launcher_shortcut_name("yes-bd2.lnk", "yes-bd2"))
         self.assertFalse(is_launcher_shortcut_name("yes-bd2 启动器.url", "yes-bd2"))
+
+
+class ShortNameTest(unittest.TestCase):
+    """A shortcut keeps the long name; the launcher can come as an 8.3 one
+    (YES-BD2 Build v0.2.28: the RUNNER~1 temp folder)."""
+
+    def test_short_and_long_names_of_one_launcher_are_the_same(self):
+        folder = tempfile.gettempdir()
+        short = str(Path(folder) / "RUNNER~1" / "yes-bd2.exe")
+        long_ = str(Path(folder) / "runneradmin" / "yes-bd2.exe")
+        with mock.patch(
+            "src.compat.launcher_shortcut.long_path",
+            side_effect=lambda path: path.replace("RUNNER~1", "runneradmin"),
+        ):
+            self.assertTrue(same_path(long_, Path(short)))
+            self.assertTrue(same_path(short, Path(long_)))
+            self.assertFalse(same_path(str(Path(folder) / "other" / "yes-bd2.exe"), Path(short)))
+
+    def test_long_path_leaves_names_alone_off_windows(self):
+        if sys.platform == "win32":
+            self.skipTest("Windows expands the name")
+        self.assertEqual("C:/Users/RUNNER~1/x.exe", long_path("C:/Users/RUNNER~1/x.exe"))
 
 
 @unittest.skipUnless(sys.platform == "win32", "real .lnk files need Windows")
