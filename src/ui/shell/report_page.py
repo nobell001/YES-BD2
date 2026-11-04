@@ -50,6 +50,13 @@ def run_line(entry: dict) -> str:
     return " · ".join(part for part in parts if part)
 
 
+def fps_line(labels) -> str:
+    """Which FPS tool was open when this run failed."""
+    from src.utils import fps_tools
+
+    return tf(fps_tools.FAILED_WITH, names=fps_tools.joined([str(x) for x in labels]))
+
+
 def header_line(week_seconds: float) -> str:
     """'10月9日 周五 · 游戏日从 08:00 开始 · 本周代跑 3 小时 20 分'.
 
@@ -108,6 +115,8 @@ class TaskRuns(QWidget):
                 texts.addWidget(
                     Text(note, "bad" if run.get("state") == run_log.FAIL else "muted", wrap=True)
                 )
+            if run.get("fps_tools"):
+                texts.addWidget(Text(fps_line(run["fps_tools"]), "warn", wrap=True))
             if run.get("trade"):
                 trade = TradeLine()
                 trade.set_trade(run["trade"])

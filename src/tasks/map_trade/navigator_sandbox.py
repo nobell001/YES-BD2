@@ -44,10 +44,11 @@ from src.tasks.map_trade.models import (
     TemplateSpec,
 )
 from src.tasks.map_trade.navigator_constants import (
+    area_map_header_named,
+    teleport_map_header_read,
     AREA_MAP_BACK_TEMPLATE,
     AREA_MAP_FOOTER_KEYWORDS,
     AREA_MAP_FOOTER_RELATIVE_ROI,
-    AREA_MAP_HEADER_TAGS,
     AREA_MAP_CHANGE_INTERVAL,
     AREA_MAP_CHANGE_TIMEOUT,
     AREA_MAP_CLICK_SETTLE_SECONDS,
@@ -1193,7 +1194,9 @@ class SandboxNavigationMixin:
             # one read is enough (Leo 2026-10-01, ~1 s a move).
             sure_direct = (
                 detection.mode == MapPageMode.DIRECT_TELEPORT
-                and "移动魔法阵" in normalize_text(getattr(detection, "header_text", ""))
+                and teleport_map_header_read(
+                    normalize_text(getattr(detection, "header_text", ""))
+                )
                 and any(
                     "交互直传页图标=pass" in item for item in getattr(detection, "evidence", ())
                 )
@@ -3281,7 +3284,7 @@ class SandboxNavigationMixin:
                 )
             )
         )
-        return any(tag in header for tag in AREA_MAP_HEADER_TAGS)
+        return area_map_header_named(header)
 
     @staticmethod
     def _hunting_ground_panel(texts) -> bool:
@@ -3369,7 +3372,7 @@ class SandboxNavigationMixin:
         第11章 回主城: 「没认出小地图的≡按钮」 after the area-map walk): the map
         covered the ≡ button and the key caps, and was never closed."""
         header = self._field_map_header()
-        if any(tag in header for tag in AREA_MAP_HEADER_TAGS):
+        if area_map_header_named(header):
             return True
         return self._area_map_footer_shown()
 
@@ -3447,7 +3450,7 @@ class SandboxNavigationMixin:
         reclicked = False
         while True:
             header = self._field_map_header()
-            if not any(tag in header for tag in AREA_MAP_HEADER_TAGS) and not (
+            if not area_map_header_named(header) and not (
                 self._area_map_footer_shown()
             ):
                 return

@@ -1351,6 +1351,16 @@ class HomePage(Page):
         self.sum_skip = self._sum_box(grid, "跳过", "")
         self.sum_fail = self._sum_box(grid, "失败", "bad")
         layout.addWidget(self.sum_boxes)
+        # Leo 2026-11-04 「報表要說明清楚」: a failed run with an FPS tool open says so.
+        from src.ui.shell.fps_notice import WarnIcon
+
+        self.sum_fps = QWidget()
+        fps_row = hbox(self.sum_fps, (0, 0, 0, 0), 8)
+        fps_row.addWidget(WarnIcon(22), 0, Qt.AlignTop)
+        self.sum_fps_text = Text("", "warn", wrap=True)
+        fps_row.addWidget(self.sum_fps_text, 1)
+        self.sum_fps.hide()
+        layout.addWidget(self.sum_fps)
         # A run the 开跑前检查 stopped shows only its reminder (Leo 10-09
         # 「5提醒就好了」): nothing ran, so no numbers and no list.
         self.sum_body = QWidget()
@@ -1421,6 +1431,16 @@ class HomePage(Page):
         # Also a finished run's word, e.g. why the PC was not shut down.
         if setup or (stopped is None and report.get("notice")):
             self.set_sub(report.get("notice") or "")
+        rows = report.get("rows") or []
+        failed = ended == run_report.ENDED_ERROR or any(
+            row.get("state") == run_report.FAIL for row in rows
+        )
+        fps = not setup and failed and bool(report.get("fps_tools"))
+        if fps:
+            from src.ui.shell.report_page import fps_line
+
+            self.sum_fps_text.set_text(fps_line(report["fps_tools"]))
+        self.sum_fps.setVisible(fps)
         self.sum_boxes.setVisible(not setup)
         self.sum_body.setVisible(not setup)
         rows = report.get("rows") or []

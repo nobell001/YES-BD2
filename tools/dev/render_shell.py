@@ -218,7 +218,7 @@ def dialogs(shell):
 
         return open_it
 
-    from src.ui.shell import run_notify_dialog, schedule_ui, schedule_week
+    from src.ui.shell import fps_notice, run_notify_dialog, schedule_ui, schedule_week
     from src.utils.scheduled_start import Slot
     from src.ui.shell.widgets import shell_buttons
     from src.utils import accounts
@@ -331,6 +331,7 @@ def dialogs(shell):
         ("schedule-tasks", lambda: schedule_ui.TaskPickDialog(own_slot(), window).exec()),
         ("schedule-item-settings", lambda: schedule_ui.ItemSettingsDialog(pvp_item(), {"竞技场战斗倍数": 2}, window).exec()),
         ("run-notify", lambda: run_notify_dialog.ask(window)),
+        ("fps-notice", lambda: fps_notice.FpsNotice(["RivaTuner (RTSS)", "Bandicam"], window).exec()),
         ("account-mismatch", lambda: accounts_ui.MismatchDialog(window).exec()),
         ("clone-ask", lambda: clone_flow.ask_and_start(window, batch)),
         ("language-relaunch", lambda: shell.pages["settings"]._offer_relaunch()),

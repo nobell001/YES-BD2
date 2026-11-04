@@ -228,6 +228,14 @@ def environment(executor) -> dict:
         except Exception:
             pass
     try:
+        from src.utils import fps_tools
+
+        tools = fps_tools.running()
+        if tools:
+            info["fps_tools"] = tools
+    except Exception:
+        pass
+    try:
         from src.utils import clone_desktop
 
         info["clone"] = bool(clone_desktop.in_clone())

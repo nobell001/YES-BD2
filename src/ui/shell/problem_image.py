@@ -104,6 +104,10 @@ def screen_parts(env: dict) -> list[str]:
         parts.append(env["ui_language"])
     if "clone" in env:
         parts.append(t("用了桌面分身") if env["clone"] else t("没用分身"))
+    if env.get("fps_tools"):
+        from src.utils import fps_tools
+
+        parts.append(tf("开着 {names}", names=fps_tools.joined(env["fps_tools"])))
     return parts
 
 
@@ -252,6 +256,11 @@ def _paint(pen: _Pen, record: dict, frame, before=()) -> float:
         screen.append(t("HDR 开") if env["hdr"] else t("HDR 关"))
     if screen:
         rows.append((t("显示器"), " · ".join(screen), None))
+    if env.get("fps_tools"):
+        # Leo 2026-11-04: an FPS tool draws on the picture the tool reads.
+        from src.utils import fps_tools
+
+        rows.append((t("FPS 工具"), fps_tools.joined(env["fps_tools"]), WARN))
     other = []
     if env.get("ui_language"):
         other.append(tf("工具语言：{name}", name=env["ui_language"]))

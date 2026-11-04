@@ -215,6 +215,11 @@ def _check_begun(rechecks: int = 0) -> None:
         )
         return
     scheduled_start.mark_run_pending(False)
+    from src.ui.shell import actions
+
+    # Reported as not run: it must not start later either, when the game is
+    # opened (YES-BD2 #70).
+    actions.cancel_login_wait()
     waited = WATCHDOG_MINUTES + rechecks * WATCHDOG_RECHECK_MINUTES
     report_failure(NO_LOGIN_NOTE.format(m=waited))
 

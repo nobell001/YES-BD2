@@ -105,6 +105,11 @@ def add(
     if trade:
         # What a trade run sold and cooked (YES-BD2 #6).
         entry["trade"] = trade
+    if state == FAIL:
+        # 今日报表 says which FPS tool was open when it failed (Leo 2026-11-04).
+        tools = _fps_tools()
+        if tools:
+            entry["fps_tools"] = tools
     with _lock:
         data = _read(folder)
         key = day_key(finished)
@@ -112,6 +117,15 @@ def add(
             data["days"][key] = _backfill(key, folder)
         data["days"][key].append(entry)
         _write(data, folder)
+
+
+def _fps_tools() -> list[str]:
+    try:
+        from src.utils import fps_tools
+
+        return fps_tools.running()
+    except Exception:
+        return []
 
 
 def entries(day: str | None = None, folder: str | None = None) -> list[dict]:

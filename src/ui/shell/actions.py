@@ -81,6 +81,16 @@ def start(task, window=None, run_mode: str | None = None, by_player: bool | None
     if window is not None and task.name in (data.DAILY_BATCH, data.WEEKLY_BATCH):
         if not game_running() and not _ask_to_open_game(window):
             return False
+    if window is not None:
+        # Leo 2026-11-04: an FPS tool open → a short note, then it starts by
+        # itself after 3 s.  定时启动 and 「打开就自动跑」 have no window.
+        from src.ui.shell import fps_notice
+
+        if not fps_notice.go_ahead(window):
+            logger.info("start cancelled on the FPS tool note")
+            return False
+        if data.busy():
+            return False  # something started during the 3 s
     if hasattr(task, "cancel_resume"):
         # A start by the player, never the run after 闪退 or the title screen.
         task.cancel_resume()
@@ -233,6 +243,12 @@ def _cancel_login_wait(task) -> bool:
         task.unpause()
     logger.info("stop pressed while the run waited for the login: run cancelled")
     return True
+
+
+def cancel_login_wait() -> bool:
+    """A run still waiting for the login is given up (定时启动 reported that
+    it did not run): it must not start later, when the game is opened."""
+    return _cancel_login_wait(None)
 
 
 def _login_task():

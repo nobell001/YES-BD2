@@ -3,6 +3,7 @@ ran every few seconds as the current task (「正在跑：自动登录游戏」 
 and a 开始 pressed then was only queued behind it, so the game never opened."""
 
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from src.tasks.trigger import AutoLoginTask as module
@@ -18,6 +19,8 @@ class AutoLoginGameClosedTest(unittest.TestCase):
         task.last_trigger_time = 0
         task.info = {}
         task.info_set = lambda key, value: task.info.__setitem__(key, value)
+        # No 一键日常 waiting for the login (tests/test_waiting_run_game_gone.py).
+        task._executor = SimpleNamespace(get_task_by_class=lambda cls: None)
         return task
 
     def test_closed_game_is_not_checked(self):

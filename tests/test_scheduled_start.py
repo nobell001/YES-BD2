@@ -503,6 +503,18 @@ class FailureReportTest(UiTest):
             self.ui._check_begun()
         self.assertIn("没登录进去", self.finished[-1]["notice"])
 
+    def test_game_never_logged_in_cancels_the_waiting_run(self):
+        # YES-BD2 #70: reported as not run, it must not start when the game
+        # is opened later.
+        from src.ui.shell import actions, data
+
+        with mock.patch.object(self.ui.QTimer, "singleShot"):
+            self.ui.after_start(True)
+        with mock.patch.object(data, "busy", return_value=False), \
+                mock.patch.object(actions, "cancel_login_wait") as cancel:
+            self.ui._check_begun()
+        cancel.assert_called_once_with()
+
     def test_run_began_no_report(self):
         from src.ui.shell import data
 

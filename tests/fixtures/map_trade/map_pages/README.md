@@ -33,3 +33,14 @@ Leo's 2K frames (2026-10-30, 2560x1440 scaled to 1920x1080), 第16章 安全
   its ring shows.
 - `port_city_inn_menu_leo_2k_as_1080.jpg`: the same map after pressing the
   inn's place: a menu 「魔法阵 / 旅馆」 opened beside it.
+
+YES-BD2 #69 (v0.2.29, 1080p window, 2026-11-03): a player's FPS overlay
+(RivaTuner/Afterburner) over the teleport map's top-left 移动魔法阵 title.
+
+- `teleport_map_fps_overlay_player_summary.jpg`: the player's frame, cut from
+  the 问题摘要 and scaled back to 1920x1080 (the header icon is too soft to
+  match on it; only the title read is tested).
+- `teleport_map_fps_overlay_on_direct.jpg`: the overlay's coloured text taken
+  from that frame and laid over `direct.png` (page `teleport_map`).
+- `hunting_ground_fps_overlay_composite.jpg`: the same overlay over
+  `hunting_ground_map_player_fhd.jpg` (page `field_map`); it hides the 战斗 tag.

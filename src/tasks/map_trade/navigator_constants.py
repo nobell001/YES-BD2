@@ -676,6 +676,18 @@ SANDBOX_NAVIGATION_OPEN_TEMPLATES = (
 SANDBOX_NAVIGATION_PAGE_KEYWORDS = ("在战场中查看", "探索", "世界地图")
 # The area map's title starts with the map's kind: 「战斗 …」 or 「安全 …」.
 AREA_MAP_HEADER_TAGS = ("战斗", "安全")
+# A battle area's title ends 「出现暗属性怪物」 and the like.  An FPS overlay in
+# the corner can hide the 战斗 tag itself (YES-BD2 #69's overlay laid over the
+# 第9章 hunting ground read 「44º 起4 守山人休息处 出现暗属性怪物」).
+AREA_MAP_HEADER_MONSTER_HINT = "属性怪物"
+
+
+def area_map_header_named(normalized_header: str) -> bool:
+    """The area map's 「战斗 …」/「安全 …」 title, or a battle area's
+    「出现…属性怪物」 when its tag is hidden, in a normalized header read."""
+    return AREA_MAP_HEADER_MONSTER_HINT in normalized_header or any(
+        tag in normalized_header for tag in AREA_MAP_HEADER_TAGS
+    )
 SANDBOX_TELEPORT_SKILL_FAILURE_GROUPS = (
     ("无法在", "魔法阵附近"),
     ("无法在", "该地点"),
@@ -917,6 +929,26 @@ SANDBOX_LARGE_MAP_FOOTER_OCR_RELATIVE_ROI = (
     1850 / FHD_1080.width,
     1070 / FHD_1080.height,
 )
+# How close the top-left read must be to 移动魔法阵 (0..1).  A player's FPS
+# overlay (RivaTuner/Afterburner 「GPU / CPU / D3D11 120 FPS」 in the corner)
+# put its orange 「24%」 over 移, the title read 「44 24动魔法阵 PS」 and every
+# teleport map counted as an unknown page (YES-BD2 #69, v0.2.29 1080p).
+# 4 of the 5 characters (0.89) pass; 生成魔法阵 (0.6) does not.  The header
+# icon and the arrows or page label below still have to agree.
+TELEPORT_MAP_HEADER_MIN_RATIO = 0.8
+
+
+def teleport_map_header_read(normalized_header: str) -> bool:
+    """The teleport map's 移动魔法阵 title in an already-normalized read,
+    also when something drawn over the corner hides one character."""
+    from src.tasks.map_trade.vision import normalize_text
+    from src.utils.ocr_utils import fuzzy_substring_match
+
+    return fuzzy_substring_match(
+        normalized_header, normalize_text("移动魔法阵"), TELEPORT_MAP_HEADER_MIN_RATIO
+    )
+
+
 TELEPORT_MAP_DIRECT_HEADER_TEMPLATE = TemplateSpec(
     "交互直传页图标",
     "TeleportMapDirectHeader.png",

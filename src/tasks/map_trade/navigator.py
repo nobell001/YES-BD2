@@ -7,7 +7,8 @@ import numpy as np
 from src.tasks.map_trade.card_status import CardStatusDetector
 from src.tasks.map_trade.models import COLLECTABLE_CARDS, MapPageMode, ScreenState
 from src.tasks.map_trade.navigator_constants import (
-    AREA_MAP_HEADER_TAGS,
+    area_map_header_named,
+    teleport_map_header_read,
     BARGAIN_CONFIRM_POINT,
     BARGAIN_POINT,
     CHAPTER_HOME_POINT,
@@ -261,7 +262,7 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
         evidence: list[str] = []
         mode = MapPageMode.UNKNOWN
         footer_text = ""
-        if normalize_text("移动魔法阵") in normalized_header:
+        if teleport_map_header_read(normalized_header):
             direct, direct_evidence = self._map_page_template_signal(
                 frame,
                 TELEPORT_MAP_DIRECT_HEADER_TEMPLATE,
@@ -301,8 +302,8 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
                 mode = MapPageMode.DIRECT_TELEPORT
             elif generated and not direct and has_legend and has_teleport_structure:
                 mode = MapPageMode.GENERATE_TELEPORT
-        elif self._known_story_map_title_in_text(normalized_header) or any(
-            tag in normalized_header for tag in AREA_MAP_HEADER_TAGS
+        elif self._known_story_map_title_in_text(normalized_header) or (
+            area_map_header_named(normalized_header)
         ):
             # A map outside the cards' own titles, such as a chapter's
             # hunting ground (player 1080p 2026-10-23, 第9章 「战斗 守山人休息处」):

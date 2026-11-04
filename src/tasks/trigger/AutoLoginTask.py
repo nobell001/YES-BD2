@@ -68,6 +68,16 @@ LOGIN_MAX_CLICKS = 3
 # forever with a gated batch never released: no login-screen signal this long
 # while a batch waits -> check whether the game is already in (once per span).
 PRELOGIN_QUIET_RECOVERY_SECONDS = 180.0
+# A run waiting for the login while the game is gone (closed by the player,
+# a crash, or it never opened): after the longest the game's opening may take
+# plus this, the run is cancelled.  Before, it stayed waiting with the tool
+# open, and the next time the player opened the game, hours later, the
+# login released it and 一键日常 started by itself (YES-BD2 #70, 2026-11-04).
+GAME_GONE_EXTRA_SECONDS = 60
+GAME_GONE_NOTE = (
+    "一键日常/周常已取消：在等游戏登录时，游戏关掉了，{m} 分钟都没再打开。"
+    "下次打开游戏不会自己开始跑，要跑请再按开始。"
+)
 # Two looks at the 公告事项 saying 维护 before the game is closed.
 MAINTENANCE_HITS_NEEDED = 2
 CONFIRM_WORDS = ("确认", "確認", "확인", "ok")
@@ -183,6 +193,7 @@ class AutoLoginTask(BaseBD2Task):
         self._login_clicks = 0
         self._touch_still_hits = 0
         self._finished = False
+        self._game_gone_since: float | None = None
         self._missing_template_names: set[str] = set()
         self._match_error_names: set[str] = set()
         self._match_pause_until = 0.0
@@ -235,13 +246,52 @@ class AutoLoginTask(BaseBD2Task):
         another task is current): the game never opened.
         """
         if game_running() is not False:  # running, or cannot tell
+            self._game_gone_since = None
             return False
         if self._state != "waiting":
             # Closed mid-login: the next opening logs in from the start.
             self._reset_login_state()
         self._set_stage("等待游戏启动")
         self._set_action("游戏没开，按开始会打开游戏并自动登录。")
+        self._cancel_run_when_game_stays_gone()
         return True
+
+    def _game_gone_limit(self) -> float:
+        """The longest the game's opening may take (设置 → 网络慢时的等待),
+        plus a minute: a run opening the game is never cancelled under it."""
+        start = wait_settings.get(wait_settings.START_TIMEOUT)
+        rounds = 1 + wait_settings.get(wait_settings.START_RETRIES)
+        return float(start * rounds + GAME_GONE_EXTRA_SECONDS)
+
+    def _cancel_run_when_game_stays_gone(self) -> None:
+        """A run waiting for this login, with the game gone too long: cancel it.
+
+        Nothing else ends that wait while the tool stays open, so the next
+        opening of the game, by the player and maybe hours later, logged in
+        and started the run with nobody pressing 开始 (YES-BD2 #70).
+        """
+        if not self._gated_batch_waiting():
+            self._game_gone_since = None
+            return
+        now = monotonic()
+        since = getattr(self, "_game_gone_since", None)
+        if since is None:
+            self._game_gone_since = now
+            return
+        limit = self._game_gone_limit()
+        if now - since < limit:
+            return
+        self._game_gone_since = None
+        if self._cancel_login_gated_batches():
+            scheduled_start.mark_run_pending(False)
+            if not bool(self.config.get("_enabled", False)):
+                # It logged in for that run only (自动登录游戏 off): it must
+                # not log in when the player opens the game later either.
+                self._enabled = False
+            self.log_warning(
+                f"自动登录：{GAME_GONE_NOTE.format(m=max(1, round(limit / 60)))}",
+                notify=True,
+            )
 
     def run(self):
         if self._finished:

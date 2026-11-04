@@ -96,6 +96,22 @@ def begin(label: str, mode: str, rows: list[tuple[str, str]]) -> None:
             ],
             "images": {},
         }
+    # FPS tools open when it began: the results page says so next to a
+    # failure (Leo 2026-11-04 「報表要說明清楚」).
+    tools = _fps_tools()
+    if tools:
+        with _lock:
+            if _active is not None:
+                _active["fps_tools"] = tools
+
+
+def _fps_tools() -> list[str]:
+    try:
+        from src.utils import fps_tools
+
+        return fps_tools.running()
+    except Exception:
+        return []
 
 
 def _row(key: str) -> dict | None:
