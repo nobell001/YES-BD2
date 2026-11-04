@@ -49,7 +49,17 @@ class NamesTest(unittest.TestCase):
         )
 
     def test_running_reads_this_session(self):
-        with mock.patch.dict("sys.modules", {"psutil": _fake_psutil(["RTSS.exe", "explorer.exe"])}):
+        # The made-up pids are not real processes: on Windows the real
+        # ProcessIdToSessionId fails for them (YES-BD2 Build v0.2.30), so
+        # every pid answers session 1 here, Bandicam (pid 101) another session.
+        def session_of(pid, ref):
+            ref._obj.value = 2 if pid == 101 else 1
+            return 1
+
+        kernel32 = SimpleNamespace(ProcessIdToSessionId=session_of)
+        with mock.patch.dict(
+            "sys.modules", {"psutil": _fake_psutil(["RTSS.exe", "bdcam.exe", "explorer.exe"])}
+        ), mock.patch.object(fps_tools.ctypes, "windll", SimpleNamespace(kernel32=kernel32), create=True):
             self.assertEqual(["RivaTuner (RTSS)"], fps_tools.running())
 
     def test_running_never_raises(self):
