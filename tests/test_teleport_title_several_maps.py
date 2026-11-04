@@ -188,6 +188,47 @@ class CloseNameTest(unittest.TestCase):
             with self.subTest(target=target):
                 self.assertIsNone(self._is("安全 施塔因之塔第7层", target, card))
 
+    def test_another_floor_is_not_the_town(self):
+        # Player v0.2.29 2560x1440 (2026-11-04), 角色卡1 回主城: standing on
+        # 学校3楼's circle, the map opened on 「安全 学校3楼」 (0.75 close to
+        # 学校1楼), was taken for the town, never flipped, and the circle
+        # under the character's own icon was looked for there.
+        card = CARD_BY_ID["Q_cp1"]
+        for raw in ("安全 学校3楼", "安全 学校2楼", "安全学校3楼"):
+            with self.subTest(raw=raw):
+                self.assertIsNone(self._is(raw, 0, card))
+        # Same on 角色卡7: 凯那尔工业2楼 is not 凯那尔工业1楼; 角色卡4's 商场1楼
+        # is none of 商场4/3/2楼.
+        self.assertIsNone(self._is("安全 凯那尔工业2楼", 0, CARD_BY_ID["Q_cp7"]))
+        # Other maps with a neighbour of nearly the same name (Leo 2026-11-04
+        # 「其他地圖有沒有類似的設計缺陷」): 左侧/右侧回廊, 第一/第四记忆空间, and
+        # 童话镇旅馆 that holds the whole name 童话镇.
+        others = (
+            ("Q_sp14", 1, "战斗Ⅲ 剑之神殿右侧回廊"),
+            ("Q_sp18", 2, "战斗Ⅳ 第四记忆空间"),
+            ("Q_sp18", 2, "战斗Ⅶ 第三记忆空间"),
+            ("Q_cp5", 0, "安全 童话镇旅馆"),
+        )
+        for card_id, target, raw in others:
+            with self.subTest(raw=raw):
+                self.assertIsNone(self._is(raw, target, CARD_BY_ID[card_id]))
+        for target in range(3):
+            self.assertIsNone(self._is("战斗Ⅲ 商场1楼", target, CARD_BY_ID["Q_cp4"]))
+
+    def test_a_floor_read_a_little_wrong_is_still_the_floor(self):
+        card = CARD_BY_ID["Q_cp1"]
+        for raw in ("安全 学校1搂", "安全 学1楼", "安全 学校楼"):
+            with self.subTest(raw=raw):
+                page = self._is(raw, 0, card)
+                self.assertIsNotNone(page)
+                self.assertEqual("main_area", page.resolved_target_key)
+        for card_id, target, raw in (
+            ("Q_sp14", 1, "战斗Ⅱ 剑之神殿左则回廊"),
+            ("Q_sp18", 2, "战斗Ⅲ 第一记亿空间"),
+        ):
+            with self.subTest(raw=raw):
+                self.assertIsNotNone(self._is(raw, target, CARD_BY_ID[card_id]))
+
     def test_the_seek_takes_page_one_read_a_little_wrong(self):
         reads = ["安全 拉勤凯镇", "战斗Ｉ洞穴神殿", "战斗Ⅱ 隐藏神殿"]
         state = {"page": 2}
@@ -345,6 +386,49 @@ class PlayerFrameReadsTheTownTest(unittest.TestCase):
         text = vision.ocr_text(frame, "传送阵地图名", relative_roi=TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI)
 
         self.assertEqual(("main_area",), Navigator._target_keys_in_text(CARD, normalize_text(text)))
+
+
+
+class PlayerFloor3FrameTest(unittest.TestCase):
+    """The player's 学校3楼 page (问题摘要, downscaled) read with the app's
+    recognizer: 「安全 学校3楼」, which is not 学校1楼's page."""
+
+    def test_floor_3_is_not_the_town(self):
+        try:
+            import src  # noqa: F401  (v6 recognizer, as the app)
+            from onnxocr.onnx_paddleocr import ONNXPaddleOcr
+        except ImportError:  # pragma: no cover
+            self.skipTest("onnxocr not installed")
+        from src.tasks.map_trade.navigator_constants import TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI
+        from src.tasks.map_trade.vision import Vision
+
+        engine = ONNXPaddleOcr(use_angle_cls=False, use_openvino=True, use_npu=False)
+
+        def ocr(*, frame, threshold=0.2, **_kwargs):
+            found = []
+            for points, (text, score) in engine.ocr(frame)[0] or []:
+                if score >= threshold:
+                    xs = [p[0] for p in points]
+                    ys = [p[1] for p in points]
+                    found.append(
+                        SimpleNamespace(
+                            name=text, x=min(xs), y=min(ys),
+                            width=max(xs) - min(xs), height=max(ys) - min(ys),
+                        )
+                    )
+            return found
+
+        frame = cv2.imread(str(FIXTURE.parent / "school_floor3_teleport_page_player_summary.jpg"))
+        self.assertIsNotNone(frame)
+        frame = cv2.resize(frame, (2560, 1440), interpolation=cv2.INTER_CUBIC)
+        vision = Vision(SimpleNamespace(config={}, ocr=ocr, info_set=lambda *_a: None))
+        text = vision.ocr_text(frame, "传送阵地图名", relative_roi=TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI)
+        card = CARD_BY_ID["Q_cp1"]
+
+        self.assertIn("学校3楼", normalize_text(text))
+        self.assertIsNone(
+            _navigator([])._page_is(card, _page_for(card, text), card.targets[0])
+        )
 
 
 if __name__ == "__main__":

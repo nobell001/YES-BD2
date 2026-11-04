@@ -149,6 +149,7 @@ from src.tasks.map_trade.navigator_constants import (
     TELEPORT_MAP_RETURN_RELATIVE_POINT,
     TELEPORT_MAP_SEEK_LIMIT,
     LOOSE_PAGE_NAME_MIN_RATIO,
+    MAP_NAME_TELLING_CHARS,
     TELEPORT_MAP_TITLE_REREAD_MIN_RATIO,
     TELEPORT_MAP_TITLE_REREAD_SCALES,
     TELEPORT_MAP_TELEPORT_CIRCLE_TEMPLATES,
@@ -2846,6 +2847,8 @@ class SandboxNavigationMixin:
         score = self._name_closeness(page.normalized_text, target)
         if score < LOOSE_PAGE_NAME_MIN_RATIO:
             return None
+        if self._names_another_map(page.normalized_text, target):
+            return None
         if any(
             self._name_closeness(page.normalized_text, other) >= score
             for other in card.targets
@@ -2874,6 +2877,37 @@ class SandboxNavigationMixin:
             self._name_closeness(text, target) >= TELEPORT_MAP_TITLE_REREAD_MIN_RATIO
             for target in card.targets
         )
+
+    @staticmethod
+    def _names_another_map(text: str, target: CollectionMapTarget) -> bool:
+        """The read is a clean name of a neighbouring map, not ``target``'s
+        name misread: it holds a name ``target`` excludes (童话镇旅馆 for
+        童话镇), or where it differs from the name, both sides are words that
+        tell maps apart (学校3楼/学校1楼, 右侧回廊/左侧回廊, 第四/第一记忆空间,
+        凯那尔工业2楼/1楼).  A misread swaps look-alike characters (勤/勒,
+        楼/搂) or drops some, which is still the map (player v0.2.29
+        2560x1440 2026-11-04: 「安全 学校3楼」 was 0.75 close to 学校1楼 and
+        taken for the town)."""
+        if any(
+            (excluded := normalize_text(title)) and excluded in text
+            for title in target.excludes
+        ):
+            return True
+        bare = re.sub(r"^(安全|战斗)?[ⅠⅡⅢⅣⅤⅥⅦⅰⅱⅲiIＩ1-7]*", "", text)
+        for title in target.titles:
+            name = normalize_text(title)
+            if not name:
+                continue
+            matcher = difflib.SequenceMatcher(None, name, bare)
+            for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                if tag != "replace":
+                    continue
+                ours, theirs = name[i1:i2], bare[j1:j2]
+                if any(char in MAP_NAME_TELLING_CHARS for char in ours) and any(
+                    char in MAP_NAME_TELLING_CHARS for char in theirs
+                ):
+                    return True
+        return False
 
     @staticmethod
     def _name_closeness(text: str, target: CollectionMapTarget) -> float:

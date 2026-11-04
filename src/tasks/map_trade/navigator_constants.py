@@ -1094,6 +1094,11 @@ TELEPORT_MAP_SEEK_LIMIT = 12
 # when no map is named cleanly: one wrong character in four is 0.75, the
 # town's inn 拉勒凯旅馆 against 拉勒凯镇 is 0.67 (Leo 2026-10-31).
 LOOSE_PAGE_NAME_MIN_RATIO = 0.75
+# Characters that tell one map from its neighbour of the same name: floors
+# and numbers (学校1楼/3楼, 第一/第四记忆空间), sides (左侧/右侧回廊).  A loose
+# read that differs from a map's name in these is another map (player
+# v0.2.29 2026-11-04: 「安全 学校3楼」 taken for 学校1楼).
+MAP_NAME_TELLING_CHARS = frozenset("0123456789〇零一二三四五六七八九十左右中前后上下东西南北内外")
 # An unresolved page read this close to one of the card's maps (or empty)
 # is read again bordered and enlarged at these scales before it counts as
 # another page; a clean read of an unrelated page is not.
