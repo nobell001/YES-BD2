@@ -1,6 +1,6 @@
 {
  "source": "https://browndust2-db.souseha.com",
- "fetched": "2026-10-27",
+ "fetched": "2026-11-05",
  "note": "names, skills and SP; portraits in costumes/; refresh with tools/fetch_souseha_characters.py",
  "characters": [
   {
@@ -3943,6 +3943,41 @@
       1,
       1
      ]
+    }
+   ]
+  },
+  {
+   "id": "Valze",
+   "star": 5,
+   "element": "dark",
+   "costume": "Valze_1",
+   "name_zh_tw": "斐傑",
+   "name_zh_cn": "斐杰",
+   "name_en": "Valze",
+   "name_ja": "バルゼ",
+   "name_ko": "발제",
+   "costumes": [
+    {
+     "id": "Valze_1",
+     "name_zh_tw": "背叛之夜",
+     "name_zh_cn": "背叛之夜",
+     "name_en": "Night of Betrayal",
+     "name_ja": "叛逆の夜",
+     "name_ko": "배반의 밤",
+     "skill_zh_tw": "背叛之刃",
+     "skill_zh_cn": "背叛之刃",
+     "skill_en": "Blade of Betrayal",
+     "skill_ja": "叛逆の刃",
+     "skill_ko": "배반의 칼날",
+     "sp": [
+      5
+     ],
+     "burst_sp": [
+      2,
+      1,
+      1
+     ],
+     "added": "2026-11-05"
     }
    ]
   },
