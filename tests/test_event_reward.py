@@ -399,6 +399,36 @@ class BadgesLeftTest(unittest.TestCase):
         self.assertEqual(0, task._sweep_list(skipped))
         self.assertEqual({"拼图活动": "有钻石，不碰"}, skipped)
 
+    def test_an_event_that_did_not_open_is_pressed_once_more(self):
+        # Leo 2026-11-05 「所有地方都要有補救方案」: a card press the game
+        # did not take showed no known button, and the event was skipped.
+        from src.tasks.EventRewardTask import NO_KNOWN_BUTTON
+
+        def first_not_open(task):
+            if state["opened"] == 1:
+                task._page_skip_why = NO_KNOWN_BUTTON
+                return False
+            return True
+
+        task, state = self._sweep_task(first_not_open)
+        skipped = {}
+        task._sweep_list(skipped)
+        self.assertEqual(2, state["opened"])
+        self.assertNotEqual(NO_KNOWN_BUTTON, skipped.get("拼图活动"))
+
+    def test_an_event_with_no_known_button_twice_is_left(self):
+        from src.tasks.EventRewardTask import NO_KNOWN_BUTTON
+
+        def never_open(task):
+            task._page_skip_why = NO_KNOWN_BUTTON
+            return False
+
+        task, state = self._sweep_task(never_open)
+        skipped = {}
+        task._sweep_list(skipped)
+        self.assertEqual(2, state["opened"])
+        self.assertEqual({"拼图活动": NO_KNOWN_BUTTON}, skipped)
+
     def test_a_badge_still_there_after_two_claims(self):
         task, state = self._sweep_task(lambda _task: True)
         skipped = {}

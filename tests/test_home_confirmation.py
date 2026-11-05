@@ -173,16 +173,29 @@ class HomeConfirmationTest(unittest.TestCase):
             home_left_column_brightness(noticed), HOME_DIMMED_P95_THRESHOLD_DEFAULT
         )
 
-    def test_confirmation_requires_all_three_signals(self):
+    def test_home_counts_with_enough_cues_not_every_one(self):
+        # Leo 2026-11-05 「你不要一個地方沒辨識到就出錯」: one bad read is not
+        # a home not seen.  Measured on 288 real pictures: no other page read
+        # 抽抽乐, none more than one left word.
         self.assertTrue(home_confirmation_passes(**_passing_kwargs()))
-
-        for key, value in (
-            ("left_hits", HOME_LEFT_COLUMN_REQUIRED_HITS - 1),
-            ("brightness", HOME_DIMMED_P95_THRESHOLD_DEFAULT - 1),
-            ("gacha_ocr_text", ""),
+        for left, gacha, shown in (
+            (3, "", True),  # 抽抽乐 under a black bar (#448)
+            (1, "抽抽乐", True),  # two left words unread
+            (2, "", False),
+            (1, "", False),  # the most any other page read
+            (0, "抽抽乐", False),
+            (0, "", False),
         ):
-            signals = _passing_kwargs(**{key: value})
-            self.assertFalse(home_confirmation_passes(**signals), key)
+            signals = _passing_kwargs(left_hits=left, gacha_ocr_text=gacha)
+            self.assertEqual(shown, home_confirmation_passes(**signals), (left, gacha))
+
+    def test_a_dimmed_home_is_never_taken_for_home(self):
+        for left, gacha in ((3, "抽抽乐"), (3, ""), (1, "抽抽乐")):
+            signals = _passing_kwargs(
+                left_hits=left, gacha_ocr_text=gacha,
+                brightness=HOME_DIMMED_P95_THRESHOLD_DEFAULT - 1,
+            )
+            self.assertFalse(home_confirmation_passes(**signals))
 
     def test_legacy_template_anchor_bridge_requires_one_vote(self):
         signals = _passing_kwargs(
@@ -201,11 +214,11 @@ class HomeConfirmationTest(unittest.TestCase):
         self.assertTrue(home_temporary_announcement_detected(**announcement))
 
         for key, value in (
-            ("left_hits", HOME_LEFT_COLUMN_REQUIRED_HITS - 1),
+            ("left_hits", 0),
             ("brightness", HOME_DIMMED_P95_THRESHOLD_DEFAULT),
             ("gacha_ocr_text", ""),
         ):
-            signals = _passing_kwargs(**{key: value})
+            signals = _passing_kwargs(**{"brightness": 126.0, key: value})
             self.assertFalse(home_temporary_announcement_detected(**signals), key)
 
 

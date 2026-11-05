@@ -329,6 +329,12 @@ TOWN_NAV_ENTRIES = {
     # Event cards without a teleport circle (Leo 2026-10-09).
     **{card_id: "艾琳" for card_id in ("Q_ep1", "Q_ep3", "Q_ep5", "Q_ep7")},
 }
+# Cards whose town NPC trip always ends in the town: a confirmed ≡-menu trip
+# there is the arrival, no area-map name read after it.  Chapter 18 (Leo
+# 2026-11-05 「那張圖就是傳回艾琳 就一定是在神殿」「你傳到艾琳就一定在神殿 然後
+# 就可以繼續跑圖了」): a player's 回主城 failed after the trip, and the last
+# fallback teleported to 暗黑神殿, which has no circle.
+NPC_TRIP_IS_TOWN_CARD_IDS = frozenset({"Q_sp18"})
 # Restarts (a start on any map but the first or last, or a failed move) go to
 # the town through this ≡-menu entry first, even when standing on a circle.
 # Character card 3 (Leo 2026-10-03: "如果一開始 玩家在戰鬥一 或者 三 就先傳回艾琳

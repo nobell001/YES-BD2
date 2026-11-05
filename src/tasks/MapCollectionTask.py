@@ -35,13 +35,15 @@ class MapCollectionTask(MapAutomationTaskBase):
     recover_home_on_failure = True
     start_from_home = True
     frozen_retry = True
+    # Each card already goes once more from 主城 and is skipped with its
+    # reason; the whole run again would only redo the skipped ones blind.
+    failure_retry = False
 
     vision_threshold_key = MAP_VISION_THRESHOLD_KEY
     ocr_threshold_key = MAP_OCR_THRESHOLD_KEY
     task_log_name = "跑图"
     diagnostic_prefix = "map_collection"
     status_keys = [
-        "启用",
         "状态",
         "当前阶段",
         "导航状态",
@@ -105,8 +107,6 @@ class MapCollectionTask(MapAutomationTaskBase):
 
         self.default_config.update(
             {
-                "启用": True,
-                "执行地图采集": True,
                 MAP_VISION_THRESHOLD_KEY: 0.72,
                 MAP_OCR_THRESHOLD_KEY: 0.20,
                 "加载页面等待秒数": LOADING_MAX_SECONDS,
@@ -119,10 +119,6 @@ class MapCollectionTask(MapAutomationTaskBase):
         )
         self.config_description.update(
             {
-                "执行地图采集": (
-                    "按周进度处理剧情卡带；每日吸收上限21次，因此最多完成7张。"
-                    "第14章在专用流程完成前安全跳过。"
-                ),
                 MAP_VISION_THRESHOLD_KEY: "卡带、导航与采集技能模板的最低匹配可信度。",
                 MAP_OCR_THRESHOLD_KEY: "技能次数和按钮识别的最低可信度。",
                 "加载页面等待秒数": "进入卡带、传送或换图后画面卡住多久算失败；自动移动中的时间不算。",
@@ -137,18 +133,6 @@ class MapCollectionTask(MapAutomationTaskBase):
         )
         self.config_type.update(
             {
-                "执行地图采集": {
-                    "sub_configs": {
-                        True: [
-                            MAP_VISION_THRESHOLD_KEY,
-                            MAP_OCR_THRESHOLD_KEY,
-                            "加载页面等待秒数",
-                            "卡带单步重试次数",
-                            "本次最多卡带数",
-                            SKILL_INTERVAL_KEY,
-                        ]
-                    }
-                },
                 MAP_VISION_THRESHOLD_KEY: {"min": 0.50, "max": 0.95, "step": 0.01},
                 MAP_OCR_THRESHOLD_KEY: {"min": 0.05, "max": 0.95, "step": 0.01},
                 "加载页面等待秒数": {"min": 10.0, "max": 120.0, "step": 1.0},
@@ -175,9 +159,6 @@ class MapCollectionTask(MapAutomationTaskBase):
             self.config[MAP_NOTICE_KEY] = True
 
     def run(self):
-        if not bool(self.config.get("启用", True)):
-            self.info_set("状态", "跑图已禁用。")
-            return True
         return self._run_collection()
 
     def _run_collection(self):
@@ -189,7 +170,7 @@ class MapCollectionTask(MapAutomationTaskBase):
         collector = Collector(self, vision, navigator, progress)
         return self._run_phases(
             navigator,
-            (("地图采集", "执行地图采集", collector.run),),
+            (("地图采集", None, collector.run),),
         )
 
 

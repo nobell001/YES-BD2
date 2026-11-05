@@ -177,17 +177,40 @@ def _run_watched(task, run, args, kwargs, stepped_in=False, watched=False):
     A run whose screen froze goes home; a task that is safe to run again
     (``frozen_retry``) runs once more from there, else it ends as failed and
     一键日常 goes on with the next item (Leo 2026-10-13 「可以的話就重試沒辦法
-    就下一步」).
+    就下一步」).  A run that returned False does the same (``failure_retry``,
+    by default ``frozen_retry``); the reason then names both tries.
     """
     if not watched:
         return _run_again_after_step_in(task, run, args, kwargs, stepped_in)
     from src.tasks.recovery import recover_to_home
 
     name = getattr(task, "name", "")
+    safe_again = bool(getattr(type(task), "frozen_retry", False))
+    redo_failed = getattr(type(task), "failure_retry", None)
+    redo_failed = safe_again if redo_failed is None else bool(redo_failed)
+    first_why = ""
     for attempt in (1, 2):
         task._frozen_watch = FrozenWatch()
         try:
-            return _run_again_after_step_in(task, run, args, kwargs, stepped_in)
+            result = _run_again_after_step_in(task, run, args, kwargs, stepped_in)
+            if result is not False or attempt == 2 or not redo_failed:
+                if result is False and attempt == 2 and first_why:
+                    _keep_first_why(task, first_why)
+                return result
+            # A step that could not be confirmed, even after its own
+            # remedies, ends the run: once more from 主页 before it counts as
+            # failed (Leo 2026-11-05 「你不要一個地方沒辨識到就出錯 明明有很多方法」).
+            first_why = _failure_text(task)
+            task.log_warning(
+                f"{name}：第一次没成功" + (f"（{first_why}）" if first_why else "")
+                + "，回主页再做一次。"
+            )
+            stepped_in = False
+            if not recover_to_home(task):
+                return result
+            task._why = ""
+            task.log_info(f"{name}：已回主页，再做一次。")
+            continue
         except FrozenScreen as exc:
             why = str(exc) or (
                 f"画面 {FROZEN_SCREEN_SECONDS:.0f} 秒没有变化（点了没反应或认不出画面）"
@@ -195,7 +218,7 @@ def _run_watched(task, run, args, kwargs, stepped_in=False, watched=False):
         finally:
             task._frozen_watch = None
         stepped_in = False
-        again = attempt == 1 and bool(getattr(type(task), "frozen_retry", False))
+        again = attempt == 1 and safe_again
         # Leo 2026-10-14 「那就按esc 而且要跟用戶說明是哪裡卡住觸發了這個」:
         # the step it stuck on goes in front of the reason, Esc goes first.
         where = stuck_step(task)
@@ -203,12 +226,36 @@ def _run_watched(task, run, args, kwargs, stepped_in=False, watched=False):
             why = f"卡在「{where}」：{why}"
         if _escape_when_stuck(task):
             why += "，已按 Esc"
+        if attempt == 2 and first_why and first_why != why:
+            why = f"{why}（第一次：{first_why}）"
         task._why = why
         task.log_warning(f"{name}：{why}，" + ("回主页再试一次。" if again else "回主页。"))
         if not again or not recover_to_home(task):
             return False
+        first_why = why[:80]
         task.log_info(f"{name}：已回主页，再试一次。")
     return False
+
+
+def _failure_text(task) -> str:
+    """Why a run just failed, short: its noted reason, else its 状态 line."""
+    why = str(getattr(task, "_why", "") or "").strip()
+    if not why:
+        status = str(task_info_snapshot(task).get("状态") or "").strip()
+        name = str(getattr(task, "name", "") or "")
+        if name and status.startswith(name):
+            status = status[len(name):].lstrip("：: ")
+        why = status if "失败" in status else ""
+    return why.rstrip("。.")[:80]
+
+
+def _keep_first_why(task, first_why: str) -> None:
+    """The second try failed too: the reason says both, the first is often the cause."""
+    second = _failure_text(task)
+    if second == first_why:
+        task._why = f"{second}（回主页再做一次还是一样）"
+    else:
+        task._why = f"{second}（第一次：{first_why}）" if second else f"第一次：{first_why}"
 
 
 def stuck_step(task) -> str:
@@ -340,9 +387,13 @@ class BaseBD2Task(BaseTask):
     # Tasks that begin on the home page: a run started on another page (a
     # task clicked while the bag or the square was open) goes home first.
     start_from_home = False
-    # A run stopped by a frozen screen (frozen_screen.py) runs once more from
-    # home.  Only for tasks whose second run cannot spend or dismantle twice.
+    # A run that failed, or was stopped by a frozen screen (frozen_screen.py),
+    # runs once more from home.  Only for tasks whose second run cannot spend
+    # or dismantle twice.
     frozen_retry = False
+    # A run that returned False runs once more from home too; None: as
+    # ``frozen_retry``.  False for a task that already redoes its own parts.
+    failure_retry: bool | None = None
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -578,7 +629,10 @@ class BaseBD2Task(BaseTask):
 
     def info_set(self, key, value):
         if key == "当前阶段":
-            problem_report.note_stage(self)
+            problem_report.note_stage(self, value)
+        else:
+            # What a check read, for the 问题摘要 (Leo 2026-11-05).
+            problem_report.note_read(self, key, value)
         with self._task_info_lock():
             return super().info_set(key, value)
 

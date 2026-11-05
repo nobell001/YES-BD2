@@ -746,8 +746,6 @@ class TradePage(Page):
                     ConfigForm(batch, keys=[BATCH_KEY], labels={BATCH_KEY: "加入一键完成日常"})
                 )
             task = self.task()
-            if task is not None and "启用" in task.config:
-                column.addWidget(ConfigForm(task, keys=["启用"], labels={"启用": "单独跑时启用"}))
             self._more_built = True
         self.more.setVisible(not self.more.isVisible())
 

@@ -136,6 +136,9 @@ class GameSizeTest(unittest.TestCase):
         )
         text = task.info[game_size.NOTICE_KEY]
         self.assertIn("1600×900", text)
+        # Leo 2026-11-05: players do not know what 「工具测过」 means.
+        self.assertIn("很可能失败", text)
+        self.assertNotIn("测过", text)
         self.assertIn("无法容纳", text)
         self.assertIn("全屏", text)
         self.assertEqual([True], [notify for _text, notify in task.warnings])

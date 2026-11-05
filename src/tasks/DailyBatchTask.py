@@ -202,7 +202,6 @@ class ChildBatchTask(BaseTask):
     batch_label = "一键完成日常"
 
     status_keys = [
-        "启用",
         "状态",
         "运行模式",
         "当前子任务",
@@ -232,7 +231,6 @@ class ChildBatchTask(BaseTask):
         child_keys = [child.config_key for child in self.child_tasks]
         self.default_config.update(
             {
-                "启用": True,
                 "失败后继续": True,
                 CLOSE_GAME_KEY: False,
                 CLOSE_GAME_WHEN_KEY: CLOSE_WHEN_CLEAN,
@@ -249,7 +247,6 @@ class ChildBatchTask(BaseTask):
         )
         self.config_description.update(
             {
-                "启用": f"是否允许{self.batch_label}按顺序执行已开启的子任务。",
                 "失败后继续": (
                     "某个子任务失败时，先尝试回到主页（关闭弹窗、按返回、从地图回主页），"
                     "成功回到主页就继续执行后面的子任务；回不到主页才停止。"
@@ -276,11 +273,6 @@ class ChildBatchTask(BaseTask):
         )
         self.config_type.update(
             {
-                "启用": {
-                    "sub_configs": {
-                        True: child_keys,
-                    }
-                },
                 CLOSE_GAME_WHEN_KEY: {
                     "type": "drop_down",
                     "options": list(CLOSE_WHEN_OPTIONS),
@@ -441,9 +433,9 @@ class ChildBatchTask(BaseTask):
             self._slot_settings = scheduled_start.take_run_settings() if mine else {}
         self._run_mode = run_mode
         self._resuming_after_crash = False
-        if not bool(self.config.get("启用", True)):
-            self.info_set("状态", f"{self.batch_label}已禁用。")
-            return True
+        # No 「允许一键运行」 (启用) switch any more (player 2026-11-05, Leo
+        # 「直接移除他」): saved off, every press ended at once with nothing
+        # run and no word why.  Pressing the button is the permission.
 
         # Once for the whole batch: the children then find a fixed size, or a
         # notice still within its gap.
@@ -702,7 +694,7 @@ class ChildBatchTask(BaseTask):
                 # A 定时启动 slot's own settings for this item come first;
                 # the item's saved settings are never written.
                 own = (getattr(self, "_slot_settings", None) or {}).get(child.config_key) or {}
-                overlay = {**own, "启用": True, ONLY_INCOMPLETE_KEY: only_incomplete}
+                overlay = {**own, ONLY_INCOMPLETE_KEY: only_incomplete}
                 if child.task_class is JunkGearTask:
                     overlay[AFTER_GACHA_KEY] = last_ran == (GACHA_CHILD_KEY, True)
                 task.config = ChainMap(overlay, original_config or {})

@@ -344,7 +344,7 @@ class SingleTaskTest(unittest.TestCase):
 class RecordTest(unittest.TestCase):
     def test_the_problem_record_says_it_did_not_start(self):
         task = SimpleNamespace(name="每周跑图", executor=None)
-        with mock.patch.object(problem_report, "_save", lambda record: None):
+        with mock.patch.object(problem_report, "_save", lambda record, *_whole: None):
             problem_report.begin(task)
             record = problem_report.end(task, problem_report.SETUP)
         self.assertEqual(problem_report.SETUP, record["ended"])

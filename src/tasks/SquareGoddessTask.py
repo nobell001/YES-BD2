@@ -128,7 +128,6 @@ class SquareGoddessTask(BaseBD2Task):
     start_from_home = True
     frozen_retry = True
     status_keys = [
-        "启用",
         "状态",
         "当前阶段",
         "主页抽抽乐 OCR 尝试",
@@ -173,7 +172,6 @@ class SquareGoddessTask(BaseBD2Task):
         self._match_pause_until = 0.0
         self.default_config.update(
             {
-                "启用": True,
                 "主页压暗阈值": HOME_DIMMED_P95_THRESHOLD_DEFAULT,
                 "主页确认等待秒数": 10.0,
                 "快速卡带等待秒数": 10.0,
@@ -229,11 +227,6 @@ class SquareGoddessTask(BaseBD2Task):
             pass
 
     def run(self):
-        if not bool(self.config.get("启用", True)):
-            self.info_set("状态", "广场女神像已禁用。")
-            self.log_info("广场女神像已禁用。")
-            return True
-
         self.done_already_note = ""
         self.info_set("状态", "广场女神像启动。")
         self.log_info("广场女神像：开始从主页进入梦幻广场。")
@@ -362,6 +355,7 @@ class SquareGoddessTask(BaseBD2Task):
 
         self.info_set("当前阶段", "选择生活玩法游戏卡带")
         self.sleep(0.5)
+        seen_card = None
         # 类别点击被吞时高亮不会变：仅在卡带选择页仍在、类别仍未高亮时重点（同末日之书）。
         for attempt in range(1, SQUARE_CLICK_VERIFY_ATTEMPTS + 1):
             self.operate_click(*LIFE_GAMEPLAY_CATEGORY_POINT, after_sleep=0.0)
@@ -370,13 +364,22 @@ class SquareGoddessTask(BaseBD2Task):
             if attempt >= SQUARE_CLICK_VERIFY_ATTEMPTS or not self._quick_switch_still_shows(
                 highlighted=False, seconds=1.0
             ):
-                self.log_info("广场女神像：点击后未确认生活玩法游戏卡带类别高亮。")
+                # The highlight is one way to see the category opened; the
+                # square card's own picture in its row is another (Leo
+                # 2026-11-05 「你不要一個地方沒辨識到就出錯 明明有很多方法」).
+                # Only the card's picture: a blind slot press is never made
+                # in a row not known to be 生活玩法.
+                seen_card = self._find_square_card()
+                if seen_card is not None:
+                    self.log_info("广场女神像：生活玩法类别高亮没确认到，但广场卡带的图已经在画面上，继续。")
+                    break
+                self.log_info("广场女神像：点击后未确认生活玩法游戏卡带类别高亮，也没看到广场卡带的图。")
                 return False, None
             self.log_info(f"广场女神像：第{attempt}次点击生活玩法类别未生效，重试。")
 
         self.info_set("当前阶段", "选择广场卡带")
         self.sleep(FIXED_CARTRIDGE_SLOT_PRE_CLICK_DELAY_SECONDS)
-        slot = self._find_square_card()
+        slot = seen_card or self._find_square_card()
         by_picture = slot is not None
         if not by_picture:
             slot = blind_slots.pop(0)

@@ -44,6 +44,7 @@ class SkipBrokenCardTest(unittest.TestCase):
         home_ok=True,
         recovered=None,
         unfinished=(),
+        reopen=None,
     ):
         events = []
         warnings = []
@@ -88,9 +89,8 @@ class SkipBrokenCardTest(unittest.TestCase):
                     True, ScreenState.SANDBOX
                 ),
                 advance_collection_map=advance or default_advance,
-                open_story_quick_switcher_from_sandbox=lambda **_kwargs: NavigationResult(
-                    True, ScreenState.CARD_MENU
-                ),
+                open_story_quick_switcher_from_sandbox=reopen
+                or (lambda **_kwargs: NavigationResult(True, ScreenState.CARD_MENU)),
                 inspect_collection_card_completion=lambda card_id: (
                     NavigationResult(False, ScreenState.CARD_MENU, "未同时确认吸取与压制完成")
                     if card_id in unfinished
@@ -180,6 +180,29 @@ class SkipBrokenCardTest(unittest.TestCase):
         self.assertFalse(state.card_verified("Q_sp1"))
         self.assertIn(("home",), events)
         self.assertTrue(state.card_verified("Q_sp2"))
+
+    def test_quick_switch_not_opened_after_the_card_skips_only_that_card(self):
+        # Player v0.2.31 2026-11-05 (噩梦之冬): a patrol caught the character
+        # right after the last map; 「Q_ep2完成后无法打开快速切换页：未稳定确认
+        # 当前剧情卡带箱庭」 stopped the whole run.
+        reopened = []
+
+        def reopen(**_kwargs):
+            reopened.append(len(reopened))
+            if len(reopened) == 1:
+                return NavigationResult(False, ScreenState.UNKNOWN, "未稳定确认当前剧情卡带箱庭")
+            return NavigationResult(True, ScreenState.CARD_MENU)
+
+        result, events, warnings, state = self._run(("Q_ep2", "Q_ep7"), reopen=reopen)
+
+        self.assertNotIn("无法打开快速切换页", result.message)
+        self.assertIn(("home",), events)
+        # The next card still runs; the caught card's maps stay recorded and
+        # it is judged again after the others.
+        self.assertTrue(state.card_verified("Q_ep7"))
+        self.assertTrue(state.card_verified("Q_ep2"))
+        self.assertTrue(result.success, result.message)
+        self.assertTrue(any("跑完后打不开快速切换页" in line for line in warnings))
 
     def test_no_known_screen_after_a_skip_stops_the_run(self):
         result, events, _warnings, _state = self._run(

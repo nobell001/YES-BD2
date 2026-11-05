@@ -178,6 +178,54 @@ class DoubleCheckTest(unittest.TestCase):
         self.assertIsNone(task._set_quick_count(5, state(free_ap=None)))
 
 
+class CountSetAgainTest(unittest.TestCase):
+    """Leo 2026-11-05 「所有地方都要有補救方案」: MIN or +1 not taken left a
+    count above the wanted one, and the mode failed 「场数对不上」."""
+
+    def _task(self, costs):
+        task = make_task()
+        task.clicks = []
+        task._click_reference = lambda x, y, after_sleep=0: task.clicks.append((x, y))
+        reads = iter(costs)
+        task._settled_cost = lambda read: next(reads)
+        return task
+
+    def test_a_count_above_the_wanted_one_is_set_once_more(self):
+        task = self._task([5, 3])
+        self.assertEqual(
+            3, task._count_from_min(event_module.DIALOG_MIN_POINT, event_module.DIALOG_PLUS_POINT, 3, None)
+        )
+        self.assertEqual(2, task.clicks.count(event_module.DIALOG_MIN_POINT))
+        self.assertTrue(any("再设一次" in line for line in task.lines))
+
+    def test_still_above_after_the_second_set_is_returned_for_the_check(self):
+        task = self._task([5, 5])
+        self.assertEqual(
+            5, task._count_from_min(event_module.DIALOG_MIN_POINT, event_module.DIALOG_PLUS_POINT, 3, None)
+        )
+        self.assertEqual(2, task.clicks.count(event_module.DIALOG_MIN_POINT))
+
+    def test_a_right_count_is_set_once(self):
+        task = self._task([3])
+        self.assertEqual(
+            3, task._count_from_min(event_module.DIALOG_MIN_POINT, event_module.DIALOG_PLUS_POINT, 3, None)
+        )
+        self.assertEqual(1, task.clicks.count(event_module.DIALOG_MIN_POINT))
+
+    def test_the_quick_reward_still_shown_is_pressed_once_more(self):
+        task = make_task()
+        task.clicks = []
+        task._click_reference = lambda x, y, after_sleep=0: task.clicks.append((x, y))
+        task._dismiss_ap_shortage = lambda: False
+        shown = iter([True])
+        task._quick_result_still_shown = lambda: next(shown, False)
+        task._roi_boxes = lambda *_a: []
+        task._boxes_text = lambda _boxes: "REWARD 获得奖励 点击"
+        with mock.patch.object(event_module, "keyword_match_count", lambda *_a: 2):
+            self.assertEqual("done", task._wait_quick_result())
+        self.assertEqual(2, task.clicks.count(event_module.QUICK_RESULT_DISMISS_POINT))
+
+
 class CountFromTheDialogTest(unittest.TestCase):
     """Battles are counted from the dialog, never from the top-bar AP.
 

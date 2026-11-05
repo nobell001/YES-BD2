@@ -4556,7 +4556,7 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
             [((969, 669), frame.shape, 0.3)] * 2 + [(1045 / 1920, 697 / 1080, 0.8)], clicks
         )
 
-    def test_buy_home_confirmation_requires_keyword_votes_brightness_and_ocr(self):
+    def test_buy_home_confirmation_needs_enough_cues_and_brightness(self):
         announcement_signals = []
         task = SimpleNamespace(
             config={},
@@ -4570,10 +4570,11 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         dimmed_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         frame = {"value": dimmed_frame}
         gacha_text = {"value": "抽抽乐"}
+        left_text = {"value": "我的小屋 经营管理格鲁TALK 街机游戏"}
 
         def ocr_text(_frame, name, **_kwargs):
             if name == "主页左列":
-                return "我的小屋 经营管理格鲁TALK 街机游戏"
+                return left_text["value"]
             return gacha_text["value"]
 
         vision = SimpleNamespace(
@@ -4592,6 +4593,7 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         frame["value"] = bright_frame
         self.assertTrue(navigator._wait_for_cartridge_home(timeout=0.0))
         gacha_text["value"] = ""
+        left_text["value"] = "我的小屋 经营管理格鲁TALK"
         self.assertFalse(navigator._wait_for_cartridge_home(timeout=0.0))
 
     def test_return_home_update_notice_is_cleared_then_strictly_reconfirmed(self):
@@ -4769,14 +4771,14 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
             clicks,
         )
 
-    def test_screen_classification_only_reports_home_after_all_three_signals(self):
+    def test_screen_classification_reports_home_only_with_enough_cues(self):
         task = SimpleNamespace(
             config={},
             info_set=lambda *_args, **_kwargs: None,
         )
         result = MatchResult(-1.0, (0, 0), (0, 0))
         gacha_text = {"value": ""}
-        left_text = {"value": "我的小屋 格鲁TALK 街机游戏"}
+        left_text = {"value": "我的小屋 格鲁TALK"}
 
         def ocr_text(_frame, name, **_kwargs):
             if name == "主页左列":
@@ -4843,19 +4845,13 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         self.assertEqual(0.90, spec.min_zncc_score)
         self.assertIs(QUICK_SWITCH_TEMPLATE, SANDBOX_TEMPLATES[1])
 
-    def test_quick_switch_button_alone_is_a_valid_sandbox_signal(self):
+    def _classify_with(self, passing_names):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         failed = MatchResult(-1.0, (0, 0), (0, 0))
-        quick_switch = MatchResult(
-            0.98,
-            (820, 980),
-            (60, 50),
-            pixel_score=0.91,
-            zncc_score=0.92,
-        )
+        hit = MatchResult(0.98, (820, 980), (60, 50), pixel_score=0.91, zncc_score=0.92)
 
         def match(_frame, spec):
-            return quick_switch if spec is QUICK_SWITCH_TEMPLATE else failed
+            return hit if spec.name in passing_names else failed
 
         def passes(result, spec):
             return (
@@ -4874,8 +4870,47 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         )
         navigator = Navigator(SimpleNamespace(config={}), vision)
         navigator.ensure_small_minimap = lambda: True
+        return navigator.classify(frame)
 
-        self.assertEqual(ScreenState.SANDBOX, navigator.classify(frame))
+    def test_quick_switch_button_with_a_field_key_cap_is_the_field(self):
+        # While walking only M stays (navigator_constants); on sand C hides.
+        for cap in ("箱庭按键C", "箱庭按键M", "箱庭按键Q"):
+            with self.subTest(cap=cap):
+                self.assertEqual(ScreenState.SANDBOX, self._classify_with({QUICK_SWITCH_TEMPLATE.name, cap}))
+
+    def test_quick_switch_button_with_only_the_h_cap_is_not_the_field(self):
+        # The restaurant's business screen: quick-switch button and H, no
+        # other cap (3 player frames, screen library 2026-11-05).  It used to
+        # be read as the field.
+        self.assertEqual(ScreenState.UNKNOWN, self._classify_with({QUICK_SWITCH_TEMPLATE.name, "箱庭按键H"}))
+        self.assertEqual(ScreenState.UNKNOWN, self._classify_with({QUICK_SWITCH_TEMPLATE.name}))
+
+    def test_field_cue_names_match_the_templates(self):
+        from src.tasks.map_trade.navigator_constants import (
+            FIELD_ALL_KEYCAP_TEMPLATES,
+            FIELD_KEYCAP_H_NAME,
+            SANDBOX_MINIMAP_TEMPLATE_NAME,
+        )
+
+        self.assertIn(FIELD_KEYCAP_H_NAME, [spec.name for spec in FIELD_ALL_KEYCAP_TEMPLATES])
+        self.assertEqual("箱庭小地图缩放按钮", SANDBOX_MINIMAP_TEMPLATE_NAME)
+
+    def test_a_dimmed_top_bar_marks_the_page_as_covered(self):
+        navigator = Navigator(SimpleNamespace(config={}, info_set=lambda *_args: None), SimpleNamespace())
+        page = np.full((1080, 1920, 3), 30, dtype=np.uint8)
+        page[10:50, 40:400] = 220  # white back button and title
+        covered = page.copy()
+        covered[10:50, 40:400] = 48  # the same, under a popup's dark layer
+        self.assertFalse(navigator.page_covered(page, ScreenState.SHOP))
+        self.assertTrue(navigator.page_covered(covered, ScreenState.SHOP))
+        # Only pages with a white top bar are judged.
+        self.assertFalse(navigator.page_covered(covered, ScreenState.SANDBOX))
+
+    def test_story_card_word_alone_is_not_the_card_menu(self):
+        # The trade shop lists 剧情游戏卡1..10 down its left side.
+        self.assertFalse(Navigator._card_menu_text("购买 洛兹 剧情游戏卡9 铁假面 剧情游戏卡10 初始化"))
+        self.assertTrue(Navigator._card_menu_text("最近 店长游戏卡 剧情游戏卡 角色"))
+        self.assertTrue(Navigator._card_menu_text("游戏卡珍藏集"))
 
     def test_trade_classify_requires_interaction_options_and_talent_cards(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)

@@ -76,8 +76,8 @@ def unsupported_size(executor) -> tuple[int, int] | None:
 
 def message(size: tuple[int, int], reason: str = "") -> str:
     head = (
-        f"游戏画面是 {size[0]}×{size[1]}，工具只在 1920×1080、2560×1440、3840×2160 测过，"
-        "其他大小可能认不准、卡住。"
+        f"游戏画面是 {size[0]}×{size[1]}，不是 1920×1080、2560×1440、3840×2160，"
+        "很容易认不准、卡住，任务很可能失败。"
     )
     if "窗口模式" in reason:
         # The game's own 全屏 keeps it at the screen's size (a 16:10 screen,
@@ -93,7 +93,7 @@ def message(size: tuple[int, int], reason: str = "") -> str:
 
 def fixed_message(size: tuple[int, int]) -> str:
     return (
-        f"游戏画面原本是 {size[0]}×{size[1]}，工具在这个大小容易认不准，"
+        f"游戏画面原本是 {size[0]}×{size[1]}，这个大小容易认不准，"
         "已自动调成 1920×1080。"
     )
 

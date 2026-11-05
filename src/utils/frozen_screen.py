@@ -54,6 +54,15 @@ INEFFECTIVE_PRESSES = 3
 # Not "BROWNDUST": the home announcement banner carries the logo too.
 # Leo 2026-10-20 「改成45秒」: the same cap as the black loading screen.
 LOADING_WORDS_SECONDS = LOADING_MAX_SECONDS
+# Presses reset the still count above (a press may still be working), so a
+# tool pressing on and on at a screen that never changes was never called
+# stuck: a dead shop back button for 10 s (player 11-02), the login's clear
+# spot pressed 29 times (10-14).  Leo 2026-11-05 「一直在按、但一直沒到下一個
+# 畫面也算卡住」: the same picture this long, with at least this many presses
+# that changed nothing, is stuck too.  Three still limits: a slow PC's late
+# answer and a re-press fit well inside it.
+PRESSED_STILL_SECONDS = 3 * FROZEN_SCREEN_SECONDS
+PRESSED_STILL_MIN_PRESSES = 3
 LOADING_WORDS = ("nowloading", "loading", "加载", "载入", "读取中", "连接中", "连线中", "通信中", "请稍候")
 
 
@@ -137,6 +146,11 @@ class FrozenWatch:
     # to LOADING_WORDS_SECONDS until the picture changes.
     loading_hold: bool = False
     loading_word: str = ""
+    # The same picture across presses (PRESSED_STILL_SECONDS): since when,
+    # and how many presses it has stayed the same through.
+    still_picture: np.ndarray | None = None
+    still_from: float = 0.0
+    presses_while_still: int = 0
 
     def hold_for_loading(self, word: str = "") -> None:
         """The still screen that just fired shows loading words: keep
@@ -163,6 +177,8 @@ class FrozenWatch:
             self.ineffective = 0
         self.at_last_press = self.last
         self.last_point = point
+        if self.still_picture is not None:
+            self.presses_while_still += 1
 
     def progress(self) -> None:
         """The tool just recognised what it was waiting for: count from the
@@ -170,6 +186,7 @@ class FrozenWatch:
         page that is being read is not stuck (a player's slow 1080p PC spent
         over 10 s reading the static buy page and was stopped, 2026-10-16)."""
         self.picture = None
+        self.still_picture = None
 
     def look(self, frame, now: float | None = None) -> None:
         """Raise FrozenScreen once the screen has been still long enough."""
@@ -189,6 +206,12 @@ class FrozenWatch:
         ):
             self.picture, self.since = picture, now
             self.loading_hold = False
+        if (
+            self.still_picture is None
+            or now - self.seen > FROZEN_GAP_SECONDS
+            or changed(picture, self.still_picture)
+        ):
+            self.still_picture, self.still_from, self.presses_while_still = picture, now, 0
         self.seen = now
         # The black loading screen (a faint logo at most) may stand still
         # for longer than a stuck page (Leo 2026-10-15 「一定會超過10秒甚至15秒」).
@@ -204,6 +227,17 @@ class FrozenWatch:
             limit = max(self.seconds, CHANGED_LOAD_SECONDS)
         else:
             limit = self.seconds
+        if (
+            not loading
+            and not self.loading_hold
+            and self.presses_while_still >= PRESSED_STILL_MIN_PRESSES
+            and now - self.still_from >= PRESSED_STILL_SECONDS
+        ):
+            self.fired = True
+            raise FrozenScreen(
+                f"点了 {self.presses_while_still} 次，画面 {now - self.still_from:.0f} 秒都没有变化"
+                "（点了没反应，或认不出这个画面）"
+            )
         if now - self.since >= limit:
             self.fired = True
             # Leo 2026-10-18 「卡住要寫原因」: which screen, how long, why.

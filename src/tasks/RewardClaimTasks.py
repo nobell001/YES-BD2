@@ -95,9 +95,6 @@ class _ClaimTaskBase(ClaimPageMixin, BaseBD2Task):
         self.config_description.update(self._claim_config_description())
 
     def run(self):
-        if not bool(self.config.get("启用", True)):
-            self.info_set("状态", f"{self.name}已禁用。")
-            return True
         self.info_set("状态", f"启动{self.name}。")
         if not self.run_claim():
             return False
@@ -132,7 +129,7 @@ class MailRewardTask(_ClaimTaskBase):
         if bool(self.config.get("领取商品邮箱", True)):
             switched = self._click_until_changed(
                 "商品邮箱",
-                lambda: self._click_reference(*SECOND_TAB_POINT, after_sleep=0.2),
+                lambda: self._click_reference(*SECOND_TAB_POINT, after_sleep=0.2),  # 不用确认：_click_until_changed 画面没变会再点
                 (MAIL_SECOND_TAB_ROI, MAIL_CLAIM_BUTTON.roi),
                 wait=1.5,
             )
@@ -286,7 +283,7 @@ class PassRewardTask(_ClaimTaskBase):
         card_roi = (PASS_CARD_X - half_w, max(0, card_y - half_h), 2 * half_w, 2 * half_h)
         changed = self._click_until_changed(
             f"通行证 {key}",
-            lambda: self._click_reference(PASS_CARD_X, card_y, after_sleep=0.2),
+            lambda: self._click_reference(PASS_CARD_X, card_y, after_sleep=0.2),  # 不用确认：_click_until_changed 画面没变会再点
             (card_roi, PASS_CLAIM_BUTTON.roi),
             attempts=2,
             wait=1.2,

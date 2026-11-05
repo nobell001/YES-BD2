@@ -81,7 +81,7 @@ class HomePopularityTask(_ClaimTaskBase):
             return self._claim_fail("打开参观")
         if not self._click_until_changed(
             "随机参观",
-            lambda: self._click_reference(*VISIT_RANDOM_TAB_POINT, after_sleep=0.2),
+            lambda: self._click_reference(*VISIT_RANDOM_TAB_POINT, after_sleep=0.2),  # 不用确认：_click_until_changed 画面没变会再点
             (VISIT_PAGE_ROI,),
             attempts=2,
             wait=VISIT_RANDOM_WAIT_SECONDS,
@@ -137,7 +137,7 @@ class HomePopularityTask(_ClaimTaskBase):
         # A count drawn late reads as nothing: look again before pressing.
         before = self.look_again(self._like_count)
         self.info_set("当前阶段", f"第{visit}间小屋：点赞")
-        self._click_reference(*LIKE_BUTTON_POINT, after_sleep=0.5)
+        self._click_reference(*LIKE_BUTTON_POINT, after_sleep=0.5)  # 不用确认：只按一次，再按会取消点赞；下面读人气数
         after = self._wait_like_count_above(before)
         # What this home showed, a +1 that lands late included.
         self._home_counts = {count for count in (before, after) if count is not None}

@@ -174,7 +174,6 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
     ocr_threshold_key = "日常 OCR 阈值"
 
     status_keys = [
-        "启用",
         "状态",
         "当前任务",
         "执行公会签到",
@@ -262,7 +261,6 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         self._install_quick_hunt_config()
         self.default_config.update(
             {
-                '启用': True,
                 '执行公会签到': True,
                 '执行小屋签到': True,
                 '执行一键收菜': True,
@@ -289,11 +287,6 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         )
 
     def run(self):
-        if not bool(self.config.get("启用", True)):
-            self.info_set("状态", "公会、小屋、酒馆已禁用。")
-            self.log_info("公会、小屋、酒馆已禁用。")
-            return True
-
         self.info_set("状态", "公会、小屋、酒馆启动。")
         self._why = ""
         steps = [
@@ -553,7 +546,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         if state == "toast":
             self.log_info("公会签到：检测到签到成功提示。")
             self._sleep_after_recognition()
-            self._click_reference(
+            self._click_reference(  # 不用确认：关签到提示，下面回主页会再确认
                 *GUILD_SIGN_IN_SUCCESS_ACKNOWLEDGE_REFERENCE_POINT, after_sleep=0.5
             )
         elif linger and self._wait_guild_toast(GUILD_TOAST_LINGER_SECONDS):
@@ -639,7 +632,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         """
         home_ok = False
         for attempt in range(1, GUILD_BACK_ATTEMPTS + 1):
-            self._click_reference(*BACK_BUTTON_REFERENCE_POINT, after_sleep=1.0)
+            self._click_reference(*BACK_BUTTON_REFERENCE_POINT, after_sleep=1.0)  # 不用确认：循环里没回主页再按（最多 4 次）
             last = attempt >= GUILD_BACK_ATTEMPTS
             look = GUILD_BACK_LAST_LOOK_SECONDS if last else GUILD_BACK_LOOK_SECONDS
             if self._wait_for_home_confirmation("公会签到返回主页", timeout=look):
@@ -716,7 +709,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         # every poll instead, and whichever matches first ends the wait.
         found = False
         for attempt in range(1, MY_HOME_ENTRY_CLICK_ATTEMPTS + 1):
-            self._click_reference(*MY_HOME_ENTRY_REFERENCE_POINT, after_sleep=0.5)
+            self._click_reference(*MY_HOME_ENTRY_REFERENCE_POINT, after_sleep=0.5)  # 不用确认：循环里还在主页就再点
             found = self._wait_my_home_page(MY_HOME_ENTRY_RETRY_SECONDS)
             # A click the game swallowed leaves the home screen up: only then
             # click again; anything else (loading) gets the full wait below.
@@ -755,13 +748,13 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
 
         wait = float(self.config.get("一键收菜菜单等待秒数", 8.0))
         first_wait = min(wait, BUSINESS_ENTRY_RETRY_SECONDS)
-        self._click_reference(*BUSINESS_COLLECT_ENTRY_REFERENCE_POINT, after_sleep=1.0)
+        self._click_reference(*BUSINESS_COLLECT_ENTRY_REFERENCE_POINT, after_sleep=1.0)  # 不用确认：还在主页就再点一次
         found, frame, boxes = self._wait_business_collect_popup(first_wait)
         # A click the game swallowed leaves home up: only then press again
         # (player 2026-10-12: one lost press on 经营管理 failed 一键收菜).
         if not found and self._home_still_showing():
             self.log_info("一键收菜：点了经营管理还在主页，再点一次。")
-            self._click_reference(*BUSINESS_COLLECT_ENTRY_REFERENCE_POINT, after_sleep=1.0)
+            self._click_reference(*BUSINESS_COLLECT_ENTRY_REFERENCE_POINT, after_sleep=1.0)  # 不用确认：还在主页就再点一次
             found, frame, boxes = self._wait_business_collect_popup(
                 max(first_wait, wait - first_wait)
             )
@@ -985,7 +978,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         if center is None:
             return
         height, width = frame.shape[:2]
-        self.operate_click(
+        self.operate_click(  # 不用确认：helper 本身，调用处检查
             max(0.0, min(1.0, center[0] / max(1, width))),
             max(0.0, min(1.0, center[1] / max(1, height))),
             after_sleep=after_sleep,
@@ -997,7 +990,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             self._click_ocr_box(cancel, frame, after_sleep=1.0)  # 不用确认：调用处循环，弹窗还在下一轮再关
             return
         self.log_info("一键收菜：未识别到「取消」，点击原关闭位置。")
-        self._click_reference(*BUSINESS_COLLECT_CLOSE_REFERENCE_POINT, after_sleep=1.0)
+        self._click_reference(*BUSINESS_COLLECT_CLOSE_REFERENCE_POINT, after_sleep=1.0)  # 不用确认：调用处循环，弹窗还在下一轮再关
 
     @staticmethod
     def _first_box_with(boxes: list, keywords) -> object | None:
@@ -1046,7 +1039,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
                     return
                 # Unrecognised overlay: fall back to the tap the old flow made.
                 self.log_info("一键收菜：出现未识别弹窗，点击原关闭位置。")
-                self._click_reference(*BUSINESS_COLLECT_CLOSE_REFERENCE_POINT, after_sleep=1.0)
+                self._click_reference(*BUSINESS_COLLECT_CLOSE_REFERENCE_POINT, after_sleep=1.0)  # 不用确认：调用处循环，弹窗还在下一轮再关
                 blind_taps += 1
                 unknown_frames = 0
                 continue

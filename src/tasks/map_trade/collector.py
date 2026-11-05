@@ -428,11 +428,18 @@ class Collector(SkillExecutionMixin):
                 category=card.category
             )
             if not reopened.success:
-                return CollectionResult(
-                    False,
-                    completed_submaps=completed_this_run,
-                    message=f"{card.card_id}完成后无法打开快速切换页：{reopened.message}",
+                # Not the whole run (player v0.2.31 2026-11-05, 噩梦之冬: a
+                # patrol caught the character after the last map and every
+                # later card was dropped): home, then the next card; the card
+                # itself is run once more and judged by its badges then.
+                stopped = self._skip_card(
+                    card,
+                    f"跑完后打不开快速切换页（{reopened.message}）",
+                    completed_this_run,
                 )
+                if stopped is not None:
+                    return stopped
+                continue
             maps_done = len(completed) >= len(card.targets)
             verified = self._card_done_check(card, completed)
             if card.card_id in self._skill_skips:

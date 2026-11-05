@@ -102,6 +102,42 @@ class Chapter18MovesTest(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual([("menu", "艾琳")], calls)
 
+    def test_airin_trip_is_the_town_without_reading_the_map(self):
+        # Player v0.2.31 2026-11-05: 回主城失败 after the 艾琳 trip; Leo
+        # 「你傳到艾琳就一定在神殿 然後就可以繼續跑圖了」.
+        main, sanctum, _memory = CARD.targets
+        for call in (
+            lambda nav: nav.prepare_collection_main_area(CARD.card_id, via_hunting_ground=True),
+            lambda nav: nav.advance_collection_map(CARD.card_id, sanctum, main),
+        ):
+            calls = []
+            navigator = self._navigator(calls)
+            navigator.ensure_small_minimap = lambda: True
+            navigator.current_collection_target = lambda _card: (
+                calls.append(("read-map",)) or None
+            )
+            result = call(navigator)
+            self.assertTrue(result.success, result.message)
+            self.assertEqual([("menu", "艾琳")], calls)
+
+    def test_failed_airin_trip_is_named_in_the_failure(self):
+        calls = []
+        navigator = self._navigator(calls)
+        navigator.ensure_small_minimap = lambda: True
+
+        def no_menu(*entries):
+            calls.append(("menu", *entries))
+            navigator._nav_failure = "≡菜单里没读到艾琳，读到：旅馆"
+            return None
+
+        navigator._travel_via_nav_menu = no_menu
+        navigator._click_sandbox_teleport_interaction = lambda: False
+
+        result = navigator.prepare_collection_main_area(CARD.card_id, via_hunting_ground=True)
+
+        self.assertFalse(result.success)
+        self.assertIn("之前经≡选单的艾琳没传出去：≡菜单里没读到艾琳，读到：旅馆", result.message)
+
     def test_covered_sanctum_label_uses_its_known_place(self):
         # The 4K clone clicked (525, 296) on the 1080p area map (10-10).
         main, sanctum, _memory = CARD.targets

@@ -185,18 +185,42 @@ def home_confirmation_passes(
     brightness_threshold: float,
     gacha_ocr_text: object,
 ) -> bool:
-    """Require all three same-frame signals before confirming the global home page.
+    """The global home page, not dimmed, on one frame (see home_cues_shown).
 
     brightness is a scene-independent dimming metric compared against
     brightness_threshold: the OCR pipeline passes the left-column grayscale
     p99 per row (0-255, threshold 185); the legacy template bridge passes the
     template-relative brightness ratio (0-1, threshold 0.75).
     """
-    return (
-        int(left_hits) >= int(required_left_hits)
-        and float(brightness) >= float(brightness_threshold)
-        and home_gacha_ocr_matches(gacha_ocr_text)
+    return float(brightness) >= float(brightness_threshold) and home_cues_shown(
+        left_hits=left_hits, required_left_hits=required_left_hits, gacha_ocr_text=gacha_ocr_text
     )
+
+
+def home_cues_shown(*, left_hits: int, required_left_hits: int, gacha_ocr_text: object) -> bool:
+    """Enough of home's words on one frame: not every one of them.
+
+    Requiring the left words AND 抽抽乐 made any one bad read a home not
+    seen (Leo 2026-11-05 「你不要一個地方沒辨識到就出錯 明明有很多方法」): a
+    window with black bars put 抽抽乐 in the bar (player 10-30, #448), and
+    every task starts from home.  Home now counts with:
+
+    - the left words as required and 抽抽乐 (as before);
+    - all three left words (我的小屋 / 格鲁TALK / 街机游戏) without 抽抽乐;
+    - 抽抽乐 and one left word.
+
+    Measured 2026-11-05 on 288 real pictures (project files + test
+    fixtures): the 13 home pictures read all three words and 抽抽乐; of the
+    275 others, none read 抽抽乐 and none more than one left word.
+    """
+    left, required = int(left_hits), int(required_left_hits)
+    gacha = home_gacha_ocr_matches(gacha_ocr_text)
+    if left >= required and gacha:
+        return True
+    # The template bridge of the login (required 1) has one word cue only.
+    if required >= HOME_LEFT_COLUMN_REQUIRED_HITS and left >= len(HOME_LEFT_COLUMN_KEYWORD_GROUPS):
+        return True
+    return gacha and left >= 1
 
 
 def home_temporary_announcement_detected(
@@ -208,8 +232,6 @@ def home_temporary_announcement_detected(
     gacha_ocr_text: object,
 ) -> bool:
     """Detect a dimmed global home page covered by a temporary announcement."""
-    return (
-        int(left_hits) >= int(required_left_hits)
-        and float(brightness) < float(brightness_threshold)
-        and home_gacha_ocr_matches(gacha_ocr_text)
+    return float(brightness) < float(brightness_threshold) and home_cues_shown(
+        left_hits=left_hits, required_left_hits=required_left_hits, gacha_ocr_text=gacha_ocr_text
     )

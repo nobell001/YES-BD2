@@ -26,6 +26,7 @@ from src.tasks.map_trade.models import (
     CARD_BY_ID,
     CIRCLE_EXIT_WALKS,
     EVENT_WALK_EDGES,
+    NPC_TRIP_IS_TOWN_CARD_IDS,
     RESTART_NAV_ENTRIES,
     RESUMING_WALK_CARD_IDS,
     RESUMING_WALK_TIMEOUT,
@@ -149,6 +150,9 @@ from src.tasks.map_trade.navigator_constants import (
     TELEPORT_MAP_RETURN_RELATIVE_POINT,
     TELEPORT_MAP_SEEK_LIMIT,
     LOOSE_PAGE_NAME_MIN_RATIO,
+    POSITION_MAP_LOOKS,
+    AREA_MAP_HEADER_TAIL,
+    MAP_NAME_TAG_PREFIX,
     MAP_NAME_TELLING_CHARS,
     TELEPORT_MAP_TITLE_REREAD_MIN_RATIO,
     TELEPORT_MAP_TITLE_REREAD_SCALES,
@@ -1445,8 +1449,12 @@ class SandboxNavigationMixin:
         return "arrived" if WALK_ARRIVED_TEXT in text else "idle"
 
     def _auto_moving(self, frame: np.ndarray) -> bool:
-        """"自动移动中" shows: the game is walking the character somewhere."""
-        return self._walk_flags(frame)[0]
+        """The game moves the character itself: "自动移动中" shows, or a
+        patrol's catch plays ("被发现了！！", its words, the trip back to the
+        start).  The field wait counts both as progress, not as stuck (player
+        v0.2.31 2026-11-05, 噩梦之冬: caught right after the last map, the
+        3 s field check ran out under the banner and the whole run stopped)."""
+        return any(self._walk_flags(frame))
 
     def _wait_auto_move_finished(self, timeout: float) -> str:
         """Wait while "自动移动中" shows: "done" once it is gone, "battle" when
@@ -2554,7 +2562,37 @@ class SandboxNavigationMixin:
         if not matches:
             return ()
         longest = max(length for length, _key in matches)
-        return tuple(sorted({key for length, key in matches if length == longest}))
+        keys = tuple(sorted({key for length, key in matches if length == longest}))
+        if len(keys) == 1:
+            # A short name inside a longer neighbour's (凯洛山 in 凯洛山中心处):
+            # the longer one misread by a character still holds the short
+            # one, so the read is the longer map when it is close to it
+            # (2026-11-05, every-card position test).
+            found = next(target for target in card.targets if target.key == keys[0])
+            for other in card.targets:
+                if other.key == found.key or not any(
+                    normalize_text(mine) in normalize_text(theirs)
+                    and normalize_text(mine) != normalize_text(theirs)
+                    for mine in found.titles
+                    for theirs in other.titles
+                ):
+                    continue
+                bare = AREA_MAP_HEADER_TAIL.sub("", normalized_text)
+                name_read = MAP_NAME_TAG_PREFIX.sub("", bare)
+                short = max(len(normalize_text(title)) for title in found.titles)
+                if len(name_read) <= short:
+                    continue  # the short name itself, nothing more read
+                closer = SandboxNavigationMixin._name_closeness(bare, other)
+                if (
+                    closer >= LOOSE_PAGE_NAME_MIN_RATIO
+                    and closer > max(
+                        difflib.SequenceMatcher(None, normalize_text(title), name_read).ratio()
+                        for title in found.titles
+                    )
+                    and not SandboxNavigationMixin._names_another_map(bare, other)
+                ):
+                    return (other.key,)
+        return keys
 
     def _centered_title_keys(
         self, frame: np.ndarray, card: CardSpec, keys: tuple[str, ...]
@@ -2900,12 +2938,19 @@ class SandboxNavigationMixin:
                 continue
             matcher = difflib.SequenceMatcher(None, name, bare)
             for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-                if tag != "replace":
+                if tag == "equal":
                     continue
                 ours, theirs = name[i1:i2], bare[j1:j2]
-                if any(char in MAP_NAME_TELLING_CHARS for char in ours) and any(
-                    char in MAP_NAME_TELLING_CHARS for char in theirs
-                ):
+                # A floor / number / side character changed or added:
+                # 避难所166 read 「避难所136」 aligns as an insert of 3 and a
+                # delete of 6, not a replace (2026-11-05, every-card test).  A
+                # dropped one alone (「学校楼」) is still the map (#473).
+                if tag == "replace":
+                    if any(char in MAP_NAME_TELLING_CHARS for char in ours) and any(
+                        char in MAP_NAME_TELLING_CHARS for char in theirs
+                    ):
+                        return True
+                elif tag == "insert" and any(char in MAP_NAME_TELLING_CHARS for char in theirs):
                     return True
         return False
 
@@ -3045,16 +3090,112 @@ class SandboxNavigationMixin:
 
         Works anywhere in the field, not only on a teleport circle, so the
         route can start from the current map (user 2026-09-28).
+
+        One miss no longer decides (Leo 2026-11-05 「你不要一個地方沒辨識到就
+        出錯 明明有很多方法」; player v0.2.31 第18章: the town check after the
+        艾琳 trip failed and the card was skipped): the clean name, the name
+        read again enlarged, a close read (「字接近」 with the 3楼/1楼 guard),
+        then the map closed and opened once more.  ``_last_position_header``
+        keeps every read for the failure message; ``_position_map_opened``
+        says whether the map opened at all.
         """
+        self._last_position_header = None
+        self._position_map_opened = False
         if not self.ensure_small_minimap():
+            self._last_position_header = "小地图放大状态未能切回"
             return None
-        header = self._open_field_map()
-        if header is None:
+        reads: list[str] = []
+        key = None
+        for look in range(POSITION_MAP_LOOKS):
+            header = self._open_field_map()
+            if header is None:
+                reads.append("区域地图没打开")
+                continue
+            self._position_map_opened = True
+            key = self._position_key_on_open_map(card, header, reads)
+            self._close_field_map()
+            if key is not None or not self._position_read_unclear(card, reads[-1]):
+                # Found, or a clean read of another map (狩猎场, 记忆岔路口):
+                # opening the map again reads the same.
+                break
+            if look + 1 < POSITION_MAP_LOOKS:
+                self._status("区域地图", "地图名没读清楚，关掉区域地图再开一次重读")
+        self._last_position_header = " / ".join(dict.fromkeys(read or "-" for read in reads))
+        self._status("区域地图", f"当前位置 {self._last_position_header} -> {key or '-'}")
+        return key
+
+    def _position_key_on_open_map(
+        self, card: CardSpec, header: str, reads: list[str] | None = None
+    ) -> str | None:
+        """The card map the open area map names: its clean read, else the
+        title read again bordered and enlarged (2x, 3x), else a close read.
+        Each read is appended to ``reads``."""
+        reads = reads if reads is not None else []
+        reads.append(header)
+        key = self._position_key_in_read(card, header)
+        if key is not None or not self._position_read_unclear(card, header):
+            return key
+        for scale in TELEPORT_MAP_TITLE_REREAD_SCALES:
+            again = normalize_text(
+                self.vision.simplify(
+                    self.vision.ocr_text(
+                        self.vision.capture(),
+                        "区域地图标题放大重读",
+                        relative_roi=TELEPORT_MAP_HEADER_OCR_RELATIVE_ROI,
+                        ocr_scale=scale,
+                        bordered=True,
+                    )
+                )
+            )
+            if not again or again == header:
+                continue
+            reads.append(again)
+            key = self._position_key_in_read(card, again)
+            if key is not None:
+                self._status("区域地图", f"地图名「{header}」放大{scale:g}倍重读为「{again}」")
+                return key
+        return None
+
+    def _position_key_in_read(self, card: CardSpec, text: str) -> str | None:
+        """One card map a read names: by its whole name, else by a close
+        read that is closer to it than to the card's other maps and differs
+        in no character that tells maps apart (学校3楼/学校1楼); the same rule
+        as the teleport pages (``_page_is``, Leo 2026-10-31 「字接近就判定成功」)."""
+        keys = self._target_keys_in_text(card, text)
+        if len(keys) == 1:
+            return keys[0]
+        if keys:
+            return None  # several whole names: no guess between them
+        bare = AREA_MAP_HEADER_TAIL.sub("", text)
+        if not bare:
             return None
-        self._close_field_map()
-        keys = self._target_keys_in_text(card, header)
-        self._status("区域地图", f"当前位置 {header} -> {keys[0] if len(keys) == 1 else '-'}")
-        return keys[0] if len(keys) == 1 else None
+        scores = [(self._name_closeness(bare, target), target) for target in card.targets]
+        best, target = max(scores, key=lambda item: item[0])
+        if best < LOOSE_PAGE_NAME_MIN_RATIO:
+            return None
+        if any(score >= best for score, other in scores if other is not target):
+            return None
+        if self._names_another_map(bare, target):
+            return None
+        self._status("区域地图", f"地图名「{text}」接近{target.title}（{best:.2f}），当作这张图")
+        return target.key
+
+    def _position_read_unclear(self, card: CardSpec, text: str) -> bool:
+        """Nothing read, or a read sharing a run of characters with one of
+        the card's maps: worth reading again."""
+        return self._title_worth_rereading(card, AREA_MAP_HEADER_TAIL.sub("", text or ""))
+
+    def _header_is(self, card: CardSpec, header: str, target: CollectionMapTarget) -> bool:
+        """The open area map's ``header`` is ``target``'s map: its whole name,
+        else the shared position reading when ``target`` is one of the card's
+        maps (walks between labelled exits, 2026-11-05)."""
+        if normalize_text(target.title) in header:
+            return True
+        if not any(
+            item.key == target.key and item.title == target.title for item in card.targets
+        ):
+            return False
+        return self._position_key_on_open_map(card, header) == target.key
 
     def _open_teleport_map_anywhere(self, card: CardSpec | None = None) -> NavigationResult:
         """The teleport map, going to the hunting ground's circle if needed.
@@ -3538,7 +3679,7 @@ class SandboxNavigationMixin:
         for attempt in range(WALK_EXIT_ATTEMPTS):
             if header is None:
                 return NavigationResult(False, ScreenState.UNKNOWN, "未能打开区域地图")
-            if here not in header:
+            if not self._header_is(card, header, current):
                 self._close_field_map()
                 return NavigationResult(
                     False, ScreenState.SANDBOX, f"区域地图不是{current.title}：{header}"
@@ -3572,10 +3713,14 @@ class SandboxNavigationMixin:
             if seen and tuple(self._target_keys_in_text(card, seen)) == (target.key,):
                 return NavigationResult(True, ScreenState.SANDBOX, f"已走到{target.title}")
             header = self._open_field_map()
-            if header is not None and wanted in header:
+            if header is not None and self._header_is(card, header, target):
                 self._close_field_map()
                 return NavigationResult(True, ScreenState.SANDBOX, f"已走到{target.title}")
-            if header is None or here not in header or attempt + 1 >= WALK_EXIT_ATTEMPTS:
+            if (
+                header is None
+                or not self._header_is(card, header, current)
+                or attempt + 1 >= WALK_EXIT_ATTEMPTS
+            ):
                 break
             # Still on this map with its area map open: a patrol expelled the
             # walk (ch14's 光明监视者 puts the character back at the entrance,
@@ -3824,6 +3969,46 @@ class SandboxNavigationMixin:
             map_page_mode=opened.map_page_mode,
         )
 
+    def _npc_trip_reached(
+        self, card: CardSpec, npc: str, target: CollectionMapTarget
+    ) -> bool:
+        """The ≡ menu's ``npc`` trip, then ``target`` confirmed: by the trip
+        alone for NPC_TRIP_IS_TOWN_CARD_IDS' town, else by the area map's
+        name.  When it fails, ``_npc_trip_failure`` says which step did."""
+        self._npc_trip_failure = ""
+        self.last_loading_title = ""  # only this trip's loading screen counts
+        if not self._travel_via_nav_menu(npc):
+            why = getattr(self, "_nav_failure", "") or "没传出去"
+            self._npc_trip_failure = f"经≡选单的{npc}没传出去：{why}"
+            return False
+        if card.card_id in NPC_TRIP_IS_TOWN_CARD_IDS and target.key == card.targets[0].key:
+            self._status("导航状态", f"经{npc}到{target.title}（传到{npc}就是这里，不再读地图名）")
+            return True
+        seen = getattr(self, "last_loading_title", "") or ""
+        if seen and self._position_key_in_read(card, seen) == target.key:
+            self._status("导航状态", f"经{npc}的读取画面写着{target.title}，到了")
+            return True
+        if self.current_collection_target(card) == target.key:
+            return True
+        header = getattr(self, "_last_position_header", None)
+        self._npc_trip_failure = (
+            f"经{npc}传送后，区域地图"
+            + (f"读到「{header}」，不是{target.title}" if header else "没打开或没读到地名")
+        )
+        return False
+
+    def _log_info(self, text: str) -> None:
+        log = getattr(self.task, "log_info", None)
+        if callable(log):
+            log(text)
+
+    def _with_npc_trip_failure(self, result: NavigationResult, npc_why: str) -> NavigationResult:
+        """A later fallback's failure, with why the NPC trip before it failed:
+        that trip is the usual way, so its failure is the cause to read."""
+        if result.success or not npc_why:
+            return result
+        return replace(result, message=f"{result.message}（之前{npc_why}）")
+
     def prepare_collection_main_area(
         self, card_id: str, *, via_hunting_ground: bool = False
     ) -> NavigationResult:
@@ -3838,16 +4023,22 @@ class SandboxNavigationMixin:
             return NavigationResult(False, ScreenState.UNKNOWN, f"非跑图剧情卡带：{card_id}")
         if not self.ensure_small_minimap():
             return NavigationResult(False, ScreenState.SANDBOX, "小地图放大状态未能切回")
+        npc_why = ""
         if via_hunting_ground and (npc := RESTART_NAV_ENTRIES.get(card.card_id)):
             # Card 3: 艾琳 first, wherever the character stands (Leo).
-            if (
-                self._travel_via_nav_menu(npc)
-                and self.current_collection_target(card) == card.targets[0].key
-            ):
+            if self._npc_trip_reached(card, npc, card.targets[0]):
                 return NavigationResult(
                     True, ScreenState.SANDBOX, f"经{npc}到达{card.targets[0].title}"
                 )
-            self._status("导航状态", f"经{npc}未到{card.targets[0].title}，改用原来的回城方式")
+            npc_why = self._npc_trip_failure
+            self._status("导航状态", f"{npc_why}，改用原来的回城方式")
+            self._log_info(f"跑图：{card.label}{npc_why}，改用传送阵回主城。")
+        result = self._prepare_collection_main_area(card, via_hunting_ground=via_hunting_ground)
+        return self._with_npc_trip_failure(result, npc_why)
+
+    def _prepare_collection_main_area(
+        self, card: CardSpec, *, via_hunting_ground: bool
+    ) -> NavigationResult:
         if via_hunting_ground:
             opened = None
             if self._click_sandbox_teleport_interaction():  # 不用确认：没打开改走小地图导航
@@ -3871,7 +4062,9 @@ class SandboxNavigationMixin:
                 elif entry is not None:
                     # No 狩猎场 in the ≡ menu -> 艾琳 (Leo 2026-09-30).  She
                     # stands in the town, so the route starts right there.
-                    if self.current_collection_target(card) == card.targets[0].key:
+                    if card.card_id in NPC_TRIP_IS_TOWN_CARD_IDS or (
+                        self.current_collection_target(card) == card.targets[0].key
+                    ):
                         return NavigationResult(
                             True, ScreenState.SANDBOX, f"经{entry}到达{card.targets[0].title}"
                         )
@@ -3924,14 +4117,11 @@ class SandboxNavigationMixin:
             f"跑图：传送阵地图没认出{town.title}，改用小地图≡选单找{TOWN_NPC_NAV_ENTRY}回主城。"
         )
         self._close_area_map(context)
-        if (
-            self._travel_via_nav_menu(TOWN_NPC_NAV_ENTRY)
-            and self.current_collection_target(card) == town.key
-        ):
+        if self._npc_trip_reached(card, TOWN_NPC_NAV_ENTRY, town):
             return NavigationResult(
                 True, ScreenState.SANDBOX, f"经{TOWN_NPC_NAV_ENTRY}到达{town.title}"
             )
-        why = getattr(self, "_nav_failure", "") or f"经{TOWN_NPC_NAV_ENTRY}也没到{town.title}"
+        why = self._npc_trip_failure or f"经{TOWN_NPC_NAV_ENTRY}也没到{town.title}"
         return NavigationResult(
             False,
             failed.state,
@@ -3990,14 +4180,12 @@ class SandboxNavigationMixin:
             # 2026-09-30).  Without 压制 the walk to 左侧回廊's circle from the
             # 中央回廊 side is caught by the 光明监视者 (route test); after 压制
             # it is not (Leo), so the teleport map below stays the fallback.
-            if (
-                self._travel_via_nav_menu(town_npc)
-                and self.current_collection_target(card) == next_target.key
-            ):
+            if self._npc_trip_reached(card, town_npc, next_target):
                 return NavigationResult(
                     True, ScreenState.SANDBOX, f"经{town_npc}到达{next_target.title}"
                 )
-            self._status("导航状态", f"经{town_npc}未到{next_target.title}，改用传送阵地图")
+            self._status("导航状态", f"{self._npc_trip_failure}，改用传送阵地图")
+            self._log_info(f"跑图：{card.label}{self._npc_trip_failure}，改用传送阵地图。")
         opened = self._open_teleport_map_anywhere(card)
         if not opened.success:
             return NavigationResult(
@@ -4192,18 +4380,18 @@ class SandboxNavigationMixin:
             )
         # Else the field's own area map (M) names the map in ~2 s; reopening
         # the teleport map through the hand prompt took ~12 s per move at 2K.
-        if self.ensure_small_minimap():
-            header = self._open_field_map()
-            if header is not None:
-                self._close_field_map()
-                # By card key, not substring: 卢戈森林 is inside 卢戈森林深处.
-                if tuple(self._target_keys_in_text(card, header)) == (target.key,):
-                    return NavigationResult(
-                        True, ScreenState.SANDBOX, f"{card.card_id}/{target.key}/{target.title}"
-                    )
-                return NavigationResult(
-                    False, ScreenState.SANDBOX, f"到达后地图不符：目标={target.title}，实际={header}"
-                )
+        # By card key, not substring: 卢戈森林 is inside 卢戈森林深处.
+        key = self.current_collection_target(card)
+        if key == target.key:
+            return NavigationResult(
+                True, ScreenState.SANDBOX, f"{card.card_id}/{target.key}/{target.title}"
+            )
+        if getattr(self, "_position_map_opened", False):
+            return NavigationResult(
+                False,
+                ScreenState.SANDBOX,
+                f"到达后地图不符：目标={target.title}，实际={self._last_position_header or '-'}",
+            )
         area = self.ensure_area_map()
         if not area.success:
             return NavigationResult(False, area.state, f"到达后无法复核区域地图：{area.message}")

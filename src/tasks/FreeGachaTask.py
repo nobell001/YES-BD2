@@ -70,7 +70,6 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
         self._init_vision_state()
         self.default_config.update(
             {
-                "启用": True,
                 "加载页面阈值": 0.72,
                 "主页压暗阈值": 185.0,
                 "抽卡 OCR 阈值": 0.2,
@@ -95,7 +94,6 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
         )
         self.config_description.update(
             {
-                "启用": "是否执行白嫖抽抽乐任务。",
                 "主页压暗阈值": "主页左列灰度 p99 低于该值视为被公告压暗（0-255）。",
                 "抽卡页面关键词最低命中数": "确认已进入抽卡页所需的 OCR 关键词数量。",
                 "确认弹窗关键词最低命中数": "确认抽抽乐弹窗所需的 OCR 关键词数量。",
@@ -123,11 +121,6 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
             self.config[RESULT_SKIP_BURST_KEY] = RESULT_SKIP_BURST_SECONDS
 
     def run(self):
-        if not bool(self.config.get("启用", True)):
-            self.info_set("状态", "白嫖抽抽乐已禁用。")
-            self.log_info("白嫖抽抽乐已禁用。")
-            return True
-
         if day_record.done_today(DRAWN_RECORD_PATH):
             self.done_already("今天已经抽过")
             self.info_set("状态", "白嫖抽抽乐今天已经抽过。")

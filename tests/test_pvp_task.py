@@ -1305,7 +1305,7 @@ class PVPTaskHelperTest(unittest.TestCase):
         self.assertFalse(PVPTask._wait_for_quick_switch_page(task))
         self.assertIn("未确认卡带选择页", logs[0])
 
-    def test_cartridge_home_requires_keyword_votes_brightness_and_gacha_ocr(self):
+    def test_cartridge_home_needs_enough_cues_and_brightness(self):
         task = object.__new__(PVPTask)
         task.config = {
             "主页确认等待秒数": 0.0,
@@ -1322,10 +1322,11 @@ class PVPTaskHelperTest(unittest.TestCase):
         def fake_ocr(_frame, name, roi=None, **_kwargs):
             ocr_calls.append((name, roi))
             if name == "主页左列":
-                return "我的小屋 经营管理格鲁TALK 街机游戏"
+                return left_text["value"]
             return gacha_text["value"]
 
         gacha_text = {"value": "抽抽乐"}
+        left_text = {"value": "我的小屋 经营管理格鲁TALK 街机游戏"}
         task._ocr_text = fake_ocr
         task.sleep = lambda *_args, **_kwargs: None
         task._sleep_after_recognition = lambda: None
@@ -1339,13 +1340,14 @@ class PVPTaskHelperTest(unittest.TestCase):
 
         frame["value"] = bright_frame
         gacha_text["value"] = ""
+        left_text["value"] = "我的小屋 经营管理格鲁TALK"
         self.assertFalse(PVPTask._wait_for_cartridge_home(task))
 
         gacha_text["value"] = "抽抽乐"
         self.assertTrue(PVPTask._wait_for_cartridge_home(task))
         self.assertIn(("主页抽抽乐 x1", HOME_GACHA_OCR_ROI), ocr_calls)
 
-    def test_return_home_uses_same_three_signal_confirmation(self):
+    def test_return_home_uses_the_same_home_confirmation(self):
         task = object.__new__(PVPTask)
         task.config = {"主页压暗阈值": 185.0}
         task.info_set = lambda *_args, **_kwargs: None
@@ -1355,7 +1357,7 @@ class PVPTaskHelperTest(unittest.TestCase):
 
         def fake_ocr(_frame, name, roi=None, **_kwargs):
             if name == "主页左列":
-                return "我的小屋 格鲁TALK 街机游戏"
+                return "我的小屋 格鲁TALK"
             return gacha_text["value"]
 
         gacha_text = {"value": "主页其他文字"}
@@ -2902,6 +2904,7 @@ class PVPTaskHelperTest(unittest.TestCase):
         task._wait_for_ocr_patterns = lambda *_a, **_k: (False, "")
         searched = []
         task._click_template_until = lambda *a, **k: searched.append(a) or False
+        task._stage_in_view = lambda: None  # the red shape is not seen either
         self.assertFalse(PVPTask._click_pvp_stage_once(task, 10.0))
         self.assertEqual(1, len(searched))
 
@@ -3463,8 +3466,9 @@ class PVPTaskHelperTest(unittest.TestCase):
         task.info_set = lambda *_args, **_kwargs: None
         task.log_info = lambda *_args, **_kwargs: None
         task.sleep = lambda *_args: None
+        from src.utils.pvp_dialog import multiplier_after
+
         state = {"value": 40, "steps": []}
-        moves = {"big_plus": 5, "big_minus": -5, "plus": 1, "minus": -1}
         by_point = {point: name for name, point in PVP_MULTIPLIER_STEP_POINTS.items()}
 
         def option(x, y, after_sleep=0.0):
@@ -3475,7 +3479,8 @@ class PVPTaskHelperTest(unittest.TestCase):
             state["steps"].append(name)
             if state.pop("swallow", False):
                 return
-            state["value"] = max(1, min(40, state["value"] + moves[name]))
+            # The buttons' real rules (2K clone 2026-11-05): 1 +5 gives 5.
+            state["value"] = multiplier_after(state["value"], name)
 
         task._click_screen_reference = option
         task._click_reference = step
@@ -3488,7 +3493,8 @@ class PVPTaskHelperTest(unittest.TestCase):
 
         self.assertTrue(PVPTask._select_setting_multiplier(task, 8))
         self.assertEqual(8, state["value"])
-        self.assertEqual(["big_plus", "plus", "plus"], state["steps"])
+        # MIN +1 +5 +1: from 2, +5 adds five (from 1 it would give 5).
+        self.assertEqual(["plus", "big_plus", "plus"], state["steps"])
 
     def test_select_setting_multiplier_steps_on_after_a_swallowed_press(self):
         task, state = self._stepping_task(lambda value: value)
@@ -3496,7 +3502,8 @@ class PVPTaskHelperTest(unittest.TestCase):
 
         self.assertTrue(PVPTask._select_setting_multiplier(task, 8))
         self.assertEqual(8, state["value"])
-        self.assertEqual(["big_plus", "plus", "plus", "big_plus"], state["steps"])
+        # The first +1 is lost: 1 +5 = 5, +1 = 6, read 6 and step on.
+        self.assertEqual(["plus", "big_plus", "plus", "plus", "plus"], state["steps"])
 
     def test_select_setting_multiplier_never_turns_back_on_a_misread(self):
         # A player 2026-10-21: 「一直点右边+1 和-5死循环了」.  Any value above
@@ -3788,6 +3795,47 @@ class PvpFreeCocktailGuardTest(unittest.TestCase):
             self.assertEqual(2, PVPTask._set_battle_count(task, 3))
         # MIN, +1, the same +1 once more (it may have been swallowed), then stop.
         self.assertLessEqual(len(presses), 3)
+
+    def test_min_not_taken_is_pressed_once_more(self):
+        # Leo 2026-11-05 「所有地方都要有補救方案」: a swallowed MIN left the
+        # old count (6) and stepping stopped there, short of the target (2).
+        from src.tasks.PVPTask import PVP_COUNT_MIN_POINT, PVP_COUNT_STEP_POINTS
+
+        task = object.__new__(PVPTask)
+        task.info_set = lambda *_a: None
+        logs = []
+        task.log_info = lambda message, **_k: logs.append(message)
+        task.sleep = lambda *_a: None
+        task._read_until = lambda read: read()
+        task.press_and_confirm = lambda _label, press, confirmed, **_k: (press(), confirmed())[1]
+        state = {"value": 6, "min_presses": 0}
+        by_point = {point: name for name, point in PVP_COUNT_STEP_POINTS.items()}
+
+        def click(x, y, after_sleep=0.0):
+            if (x, y) == PVP_COUNT_MIN_POINT:
+                state["min_presses"] += 1
+                if state["min_presses"] > 1:  # the first MIN is swallowed
+                    state["value"] = 1
+                return
+            state["value"] += {"big_plus": 10, "big_minus": -10, "plus": 1, "minus": -1}[by_point[(x, y)]]
+
+        task._click_reference = click
+        task._battle_count_value = lambda: state["value"]
+        self.assertEqual(2, PVPTask._set_battle_count(task, 2))
+        self.assertEqual(2, state["min_presses"])
+        self.assertTrue(any("再按一次 MIN" in message for message in logs))
+
+    def test_waits_look_once_even_with_no_time_left(self):
+        task = object.__new__(PVPTask)
+        task.info_set = lambda *_a: None
+        task.sleep = lambda *_a: None
+        task.capture_frame = lambda: None
+        reads = []
+        task._ocr_text = lambda *_a, **_k: reads.append(1) or "抽抽乐"
+        with patch("src.tasks.PVPTask.monotonic", side_effect=[100.0, 200.0, 200.0, 200.0]):
+            found, text = PVPTask._wait_for_ocr_patterns(task, ["抽抽乐"], timeout=0.0, name="x")
+        self.assertTrue(found)
+        self.assertEqual(1, len(reads))
 
 
 

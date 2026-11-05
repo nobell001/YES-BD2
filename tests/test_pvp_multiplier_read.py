@@ -227,7 +227,7 @@ class SettingValueReadTest(MultiplierReadTest):
         task = self._task(screen)
         task._read_until = lambda read: read()
         with mock.patch(
-            "src.tasks.PVPTask.steps_between", lambda _start, _target, _step: []
+            "src.tasks.PVPTask.multiplier_plan", lambda _target: (1, [])
         ):
             self.assertTrue(PVPTask._ensure_multiplier(task, 1))
         self.assertEqual(["gear", "MIN", "MIN", "MIN", "read 确认"], screen.presses)
@@ -246,7 +246,7 @@ class SettingValueReadTest(MultiplierReadTest):
         task = self._task(screen)
         task._read_until = lambda read: read()
         with mock.patch(
-            "src.tasks.PVPTask.steps_between", lambda _start, _target, _step: []
+            "src.tasks.PVPTask.multiplier_plan", lambda _target: (1, [])
         ):
             self.assertFalse(PVPTask._ensure_multiplier(task, 1))
         self.assertEqual(40, screen.main)

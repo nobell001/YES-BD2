@@ -151,7 +151,7 @@ class StageNoteTest(unittest.TestCase):
         ):
             task.info_set("当前阶段", "点击签到")
             task.info_set("状态", "公会签到失败：没有找到签到按钮。")
-        noted.assert_called_once_with(task)
+        noted.assert_called_once_with(task, "点击签到")
         self.assertEqual(2, stored.call_count)
 
 

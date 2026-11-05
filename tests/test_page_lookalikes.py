@@ -36,6 +36,10 @@ TRADE_STATES = {
     "field": ScreenState.SANDBOX,
     # Parts of the field's HUD on black: still named the field.
     "part_field": ScreenState.SANDBOX,
+    # "part_quick_switch_button": the bottom button strip alone on black
+    # (quick-switch button, no key cap) is UNKNOWN.  The button alone is no
+    # proof of the field: the restaurant's business screen shows it too and
+    # was taken for the field (3 player frames, screen library 2026-11-05).
     # The minimap's ≡ menu, open over the field.
     "field_nav_menu": ScreenState.SANDBOX,
     "merchant_menu": ScreenState.MERCHANT_DIALOG,

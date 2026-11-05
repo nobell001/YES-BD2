@@ -164,7 +164,6 @@ class ClaimPageMixin(TaskVisionMixin):
 
     def _claim_default_config(self) -> dict:
         return {
-            "启用": True,
             "日常 OCR 阈值": 0.2,
             "主页确认等待秒数": 10.0,
             "页面等待秒数": LOADING_MAX_SECONDS,
@@ -244,7 +243,7 @@ class ClaimPageMixin(TaskVisionMixin):
             self.sleep(interval)
 
     def _click_reference_box(self, box, after_sleep: float = 0.8) -> None:
-        self._click_reference(
+        self._click_reference(  # 不用确认：helper 本身，调用处检查
             round(box.x + box.width / 2), round(box.y + box.height / 2), after_sleep=after_sleep
         )
 
@@ -267,7 +266,7 @@ class ClaimPageMixin(TaskVisionMixin):
             return
         width = max(1, int(self.width))
         height = max(1, int(self.height))
-        self.operate_click(
+        self.operate_click(  # 不用确认：helper 本身，调用处检查
             max(0.0, min(1.0, center[0] / width)),
             max(0.0, min(1.0, center[1] / height)),
             after_sleep=after_sleep,
@@ -336,7 +335,7 @@ class ClaimPageMixin(TaskVisionMixin):
         # retry then read as unchanged.
         before = self._region_thumbs(self.capture_frame(), rois)
         for attempt in range(1, attempts + 1):
-            click()
+            click()  # 不用确认：这就是补点的 helper，画面没变再点
             end_at = monotonic() + max(0.0, wait)
             while True:
                 current = self._region_thumbs(self.capture_frame(), rois)
@@ -353,7 +352,9 @@ class ClaimPageMixin(TaskVisionMixin):
     def _wait_regions_settled(self, rois, last: list) -> None:
         """Two agreeing frames, so a button is not read mid-redraw."""
         end_at = monotonic() + CHANGE_SETTLE_SECONDS
-        while monotonic() < end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() < end_at:
+            looked = True
             self.sleep(0.3)
             current = self._region_thumbs(self.capture_frame(), rois)
             if not self._thumbs_changed(last, current):
@@ -398,7 +399,7 @@ class ClaimPageMixin(TaskVisionMixin):
         for attempt in range(1, ENTRY_CLICK_ATTEMPTS + 1):
             self.info_set("当前阶段", f"打开{label}（第{attempt}次点击）")
             point = entry_point() if callable(entry_point) else entry_point
-            self._click_reference(*point, after_sleep=0.8)
+            self._click_reference(*point, after_sleep=0.8)  # 不用确认：循环里没见标题、还在主页就再点
             if self._wait_for_title(label, title_keywords, timeout=ENTRY_RETRY_SECONDS, quiet=True):
                 return True
             # The game sometimes swallows a click on a confirmed home screen;
@@ -430,7 +431,7 @@ class ClaimPageMixin(TaskVisionMixin):
     ) -> bool:
         """Click a page tab until its title shows (a re-click on the same tab is harmless)."""
         for _attempt in range(TAB_CLICK_ATTEMPTS):
-            self._click_reference(*point, after_sleep=after_sleep)
+            self._click_reference(*point, after_sleep=after_sleep)  # 不用确认：循环里标题没出来再点
             if self._wait_for_title(label, title_keywords, timeout=TAB_RETRY_SECONDS, quiet=True):
                 return True
             self.log_info(f"{label}：分页点击后标题未出现，重试点击。")
@@ -589,7 +590,9 @@ class ClaimPageMixin(TaskVisionMixin):
         handled = 0
         tapped_brightness = None
         calm_since = monotonic()
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             frame = self.capture_frame()
             boxes = self._roi_boxes(frame, None, f"{label}结果")
             text = self._boxes_text(boxes)
@@ -648,7 +651,7 @@ class ClaimPageMixin(TaskVisionMixin):
                     # Unrecognised overlay: tap the empty top bar to close it.
                     self.log_info(f"{label}：出现未识别弹窗，点击空白处关闭。")
                     tapped_brightness = brightness
-                    self._click_reference(*OVERLAY_TAP_POINT, after_sleep=0.8)
+                    self._click_reference(*OVERLAY_TAP_POINT, after_sleep=0.8)  # 不用确认：循环里弹窗还在再点，三次不行按 Esc
                     blind_taps += 1
                     handled += 1
                     unknown_frames = 0
@@ -673,7 +676,7 @@ class ClaimPageMixin(TaskVisionMixin):
     def _leave_to_home(self, label: str, title_keywords: tuple[str, ...]) -> bool:
         for attempt in range(1, 4):
             self.info_set("当前阶段", f"{label}：返回主页")
-            self._click_reference(*BACK_BUTTON_POINT, after_sleep=1.0)
+            self._click_reference(*BACK_BUTTON_POINT, after_sleep=1.0)  # 不用确认：循环三次，没回主页再按
             if self._wait_for_home_confirmation(f"{label}返回主页", timeout=5.0):
                 return True
             if not self._title_visible(self.capture_frame(), title_keywords, label):

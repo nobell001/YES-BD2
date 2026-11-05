@@ -222,10 +222,10 @@ class RunWatchedTest(unittest.TestCase):
         from src.tasks.MapTradeTask import MapTradeTask
         from src.tasks.PVPTask import PVPTask
 
-        for cls in (EventBattleTask, PVPTask):
+        # Leo 2026-11-05: the gear tasks and 跑商 run once more too (tiny cost).
+        for cls in (EventBattleTask, PVPTask, DailyRefineTask, JunkGearTask, CraftGearTask,
+                    MapTradeTask):
             self.assertTrue(cls.frozen_retry, cls.__name__)
-        for cls in (DailyRefineTask, JunkGearTask, CraftGearTask, MapTradeTask):
-            self.assertFalse(cls.frozen_retry, cls.__name__)
 
 
 class StuckStepAndEscapeTest(unittest.TestCase):
@@ -399,3 +399,62 @@ class ChangedByPressTest(unittest.TestCase):
             task.operate(lambda: None)
             task.capture_frame()
         self.assertTrue(np.array_equal(scene(self.PAGE), scene_at_press(task)))
+
+
+class PressedButStillTest(unittest.TestCase):
+    """Leo 2026-11-05 「一直在按、但一直沒到下一個畫面也算卡住」."""
+
+    def setUp(self):
+        from src.utils.frozen_screen import PRESSED_STILL_SECONDS
+
+        self.limit = PRESSED_STILL_SECONDS
+
+    def test_pressing_at_a_screen_that_never_changes_is_stuck(self):
+        watch = FrozenWatch()
+        frame = _screen()
+        now = 0.0
+        with self.assertRaises(FrozenScreen) as fired:
+            while now <= self.limit + 5:
+                watch.look(frame, now)
+                if int(now) % 5 == 4:
+                    watch.pressed((10, 10))
+                now += 1.0
+        self.assertIn("点了", str(fired.exception))
+        self.assertGreaterEqual(now, self.limit)
+
+    def test_presses_that_change_the_screen_are_not_stuck(self):
+        watch = FrozenWatch()
+        for second in range(int(self.limit) * 3):
+            frame = _screen(60 + (second // 5) * 3)  # each press moves to another picture
+            watch.look(frame, float(second))
+            if second % 5 == 4:
+                watch.pressed((10, 10))
+
+    def test_recognising_the_target_starts_over(self):
+        watch = FrozenWatch()
+        frame = _screen()
+        for second in range(int(self.limit) * 2):
+            watch.look(frame, float(second))
+            if second % 5 == 4:
+                watch.pressed((10, 10))
+            if second % 20 == 19:
+                watch.progress()  # the task read what it waited for
+
+    def test_a_black_loading_screen_is_not_stuck_while_pressing(self):
+        watch = FrozenWatch()
+        black = np.full((1080, 1920, 3), 8, np.uint8)  # all-zero is a blank test frame
+        for second in range(int(self.limit) + 5):
+            watch.look(black, float(second))
+            if second % 5 == 4:
+                watch.pressed()
+
+    def test_two_presses_are_not_enough(self):
+        # Only the plain still rule fires (10 s after the last press).
+        watch = FrozenWatch()
+        frame = _screen()
+        with self.assertRaises(FrozenScreen) as fired:
+            for second in range(int(self.limit) + 5):
+                watch.look(frame, float(second))
+                if second in (3, 8):
+                    watch.pressed((10, 10))
+        self.assertNotIn("点了", str(fired.exception))

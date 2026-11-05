@@ -335,8 +335,9 @@ def plain_refine_box(boxes: list):
 
 class DailyRefineTask(_ClaimTaskBase):
     claim_log_name = "refine"
-    # Refining, crafting and dismantling (the subclasses) are not run twice.
-    frozen_retry = False
+    # Leo 2026-11-05 「精煉 製作 爛裝跑商 救贖之塔 這些你就重作沒關係 資源量微乎其微」:
+    # a failed or frozen run goes home and runs once more, like the others.
+    frozen_retry = True
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

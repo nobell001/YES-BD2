@@ -181,7 +181,8 @@ class MapTradeConfigTest(unittest.TestCase):
         self.assertLess(keys.index("买"), keys.index("卖"))
         self.assertNotIn("执行跑商", trade.default_config)
         self.assertNotIn("执行地图采集", trade.default_config)
-        self.assertIn("执行地图采集", collection.default_config)
+        self.assertNotIn("执行地图采集", collection.default_config)  # no off switch (2026-11-05)
+        self.assertNotIn("启用", collection.default_config)
         self.assertNotIn("买", collection.default_config)
         self.assertNotIn("卖", collection.default_config)
         self.assertNotIn("制作料理", collection.default_config)
@@ -254,8 +255,9 @@ class MapTradeConfigTest(unittest.TestCase):
                 _migrate_collection_config(legacy)
 
             migrated = json.loads(target.read_text(encoding="utf-8"))
-            self.assertFalse(migrated["启用"])
-            self.assertFalse(migrated["执行地图采集"])
+            # The old off switches are not carried over (Leo 2026-11-05).
+            self.assertNotIn("启用", migrated)
+            self.assertNotIn("执行地图采集", migrated)
             self.assertEqual(0.83, migrated[MAP_VISION_THRESHOLD_KEY])
             self.assertEqual(0.31, migrated[MAP_OCR_THRESHOLD_KEY])
             self.assertEqual(61.0, migrated["加载页面等待秒数"])

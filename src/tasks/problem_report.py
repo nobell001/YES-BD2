@@ -42,6 +42,27 @@ KEEP_DAYS = 7
 RING_SIZE = 600
 # Lines of a record (repeats folded into one).
 LOG_LINES = 6
+# A problem keeps more: the lines before the last one are often why (Leo
+# 2026-11-05 「常常用戶log發過來也找不到原因」: 第18章 kept only the last
+# fallback's line, not why the 艾琳 step before it failed).
+PROBLEM_LOG_LINES = 12
+# What each check read (its info_set: 「卡带选择页 OCR」, 「梦幻广场 0.612」),
+# the last value of each, from this long before the problem.
+READ_LINES = 12
+READ_WINDOW = 120.0
+READ_CHARS = 100
+# Not readings: where the run is, already shown as 停在.
+_NOT_READS = frozenset({"状态", "当前阶段"})
+# Readings kept in memory, all threads (oldest dropped).
+READS_KEPT = 400
+# The whole run's log, kept beside its record as a text file (Leo
+# 2026-11-05 「LOG應該要有更好的方式可以看完整的」): the summary keeps a few
+# lines, the file every line of the run (the last this many).
+FULL_LOG_LINES = 20000
+# The steps (当前阶段) the run went through, kept in the record: the trail
+# of how it got where it stopped, not just the last step.
+STEP_LINES = 15
+STEPS_KEPT = 400
 # A line of the report: long enough for a run that skipped many cards to
 # keep each reason (player 2026-10-19: cut off after 120 characters).
 NOTE_CHARS = 320
@@ -82,6 +103,8 @@ _depth = threading.local()
 _root_override: str | None = None
 # (time, small frame) of the running record, oldest first.
 _before: deque = deque(maxlen=BEFORE_FRAMES)
+# (thread, task, key) -> (time, value): the last value each check read.
+_reads: dict = {}
 
 
 # ------------------------------------------------------------------ logs
@@ -99,12 +122,29 @@ class _Ring(logging.Handler):
             message = record.getMessage()
         except Exception:
             return
+        cleaned = _clean(message)
+        # The whole run keeps every line, the diagnostics too (they are the
+        # evidence); readings come from note_read as 「读到」 lines instead.
+        if not cleaned.startswith(INFO_SET_PREFIX):
+            _whole_add(record.created, record.levelno, message, record.thread)
         # ok-script logs every info_set as a line; a run going home after a
         # failure wrote enough of them that the summary kept only those and
         # lost the failure itself (YES-BD2 issue #5, 2026-10-09).
-        if _clean(message).startswith((INFO_SET_PREFIX, DIAGNOSTIC_PREFIX)):
+        if cleaned.startswith((INFO_SET_PREFIX, DIAGNOSTIC_PREFIX)):
             return
         self.lines.append((record.created, record.levelno, record.thread, message))
+
+
+def _whole_add(at: float, level: int, message: str, thread: int | None = None) -> None:
+    """One line of the run's full log (only lines of the run's own thread)."""
+    current = _current
+    if current is None:
+        return
+    if current.get("thread") != (threading.get_ident() if thread is None else thread):
+        return
+    whole = current.get("whole")
+    if whole is not None:
+        whole.append((at, level, message))
 
 
 _ring: _Ring | None = None
@@ -139,7 +179,9 @@ def _clean(message: str) -> str:
 
 
 # A user name can have spaces; up to the next folder sign or quote.
-_USER_FOLDER = re.compile(r"(?i)([a-z]:[\\/]+users[\\/]+)[^\\/\"'\n]+")
+# The drive letter is optional: _clean can cut 'C:' off a line that starts
+# with the path (it reads as a 'logger:' prefix), and the name must still go.
+_USER_FOLDER = re.compile(r"(?i)((?:\b[a-z]:)?[\\/]+users[\\/]+)[^\\/\"'\n]+")
 
 
 def scrub(text: str) -> str:
@@ -189,6 +231,52 @@ def recent_lines(since: float | None, thread: int | None = None) -> list[tuple[f
         if text:
             found.append((at, level, text))
     return found
+
+
+# ------------------------------------------------------------- readings
+
+
+def note_read(task, key, value, now: float | None = None) -> None:
+    """A task's info_set: what one check read, kept for the 问题摘要.
+
+    Every page check writes what it saw (the OCR text, a picture's score) to
+    the task's info; the summary showed none of it, so a player's record
+    said where it stopped but not what each way of checking read.
+    """
+    name = str(key or "")
+    if not name or name in _NOT_READS or _current is None:
+        return
+    try:
+        text = plain(scrub(str(value)))
+    except Exception:
+        return
+    text = " ".join(text.split())[:READ_CHARS]
+    if not text or text == "-":
+        return
+    now = time.time() if now is None else now
+    where = (threading.get_ident(), str(getattr(task, "name", "") or ""), name)
+    with _lock:
+        last = _reads.pop(where, None)  # re-inserted last: the oldest go first
+        _reads[where] = (now, text)
+        while len(_reads) > READS_KEPT:
+            _reads.pop(next(iter(_reads)))
+    # Every new value in the full log (a repeat of the same value is not).
+    if last is None or last[1] != text:
+        _whole_add(now, logging.INFO, f"读到 {name}：{text}")
+
+
+def _readings(current: dict, task_name: str, until: float) -> list[dict]:
+    """The last value of each check this task read just before ``until``, oldest first."""
+    since = max(float(current.get("started") or 0), until - READ_WINDOW)
+    thread = current.get("thread")
+    with _lock:
+        found = [
+            {"at": at, "key": key, "text": text}
+            for (ident, task, key), (at, text) in _reads.items()
+            if ident == thread and task == task_name and since <= at <= until + 0.5
+        ]
+    found.sort(key=lambda entry: entry["at"])
+    return found[-READ_LINES:]
 
 
 # ------------------------------------------------------------- the screen
@@ -376,6 +464,9 @@ def note_give_up(task, frame, now: float | None = None) -> None:
             "task": str(getattr(task, "name", "") or ""),
             "frame": kept,
             "before": [(at, small) for at, small in _before if at <= now - BEFORE_SKIP],
+            "logs": _logs(current, now, PROBLEM_LOG_LINES),
+            "reads": _readings(current, str(getattr(task, "name", "") or ""), now),
+            "steps": _steps(current, now),
             # Not yet followed by the trip home (note_leaving_step).
             "recovered": False,
         }
@@ -416,7 +507,9 @@ def note_skip(task, frame, now: float | None = None) -> None:
             "task": str(getattr(task, "name", "") or ""),
             "frame": kept,
             "before": [(at, small) for at, small in _before if at <= now - BEFORE_SKIP],
-            "logs": _logs(current, now),
+            "logs": _logs(current, now, PROBLEM_LOG_LINES),
+            "reads": _readings(current, str(getattr(task, "name", "") or ""), now),
+            "steps": _steps(current, now),
         }
 
 
@@ -455,14 +548,31 @@ def note_leaving_step(task, frame, now: float | None = None) -> None:
             kept["recovered"] = True
 
 
-def note_stage(task) -> None:
-    """The task set a new 当前阶段: a trip home before it is not where it stops."""
+def note_stage(task, value=None, now: float | None = None) -> None:
+    """The task set a new 当前阶段: a trip home before it is not where it stops.
+
+    The step also goes on the run's trail (``steps``), so a record shows how
+    the run got where it stopped, not only its last step.
+    """
     if _current is None:
         return
+    now = time.time() if now is None else now
+    name = str(getattr(task, "name", "") or "")
+    step = ""
+    if value is not None:
+        step = plain(scrub(str(value))).strip()
+        if name and step.startswith(name):
+            step = step[len(name):].lstrip("：: ")
+        step = " ".join(step.split()).rstrip("。.")[:READ_CHARS]
     with _lock:
         current = _current
         if current is None or current.get("thread") != threading.get_ident():
             return
+        steps = current.get("steps")
+        if step and step != "-" and steps is not None:
+            if not steps or steps[-1]["task"] != name or steps[-1]["text"] != step:
+                steps.append({"at": now, "task": name, "text": step})
+                _whole_add(now, logging.INFO, f"步骤 {name}：{step}")
         kept = current.get("give_up")
         if (
             kept is not None
@@ -533,11 +643,16 @@ def _prune() -> None:
         shutil.rmtree(old, ignore_errors=True)
 
 
-def _write(record: dict) -> str | None:
+def _write(record: dict, whole=()) -> str | None:
     try:
         folder = root() / _day_key(record["finished"])
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / f"{_stamp(record['finished'])}.json"
+        text = full_log_text(whole) if whole else ""
+        if text:
+            log = path.with_name(f"{path.stem}-log.txt")
+            log.write_text(text + "\n", encoding="utf-8")
+            record["log_file"] = log.name
         path.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
         _prune()
         return str(path)
@@ -559,7 +674,7 @@ def _repeat_key(record: dict) -> tuple:
     return (record.get("label"), record.get("ended"), problem.get("task"), problem.get("stage"))
 
 
-def _save(record: dict) -> str | None:
+def _save(record: dict, whole=()) -> str | None:
     """Write the record, or fold it into the last one when it is a quick repeat."""
     with _lock:
         last = dict(_last_written)
@@ -584,7 +699,7 @@ def _save(record: dict) -> str | None:
             return path
         except (OSError, ValueError):
             pass  # the earlier file is gone: write a new one
-    saved = _write(record)
+    saved = _write(record, whole)
     with _lock:
         _last_written.clear()
         if saved:
@@ -637,6 +752,8 @@ def records(limit: int = 60) -> list[dict]:
         frame = problem.get("frame")
         if frame:
             record["frame_path"] = str(path.parent / frame)
+        if record.get("log_file"):
+            record["log_path"] = str(path.parent / record["log_file"])
         before = [
             {"at": item.get("at"), "path": str(path.parent / item["file"])}
             for item in problem.get("before") or []
@@ -721,6 +838,10 @@ def begin(task) -> None:
             "started": time.time(),
             "thread": threading.get_ident(),
             "problem": None,
+            # Every log line of the run (the ring keeps only the last few hundred).
+            "whole": deque(maxlen=FULL_LOG_LINES),
+            # Every 当前阶段 of the run, oldest first.
+            "steps": deque(maxlen=STEPS_KEPT),
         }
 
 
@@ -793,7 +914,9 @@ def _capture(task, how: str, note: str, current: dict) -> dict:
         "stage": _stage(task),
         "note": plain(scrub(note))[:NOTE_CHARS],
         "env": environment(executor),
-        "logs": (give_up or {}).get("logs") or _logs(current, now),
+        "logs": (give_up or {}).get("logs") or _logs(current, now, PROBLEM_LOG_LINES),
+        "reads": (give_up or {}).get("reads") or _readings(current, name, now),
+        "steps": (give_up or {}).get("steps") or _steps(current, now),
     }
     frame = give_up["frame"] if give_up is not None else _last_frame(executor)
     if frame is not None:
@@ -818,12 +941,19 @@ def _save_before(now: float, frames: list | None = None) -> list[dict]:
     return saved
 
 
-def _logs(current: dict, until: float) -> list[dict]:
+def _steps(current: dict, until: float) -> list[dict]:
+    """The last steps of the run up to ``until``, oldest first."""
+    with _lock:
+        found = [dict(step) for step in current.get("steps") or () if step["at"] <= until + 0.5]
+    return found[-STEP_LINES:]
+
+
+def _logs(current: dict, until: float, count: int = LOG_LINES) -> list[dict]:
     lines = [
         line for line in recent_lines(current.get("started"), current.get("thread"))
         if line[0] <= until + 0.5
     ]
-    folded = fold(lines)[-LOG_LINES:]
+    folded = fold(lines)[-count:]
     return [
         {"at": entry["at"], "level": entry["level"], "text": entry["text"][:NOTE_CHARS],
          "count": entry["count"]}
@@ -858,6 +988,7 @@ def _end(task, current: dict, ended: str | None, error: str, ok: bool) -> dict:
         "finished": now,
         "problem": current.get("problem"),
     }
+    whole = list(current.get("whole") or ())
     report = None
     if getattr(task, "child_tasks", None):
         try:
@@ -899,8 +1030,20 @@ def _end(task, current: dict, ended: str | None, error: str, ok: bool) -> dict:
         # (「没失败但觉得不对劲」), without a frame.
         record["env"] = environment(getattr(task, "executor", None))
         record["logs"] = _logs(current, now)
-    _save(record)
+    _save(record, whole)
     return record
+
+
+def full_log_text(lines) -> str:
+    """The run's log lines as text, one per line, with no account or user name."""
+    out = []
+    for at, level, message in lines:
+        text = plain(_clean(scrub(message)))
+        if not text:
+            continue
+        mark = "!" if level >= logging.WARNING else " "
+        out.append(f"{datetime.fromtimestamp(at):%H:%M:%S}{mark} {text}")
+    return "\n".join(out)
 
 
 def _problem_row(rows: list[dict]) -> dict | None:
@@ -916,6 +1059,16 @@ def _problem_row(rows: list[dict]) -> dict | None:
 def env_of(record: dict) -> dict:
     problem = record.get("problem") or {}
     return problem.get("env") or record.get("env") or {}
+
+
+def reads_of(record: dict) -> list[dict]:
+    """What each check read just before the problem (none for a run that went fine)."""
+    return list((record.get("problem") or {}).get("reads") or [])
+
+
+def steps_of(record: dict) -> list[dict]:
+    """The steps the run went through before the problem, oldest first."""
+    return list((record.get("problem") or {}).get("steps") or [])
 
 
 def logs_of(record: dict) -> list[dict]:

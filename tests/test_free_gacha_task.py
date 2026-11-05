@@ -375,7 +375,7 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
             FreeGachaTask._wait_loading_or_home_confirmation(task, "返回主页")
         )
 
-    def test_home_confirmation_requires_keyword_votes_brightness_and_gacha_ocr(self):
+    def test_home_confirmation_needs_enough_cues_and_brightness(self):
         task = object.__new__(FreeGachaTask)
         task.config = {"主页压暗阈值": 185.0}
         task.info_set = lambda *_args, **_kwargs: None
@@ -401,13 +401,16 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
         self.assertEqual(255.0, p95_brightness)
         self.assertEqual("抽抽乐", text)
 
+        # 抽抽乐 plus one left word still counts (no other page reads 抽抽乐).
         left_text["value"] = "我的小屋"
-        self.assertFalse(task._home_confirmation_signals(bright_frame, "返回主页")[0])
+        self.assertTrue(task._home_confirmation_signals(bright_frame, "返回主页")[0])
 
         left_text["value"] = "我的小屋 格鲁TALK 街机游戏"
         self.assertFalse(task._home_confirmation_signals(dimmed_frame, "返回主页")[0])
 
         gacha_text["value"] = ""
+        self.assertTrue(task._home_confirmation_signals(bright_frame, "返回主页")[0])
+        left_text["value"] = "我的小屋 格鲁TALK"
         self.assertFalse(task._home_confirmation_signals(bright_frame, "返回主页")[0])
         self.assertIsNotNone(vision.last_relative_roi)
 

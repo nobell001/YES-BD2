@@ -400,6 +400,146 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class ShortAnswerTest(unittest.TestCase):
+    """Player v0.2.31 2026-11-05: 提尔「澄心无邪兔女郎」 question 1 answers
+    「山莓」/「葡萄。」; 「山莓」 (two characters, no ending) was not taken for
+    a button, so the answer screen was never seen and the talk ran 120 s."""
+
+    TYR = ("澄心无邪兔女郎", "提尔")
+
+    def test_bank_short_answers_of_the_costume(self):
+        known = answers.short_answers(answers.find_costume(*self.TYR))
+        self.assertIn("山莓", known)
+        self.assertIn("葡萄", known)  # the 繁中 form has no 「。」
+        self.assertNotIn("我也会", known)
+        self.assertEqual(answers.short_answers(None), frozenset())
+
+    def test_short_bank_answer_centred_is_a_choice(self):
+        from src.tasks.AffinityTalkTask import choice_line, stacked_choices
+
+        known = answers.short_answers(answers.find_costume(*self.TYR))
+        lines = [box("山莓", 935, 470, 50, 30), box("葡萄。", 925, 576, 70, 30)]
+        self.assertFalse(choice_line(lines[0]))  # before: not a button
+        found = stacked_choices([b for b in lines if choice_line(b, known)])
+        self.assertEqual([b.name for b in found], ["山莓", "葡萄。"])
+        pick = answers.pick_answer([b.name for b in found], answers.find_costume(*self.TYR))
+        self.assertEqual((pick.index, pick.known), (0, True))
+
+    def test_stray_glyph_still_not_a_choice(self):
+        from src.tasks.AffinityTalkTask import choice_line
+
+        known = answers.short_answers(answers.find_costume(*self.TYR))
+        self.assertFalse(choice_line(box("漆", 950, 300, 24, 24), known))
+        self.assertFalse(choice_line(box("山莓", 1500, 300, 50, 24), known))  # off the column
+
+    def test_every_bank_answer_is_read_and_picked(self):
+        """Every question of every costume, 简中 and 繁中: both buttons are
+        taken for choices and the 100 answer is pressed.  A refreshed bank with
+        an answer the reading would miss fails here, not on a player's PC."""
+        import json
+
+        from src.tasks.AffinityTalkTask import choice_line, stacked_choices
+
+        data = json.loads(answers.BANK_FILE.read_text(encoding="utf-8"))
+        misses = []
+        for entry in data["costumes"]:
+            costume = answers.find_costume(entry["costume_zh_cn"], entry["character_zh_cn"])
+            known = answers.short_answers(costume)
+            for question in entry["questions"]:
+                for lang in ("cn", "tw"):
+                    texts = [a["text"].get(lang, "") for a in question["answers"]]
+                    exps = [a["exp"] for a in question["answers"]]
+                    if not all(texts):
+                        continue
+                    lines = [
+                        box(t, 960 - 15 * len(t), 470 + 106 * i, 30 * len(t), 30)
+                        for i, t in enumerate(texts)
+                    ]
+                    found = stacked_choices([b for b in lines if choice_line(b, known)])
+                    # The question's line is on the screen with its answers.
+                    prompt = question["prompt"].get(lang, "")
+                    pick = answers.pick_answer([b.name for b in found], costume, "谈心 " + prompt)
+                    if len(found) != len(texts) or exps[pick.index] != max(exps):
+                        misses.append(f"{entry['costume_zh_cn']} 第{question['id']}题 {lang} {texts}")
+        self.assertEqual(misses, [])
+
+    def test_swapped_answers_go_by_the_question_on_screen(self):
+        # 暗黑圣女 6 「有捉弄过朋友吗」 有=100; 7 「愿望真的实现了」 没有=100.
+        saint = answers.find_costume("暗黑圣女", "")
+        q6 = answers.pick_answer(["有。", "没有。"], saint, "店长有捉弄过朋友吗？")
+        q7 = answers.pick_answer(["没有。", "有。"], saint, "店长，你有没有过那种虔诚祈祷之后，愿望真的实现了的经历？")
+        self.assertEqual((q6.index, q7.index), (0, 0))
+
+    def talk(self, lines, keys_answer=True):
+        """_talk_once on a fake answer screen showing ``lines`` until 1/2 or a
+        click lands; then the panel.  A fake clock moves with every sleep."""
+        from src.tasks import AffinityTalkTask as module
+
+        task = KeyboardFirstTest().task()
+        clock = {"t": 0.0}
+        state = {"answered": False}
+
+        def sleep(seconds):
+            clock["t"] += max(seconds, 0.1)
+
+        def send(code, seconds):
+            task.sent.append(code)
+            if keys_answer and code in (0x31, 0x32):
+                state["answered"] = True
+            return True
+
+        def click(x, y, after_sleep=0.0):
+            task.clicks.append((x, y))
+            if 400 <= y <= 640:
+                state["answered"] = True
+            sleep(after_sleep)
+
+        task.sleep = sleep
+        task._send_game_key = send
+        task._click_reference = click
+        task._press_talk = lambda card: True
+        task.capture_frame = lambda: None
+        task._roi_boxes = lambda frame, roi, label: []
+        task._boxes_text = lambda boxes: ""
+        task._close_reward = lambda frame, boxes, text: False
+        task._read_detail = lambda *a, **k: object() if state["answered"] else None
+        task._region_thumbs = lambda frame, regions: "same"
+        task._thumbs_changed = lambda a, b: False
+        task._reference_boxes = lambda frame, roi, label: [] if state["answered"] else list(lines)
+        task._save_flow_diagnostic = lambda name: None
+        task.tap_escape = lambda after_sleep=0.0: task.sent.append(0x1B)
+        task._note_why = task.logs.append
+        card = SimpleNamespace(costume=self.TYR[0], character=self.TYR[1])
+        with unittest.mock.patch.object(module, "monotonic", lambda: clock["t"]):
+            done = task._talk_once(card, first_answer=False)
+        return done, task, clock["t"]
+
+    def test_tyr_question_one_is_answered(self):
+        done, task, spent = self.talk([box("山莓", 935, 470, 50, 30), box("葡萄。", 925, 576, 70, 30)])
+        self.assertTrue(done)
+        self.assertEqual(task.sent, [0x31])  # 「山莓」 is the 100 answer: key 1
+        self.assertLess(spent, 5)
+
+    def test_lone_read_line_is_pressed_when_the_key_does_nothing(self):
+        # 「山莓」 missed (no bank entry) and key 1 not taken: 「葡萄。」 is clicked.
+        from src.tasks import AffinityTalkTask as module
+
+        lines = [box("葡萄。", 925, 576, 70, 30)]
+        with unittest.mock.patch.object(module.answers, "find_costume", lambda *a: None):
+            done, task, spent = self.talk(lines, keys_answer=False)
+        self.assertTrue(done)
+        self.assertIn((960, 591), task.clicks)
+        self.assertLess(spent, 60)
+
+    def test_unread_answer_screen_gets_the_first_answer_key(self):
+        # A costume souseha does not have yet, answers too short to read.
+        done, task, spent = self.talk([box("冰", 950, 470, 24, 30), box("火", 950, 576, 24, 30)])
+        self.assertTrue(done)
+        self.assertIn(0x31, task.sent)
+        self.assertLess(spent, 60)
+        self.assertTrue(any("没认出选项" in str(line) for line in task.logs))
+
+
 class NotOwnedTest(unittest.TestCase):
     """YES-BD2 #58: 「白雷」 on the list, not owned; pressing it opened no
     panel and the whole task was reported failed."""
@@ -444,6 +584,24 @@ class NotOwnedTest(unittest.TestCase):
         task = self.task({"白雷": "no_panel", "回归偶像": "no_panel"})
         self.assertFalse(task.run_claim())
         self.assertIn("可能还没拥有", task.whys[0])
+
+    def test_unfinished_talk_is_tried_once_more(self):
+        # Player v0.2.31 11-05: one stuck talk failed the whole 亲密度谈心.
+        from src.tasks.AffinityTalkTask import TALK_UNFINISHED
+
+        task = self.task({"澄心无邪兔女郎": None})
+        tries = [TALK_UNFINISHED, "talked"]
+        task._daily_talk = lambda card, allow_locked: tries.pop(0)
+        self.assertTrue(task.run_claim())
+        self.assertEqual((tries, task.whys), ([], []))
+        self.assertTrue(any("再试一次" in line for line in task.logs))
+
+    def test_talk_unfinished_twice_still_fails_with_why(self):
+        from src.tasks.AffinityTalkTask import TALK_UNFINISHED
+
+        task = self.task({"澄心无邪兔女郎": TALK_UNFINISHED})
+        self.assertFalse(task.run_claim())
+        self.assertIn("澄心无邪兔女郎：谈心没完成", task.whys[0])
 
     def test_open_card_back_on_the_list_is_no_panel(self):
         from src.tasks.AffinityTalkTask import NO_PANEL, AffinityTalkTask

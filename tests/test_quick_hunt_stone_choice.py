@@ -96,7 +96,7 @@ class FormTest(unittest.TestCase):
         self.assertEqual("暗", task.config[QUICK_HUNT_STONE_KEY])
 
     def test_row_sits_under_the_rice_rows(self):
-        keys = _task().config_type["启用"]["sub_configs"][True]
+        keys = list(_task().default_config)
         self.assertEqual(keys.index("都双倍时") + 1, keys.index(QUICK_HUNT_STONE_KEY))
 
 

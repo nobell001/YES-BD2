@@ -37,7 +37,6 @@ class QuickHuntTask(
     include_quick_hunt_config = True
     ocr_threshold_key = "快速狩猎 OCR 阈值"
     status_keys = [
-        "启用",
         "状态",
         "当前任务",
         "快速狩猎入口",
@@ -125,12 +124,9 @@ class QuickHuntTask(
         ocr_index = visible_keys.index("快速狩猎像素相似度阈值") + 1
         visible_keys.insert(ocr_index, "快速狩猎 OCR 阈值")
         visible_keys.extend(("主页压暗阈值", "主页确认等待秒数"))
-        self.default_config["启用"] = True
         self.default_config[QUICK_HUNT_NOTICE_KEY] = False
         self.default_config[STONE_NOTICE_KEY] = False
-        self.config_description["启用"] = "是否执行独立的快速狩猎任务。"
-        self.config_type["启用"] = {"sub_configs": {True: visible_keys}}
-        ordered_keys = ("启用", *visible_keys)
+        ordered_keys = tuple(visible_keys)
         self.default_config = {
             **{
                 key: self.default_config[key]
@@ -169,11 +165,6 @@ class QuickHuntTask(
         test_action = getattr(self, "_quick_hunt_test_action", None)
         if test_action:
             return self._run_quick_hunt_test(test_action)
-
-        if not bool(self.config.get("启用", True)):
-            self.info_set("状态", "快速狩猎已禁用。")
-            self.log_info("快速狩猎已禁用。")
-            return True
 
         self.info_set("状态", "快速狩猎启动。")
         success = self.run_quick_hunt()

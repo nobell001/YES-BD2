@@ -98,3 +98,62 @@ def steps_between(start: int, target: int, big_step: int) -> list[str]:
         presses.append(step)
         current += step_moves(step, big_step)
     return presses
+
+
+# The 倍率 setting dialog's buttons, pressed in the game (2K clone, 2026-11-05,
+# every value 1~40 walked by +5 / -5): +1 / -1 move by one and stop at 40 / 1,
+# -5 moves down five and stops at 1, +5 moves up five and stops at 40 — except
+# from 1, where +5 gives 5, not 6.  Counting 1 +5 as 6 left every target from
+# 6 to 39 one short (a player v0.2.31 2026-11-05: 10 wanted, 9倍 set).
+MULTIPLIER_MIN_STEPS = ("big_plus", "plus")
+MULTIPLIER_MAX_STEPS = ("big_minus", "minus")
+
+
+def multiplier_after(value: int, step: str) -> int:
+    """The setting dialog's value after one press of ``step`` on ``value``."""
+    low, high = MULTIPLIER_RANGE
+    if step == "big_plus":
+        return 5 if value == low else min(high, value + 5)
+    if step == "big_minus":
+        return max(low, value - 5)
+    if step == "plus":
+        return min(high, value + 1)
+    if step == "minus":
+        return max(low, value - 1)
+    raise ValueError(step)
+
+
+def multiplier_presses(start: int, target: int) -> list[str]:
+    """Fewest presses from ``start`` to ``target`` in the setting dialog.
+
+    One way only (up with +5 / +1, down with -5 / -1) and never past the
+    target, so a value read on the far side of the target is a misread, not
+    an overshoot to step back from (a player 2026-10-21: 「一直点右边+1 和-5
+    死循环了」)."""
+    if start == target:
+        return []
+    upward = target > start
+    steps = MULTIPLIER_MIN_STEPS if upward else MULTIPLIER_MAX_STEPS
+    paths = {start: []}
+    frontier = [start]
+    while frontier and target not in paths:
+        reached = []
+        for value in frontier:
+            for step in steps:
+                after = multiplier_after(value, step)
+                between = value < after <= target if upward else target <= after < value
+                if between and after not in paths:
+                    paths[after] = paths[value] + [step]
+                    reached.append(after)
+        frontier = reached
+    return paths.get(target, [])
+
+
+def multiplier_plan(target: int) -> tuple[int, list[str]]:
+    """Where to start (MIN 1 or MAX 40) and the presses from there: the
+    shorter of the two, MIN on a tie."""
+    low, high = MULTIPLIER_RANGE
+    up, down = multiplier_presses(low, target), multiplier_presses(high, target)
+    if target == high or len(down) < len(up):
+        return high, down
+    return low, up

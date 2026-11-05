@@ -90,7 +90,7 @@ class DailyTaskHelperTest(unittest.TestCase):
         self.assertNotIn("执行公会签到", task.default_config)
         self.assertNotIn("执行快速狩猎", task.default_config)
         self.assertNotIn("快速狩猎圣石属性", task.default_config)
-        self.assertTrue(task.default_config["启用"])
+        self.assertNotIn("启用", task.default_config)  # Leo 2026-11-05 「直接移除他」
         self.assertIn("快速狩猎 OCR 阈值", task.default_config)
         self.assertNotIn("快速狩猎章节图", task.default_config)
 
@@ -100,9 +100,8 @@ class DailyTaskHelperTest(unittest.TestCase):
             "快速狩猎圣石测试",
             "快速狩猎完整测试",
         )
-        visible_keys = task.config_type["启用"]["sub_configs"][True]
+        visible_keys = list(task.default_config)
         for key in (
-            "识别后等待秒数",
             "金币双倍时",
             "史莱姆双倍时",
             "都双倍时",
@@ -191,7 +190,7 @@ class DailyTaskHelperTest(unittest.TestCase):
         )
 
         self.assertTrue(modified)
-        self.assertTrue(hydrated_config["启用"])
+        self.assertNotIn("启用", hydrated_config)
         self.assertNotIn("快速狩猎章节图", hydrated_config)
         # A saved switch from before 2026-10-04 is dropped, not obeyed.
         self.assertNotIn("快速狩猎狩猎场", hydrated_config)
@@ -1429,7 +1428,7 @@ class DailyTaskHelperTest(unittest.TestCase):
         self.assertEqual((0, 0, 255), bgr)
         self.assertEqual((0, 255, 255), hsv)
 
-    def test_quick_hunt_home_requires_keyword_votes_brightness_and_gacha_ocr(self):
+    def test_quick_hunt_home_needs_enough_cues_and_brightness(self):
         task = object.__new__(QuickHuntTask)
         task.config = {"主页压暗阈值": 185.0}
         left_text = ["我的小屋 经营管理格鲁TALK 街机游戏"]
@@ -1446,13 +1445,18 @@ class DailyTaskHelperTest(unittest.TestCase):
 
         self.assertTrue(task._quick_hunt_home_signals(bright_frame)[0])
 
+        # 抽抽乐 plus one left word still counts (no other page reads 抽抽乐).
         left_text[0] = "我的小屋"
-        self.assertFalse(task._quick_hunt_home_signals(bright_frame)[0])
+        self.assertTrue(task._quick_hunt_home_signals(bright_frame)[0])
 
         left_text[0] = "我的小屋 格鲁TALK 街机游戏"
         self.assertFalse(task._quick_hunt_home_signals(dimmed_frame)[0])
 
         gacha_text[0] = ""
+        self.assertTrue(task._quick_hunt_home_signals(bright_frame)[0])
+        left_text[0] = "我的小屋 格鲁TALK"
+        self.assertFalse(task._quick_hunt_home_signals(bright_frame)[0])
+        left_text[0] = "我的小屋"
         self.assertFalse(task._quick_hunt_home_signals(bright_frame)[0])
 
     def test_quick_hunt_open_menu_prefers_home_ocr_center(self):

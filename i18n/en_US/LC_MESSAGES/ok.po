@@ -3673,3 +3673,21 @@ msgstr "FPS tool"
 
 msgid "开着 {names}"
 msgstr "{names} open"
+
+msgid "连不上上传站，请检查网络后再按一次"
+msgstr "Can't reach the upload site. Check the network and press again."
+
+msgid "这次的记录太大，没能上传"
+msgstr "This log is too big to upload"
+
+msgid "这一次没有可以上传的记录"
+msgstr "There is no log to upload for this run"
+
+msgid "会先匿名上传这次的完整记录，图片里有代号。不含账号和电脑用户名"
+msgstr "First uploads this run's full log anonymously; the picture shows its code. No account or PC user names."
+
+msgid "正在上传这次的完整记录…"
+msgstr "Uploading this run's full log…"
+
+msgid "{done}（没有代号：{why}）"
+msgstr "{done} (no code: {why})"

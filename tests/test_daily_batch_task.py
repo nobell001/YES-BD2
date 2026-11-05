@@ -58,13 +58,13 @@ class _ChildTask:
         self.name = name
         self.calls = calls
         self.result = result
-        self.config = {"启用": False, "保留配置": 1}
+        self.config = {"保留配置": 1}
 
     def info_clear(self):
         pass
 
     def run(self):
-        self.calls.append((self.name, self.config.get("启用")))
+        self.calls.append((self.name, True))  # ran
         return self.result
 
 
@@ -122,7 +122,9 @@ class DailyBatchTaskTest(unittest.TestCase):
             # 2026-10-03: as the very last item, after the mail.
             "每周跑图",
         ]
-        self.assertEqual(expected, task.config_type["启用"]["sub_configs"][True])
+        from src.tasks.DailyBatchTask import DAILY_BATCH_CHILDREN
+
+        self.assertEqual(expected, [c.config_key for c in DAILY_BATCH_CHILDREN])
         self.assertTrue(all(task.default_config[key] for key in expected))
 
     def test_weekly_map_collection_card_is_shown_in_the_daily_group(self):
@@ -164,6 +166,32 @@ class DailyBatchTaskTest(unittest.TestCase):
         self.assertIs(original_first_config, first.config)
         self.assertIs(original_second_config, second.config)
         self.assertEqual(2, len(resets))
+
+    def test_the_old_allow_switch_off_never_ends_the_run_with_nothing_done(self):
+        # Player 2026-11-05: 「点击一键完成日常后直接显示完毕」 across restarts,
+        # the 桌面分身 and an older version; single tasks ran.  The saved
+        # 「允许一键运行」 (启用) was off: run() returned at once.
+        class First:
+            pass
+
+        calls = []
+        task, _resets = self.make_task(
+            {First: _ChildTask("first", calls)},
+            (DailyBatchChild("第一项", First),),
+            {"启用": False, "第一项": True},
+        )
+
+        self.assertTrue(DailyBatchTask.run(task))
+        self.assertEqual([("first", True)], calls)
+
+    def test_the_allow_switch_is_gone(self):
+        # Leo 2026-11-05 「直接移除他」.
+        from src.ui.shell.task_page import BATCH_OPTION_LABELS
+
+        self.assertNotIn("启用", BATCH_OPTION_LABELS)
+        task = DailyBatchTask(SimpleNamespace(scene=None), SimpleNamespace())
+        self.assertNotIn("启用", task.default_config)
+        self.assertNotIn("启用", task.config_type)
 
     def test_a_scheduled_slots_own_items_run_and_the_ticks_stay(self):
         # Leo 2026-10-29 「也要選擇該時段進行的任務」.
@@ -1539,7 +1567,7 @@ class CrashRestartTest(unittest.TestCase):
 
         class Crashing(_ChildTask):
             def run(self):
-                calls.append((self.name, self.config.get("启用")))
+                calls.append((self.name, True))  # ran
                 if not game.get("crashed"):  # closes once
                     game["crashed"] = True
                     game["running"] = False

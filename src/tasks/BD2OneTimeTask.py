@@ -12,7 +12,6 @@ class BD2OneTimeTask(BaseBD2Task):
         self.group_name = "测试"
         self.group_icon = FluentIcon.BOOK_SHELF
         self.visible = True
-        self.default_config.update({"启用": True})
 
     def run(self):
         self.info_set("状态", "BD2 基础检查任务已就绪。")

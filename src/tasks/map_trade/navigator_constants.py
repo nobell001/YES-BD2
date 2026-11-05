@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
 
 import numpy as np
@@ -123,6 +125,23 @@ EVENT_CATEGORY_HIGHLIGHT_REGION = (
 EVENT_CARD_SCAN_SECONDS = 3.0
 QUICK_SWITCH_CARTRIDGE_REGION = (0.0, 908 / FHD_1080.height, 1.0, 1.0)
 QUICK_SWITCH_SCROLL_FOCUS_POINT = (43 / FHD_1080.width, 974 / FHD_1080.height)
+# 「查看战场奖励」 switch at the quick bar's right end.  Off, the cards show no
+# 吸取/压制 badges under them, so no card can be confirmed done (player
+# v0.2.31 2560x1440 2026-11-05: switch off, 活动卡3/7 「未同时确认吸取与压制
+# 完成」; every frame of Leo's and the other fixtures has it on).  Box around
+# the switch (1080p: track 1730-1790, knob 1760 +- 15) and its middle.
+BATTLE_REWARDS_SWITCH_REGION = (
+    1722 / FHD_1080.width,
+    856 / FHD_1080.height,
+    1798 / FHD_1080.width,
+    898 / FHD_1080.height,
+)
+BATTLE_REWARDS_SWITCH_POINT = (1760 / FHD_1080.width, 877 / FHD_1080.height)
+# Yellow share of the region: 0.32-0.35 on (all fixtures), 0.00 off.
+BATTLE_REWARDS_SWITCH_ON_YELLOW = 0.15
+BATTLE_REWARDS_SWITCH_OFF_YELLOW = 0.05
+BATTLE_REWARDS_SWITCH_PRESSES = 2
+BATTLE_REWARDS_SWITCH_AFTER_SLEEP = 0.8
 # Top-left back arrow of the quick bar / card collection page.
 QUICK_SWITCH_BACK_RELATIVE_POINT = (172 / FHD_1080.width, 50 / FHD_1080.height)
 QUICK_SWITCH_SCROLL_POINT = QUICK_SWITCH_SCROLL_FOCUS_POINT
@@ -368,6 +387,13 @@ CHAPTER_HOME_TEMPLATES = (
     ),
 )
 HOME_DIMMED_P95_THRESHOLD = 185.0
+# A popup over a page dims the whole page, its white top bar too (back
+# button, title, currency).  Screen library 2026-11-05, grey p99 of the top
+# 6 % of the frame: shop / teleport map / field map / collection pages 215-255,
+# the quick-switch bar 186-251; with a popup over them (price list, discount
+# shop closed, auto-move, collection event) 43-132.
+PAGE_COVERED_TOP_P99 = 170.0
+PAGE_COVERED_TOP_BAR = (0.0, 0.0, 1.0, 0.06)
 STORY_SANDBOX_STABLE_HITS = 2
 STORY_SANDBOX_SWITCH_WINDOW = 5
 STORY_SANDBOX_SWITCH_WINDOW_HITS = 3
@@ -434,6 +460,8 @@ FIELD_EXTRA_KEYCAP_TEMPLATES = (
     ),
 )
 FIELD_ALL_KEYCAP_TEMPLATES = FIELD_KEYCAP_TEMPLATES + FIELD_EXTRA_KEYCAP_TEMPLATES
+FIELD_KEYCAP_H_NAME = "箱庭按键H"
+SANDBOX_MINIMAP_TEMPLATE_NAME = SANDBOX_TEMPLATES[0].name
 # How many of the four caps prove the field (C and H both, as before, or
 # any two once M / Q join).
 FIELD_KEYCAP_MIN_PASSES = 2
@@ -520,7 +548,10 @@ SANDBOX_SKILL_STATE_TEMPLATES = (
     SANDBOX_SKILL_SLOT_2_SELECTED_TEMPLATE,
     SANDBOX_SKILL_SLOT_1_UNSELECTED_TEMPLATE,
 )
-LOADING_TEMPLATE = TemplateSpec("加载页面", "image/UI_loading_black.png", 0.70)
+# The BROWN DUST logo of the loading screen comes in two sizes: the larger
+# one is 1.2x as wide (258 vs 215 px at 1080p; 4K PC 1080p clone 2026-11-05,
+# two of three live loading frames were not recognised before).
+LOADING_TEMPLATE = TemplateSpec("加载页面", "image/UI_loading_black.png", 0.70, scale_ratios=(1.0, 1.2))
 # 商人交互菜单：右侧对话/商店选项与左下天赋技能卡（1920×1080 参考像素，
 # 实机截图标定）。
 TRADE_MERCHANT_OPTIONS_REFERENCE_ROI = (860, 370, 210, 100)
@@ -1094,6 +1125,14 @@ TELEPORT_MAP_SEEK_LIMIT = 12
 # when no map is named cleanly: one wrong character in four is 0.75, the
 # town's inn 拉勒凯旅馆 against 拉勒凯镇 is 0.67 (Leo 2026-10-31).
 LOOSE_PAGE_NAME_MIN_RATIO = 0.75
+# The area map's title row: 「安全 <name> 普通」 / 「战斗Ⅰ <name> 出现暗属性怪物」
+# (2K logs 09-29..10-22); the tail after the name is cut before a close read.
+AREA_MAP_HEADER_TAIL = re.compile(r"(普通|困难|良好|出现.{0,4}怪物).*$")
+# Looks at the area map before a position counts as unknown: an unclear read
+# closes the map and opens it once more (remedy 6, bug-prevention.md).
+POSITION_MAP_LOOKS = 2
+# The 安全/战斗 tag and its Ⅰ/Ⅱ numeral (read as 1-7 or I) before a map name.
+MAP_NAME_TAG_PREFIX = re.compile(r"^(安全|战斗)?[ⅠⅡⅢⅣⅤⅥⅦⅰⅱⅲiIＩ1-7]*")
 # Characters that tell one map from its neighbour of the same name: floors
 # and numbers (学校1楼/3楼, 第一/第四记忆空间), sides (左侧/右侧回廊).  A loose
 # read that differs from a map's name in these is another map (player

@@ -131,6 +131,18 @@ def last_line(record: dict) -> str:
     return text
 
 
+# 「读到」 on the copied text: the last few readings, short.
+READ_TEXT_ITEMS = 4
+READ_TEXT_CHARS = 200
+
+
+def read_line(record: dict) -> str:
+    """What the last checks read before the problem: 「卡带选择页 OCR=…；梦幻广场=0.612」."""
+    reads = problem_report.reads_of(record)[-READ_TEXT_ITEMS:]
+    text = "；".join(f"{entry.get('key')}={entry.get('text')}" for entry in reads)
+    return text[:READ_TEXT_CHARS]
+
+
 def version_text(env: dict) -> str:
     """「v0.1.11」; the saved version may already start with v."""
     version = str(env.get("version") or "").strip().lstrip("vV")
@@ -142,6 +154,8 @@ def summary_text(record: dict) -> str:
     env = problem_report.env_of(record)
     head = f"【YES-BD2 {version_text(env)}】".replace(" 】", "】")
     lines = [f"{head}{t(record.get('label') or '')} · {ended_text(record)}"]
+    if record.get("upload_code"):
+        lines.append(tf("上传代号：{code}", code=record["upload_code"]))
     where = where_text(record)
     lines.append(tf("停在：{where}", where=where) if record.get("problem") else where)
     parts = screen_parts(env)
@@ -150,6 +164,9 @@ def summary_text(record: dict) -> str:
     last = last_line(record)
     if last:
         lines.append(tf("最后：{text}", text=last))
+    read = read_line(record)
+    if read:
+        lines.append(tf("读到：{text}", text=read))
     return "\n".join(lines)
 
 
@@ -239,13 +256,16 @@ def _paint(pen: _Pen, record: dict, frame, before=()) -> float:
             done=counts.get("done", 0), skip=counts.get("skip", 0), fail=counts.get("fail", 0),
         ) + "）"
     rows.append((t("这次跑的"), run, None))
+    if record.get("upload_code"):
+        # 匿名上传后拿到的代号：作者用它看完整记录（Leo 2026-11-05）.
+        rows.insert(0, (t("上传代号"), str(record["upload_code"]), ACCENT))
     rows.append((t("停在") if record.get("problem") else t("结果"), where_text(record),
                  BAD if record.get("problem") else None))
     size = env.get("game_size")
     if size:
         shown = size_text(env)
         if not _size_supported(size):
-            shown += "  " + t("（工具测过：1920×1080、2560×1440、3840×2160）")
+            shown += "  " + t("（请改成：1920×1080、2560×1440、3840×2160）")
         rows.append((t("游戏画面"), shown, None if _size_supported(size) else WARN))
     screen = []
     if env.get("monitor"):
@@ -269,6 +289,16 @@ def _paint(pen: _Pen, record: dict, frame, before=()) -> float:
     if other:
         rows.append((t("其他"), " · ".join(other), None))
     y = _card(pen, y, inner, lambda p, top: _rows(p, top, inner, rows))
+
+    # How the run got there: its last steps (Leo 2026-11-05).
+    steps = problem_report.steps_of(record)
+    if steps:
+        y = _card(pen, y, inner, lambda p, top: _steps(p, top, inner, steps))
+
+    # What each check read (Leo 2026-11-05 「常常用戶log發過來也找不到原因」).
+    reads = problem_report.reads_of(record)
+    if reads:
+        y = _card(pen, y, inner, lambda p, top: _reads(p, top, inner, reads))
 
     # The last lines.
     logs = problem_report.logs_of(record)
@@ -342,6 +372,39 @@ def _logs(pen: _Pen, top: float, inner: float, title: str, logs) -> float:
     return used
 
 
+def _reads(pen: _Pen, top: float, inner: float, reads) -> float:
+    x = PAD + CARD_PAD
+    width = inner - 2 * CARD_PAD
+    used = pen.text(x, top, width, t("停下前每个检查读到的"), pen.font(14), INK3) + 8
+    font = pen.font(13.5, mono=True)
+    for entry in reads:
+        moment = _local(float(entry.get("at") or 0))
+        text = f"{moment:%H:%M:%S}  {entry.get('key') or ''}：{entry.get('text') or ''}"
+        used += pen.text(x, top + used, width, text, font, INK2) + 3
+    return used
+
+
+def step_text(entry: dict, task: str = "") -> str:
+    """「08:01:02  每周跑图 · 选择第 12 章卡带」; the task only when it is not the run's."""
+    moment = _local(float(entry.get("at") or 0))
+    name = str(entry.get("task") or "")
+    text = str(entry.get("text") or "")
+    if name and name != task:
+        text = f"{t(name)} · {text}"
+    return f"{moment:%H:%M:%S}  {text}"
+
+
+def _steps(pen: _Pen, top: float, inner: float, steps) -> float:
+    x = PAD + CARD_PAD
+    width = inner - 2 * CARD_PAD
+    used = pen.text(x, top, width, t("停下前走过的步骤（从早到晚）"), pen.font(14), INK3) + 8
+    font = pen.font(13.5, mono=True)
+    for index, entry in enumerate(steps):
+        colour = BAD if index == len(steps) - 1 else INK2
+        used += pen.text(x, top + used, width, step_text(entry), font, colour) + 3
+    return used
+
+
 STRIP_GAP = 8
 
 
@@ -408,6 +471,48 @@ def copy_image(record: dict) -> None:
 
 def copy_text(record: dict) -> None:
     QGuiApplication.clipboard().setText(summary_text(record))
+
+
+def full_log_name(record: dict) -> str:
+    moment = _local(float(record.get("finished") or time.time()))
+    return f"YES-BD2-{t('完整记录')}-{moment:%m-%d-%H%M}.txt"
+
+
+def full_log_text(record: dict) -> str | None:
+    """The summary, what each check read, then every log line of the run
+    (Leo 2026-11-05 「LOG應該要有更好的方式可以看完整的」); None without a log file."""
+    path = record.get("log_path")
+    if not path:
+        return None
+    try:
+        log = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    parts = [summary_text(record)]
+    steps = problem_report.steps_of(record)
+    if steps:
+        parts.append("\n".join([t("停下前走过的步骤")] + [step_text(entry) for entry in steps]))
+    reads = problem_report.reads_of(record)
+    if reads:
+        parts.append("\n".join(
+            [t("停下前每个检查读到的")]
+            + [f"{_local(float(r.get('at') or 0)):%H:%M:%S}  {r.get('key')}：{r.get('text')}" for r in reads]
+        ))
+    parts.append(t("完整记录（! = 警告）") + "\n" + log.rstrip("\n"))
+    return "\n\n".join(parts) + "\n"
+
+
+def save_full_log(record: dict, folder: Path | None = None) -> Path | None:
+    """The full log as a text file on the desktop; None when there is none or it failed."""
+    text = full_log_text(record)
+    if text is None:
+        return None
+    path = (folder or desktop()) / full_log_name(record)
+    try:
+        path.write_text(text, encoding="utf-8")
+    except OSError:
+        return None
+    return path
 
 
 def desktop() -> Path:

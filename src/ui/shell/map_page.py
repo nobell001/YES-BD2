@@ -319,10 +319,6 @@ class MapPage(Page):
                 column.addWidget(
                     ConfigForm(batch, keys=[BATCH_KEY], labels={BATCH_KEY: "加入一键完成日常"})
                 )
-            task = self.task()
-            if task is not None:
-                keys = [key for key in ("执行地图采集", "启用") if key in task.config]
-                column.addWidget(ConfigForm(task, keys=keys, labels={"启用": "单独跑时启用"}))
             self._more_built = True
         self.more.setVisible(not self.more.isVisible())
 

@@ -9,6 +9,8 @@ the desktop) and 复制文字 (four short lines).
 
 from __future__ import annotations
 
+import threading
+
 from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
@@ -111,12 +113,24 @@ class Preview(QWidget):
 
 
 class ReportActions(QWidget):
-    """Preview, 复制图片, 保存图片, 复制文字 and a line saying what happened."""
+    """Preview, 复制图片, 保存图片, 复制文字 and a line saying what happened.
+
+    Each button first uploads the run's full record anonymously (once per
+    record) so the picture and text carry its 上传代号 (Leo 2026-11-05
+    「可以複製圖片 圖片裡面有代號 讓我能填就好」); when the upload fails,
+    the button still does its job, without a code.
+    """
+
+    # (record path, code, why not): the upload ran beside the window.
+    uploaded = Signal(str, str, str)
 
     def __init__(self, preview_height: int, parent=None):
         super().__init__(parent)
         self._record: dict | None = None
         self._image: QImage | None = None
+        # What to do once the upload of the shown record is back.
+        self._pending = None
+        self._uploading = False
         layout = vbox(self, (0, 0, 0, 0), 10)
         self.preview = Preview(preview_height)
         self.preview.clicked.connect(self._show_picture)
@@ -129,6 +143,7 @@ class ReportActions(QWidget):
         row.addWidget(self.save_image, 1)
         row.addWidget(self.copy_text, 1)
         layout.addLayout(row)
+        self.uploaded.connect(self._upload_done)
         self.note = Text("", "muted", wrap=True)
         self.note.setAlignment(Qt.AlignHCenter)
         layout.addWidget(self.note)
@@ -142,10 +157,14 @@ class ReportActions(QWidget):
         self._record = record
         if not same:
             self._image = None
+            self._pending = None
             self.preview.set_image(self.image() if record else QImage())
             self._reset_note()
+        self._enable()
+
+    def _enable(self) -> None:
         for button in (self.copy_image, self.save_image, self.copy_text):
-            button.setEnabled(record is not None)
+            button.setEnabled(self._record is not None and not self._uploading)
 
     def image(self) -> QImage:
         if self._image is None and self._record is not None:
@@ -155,41 +174,101 @@ class ReportActions(QWidget):
     def _reset_note(self) -> None:
         self.copy_image.set_label("复制图片")
         self.copy_image.set_icon_name("image")
-        self.note.set_text("复制后到留言区或聊天框按 Ctrl+V 贴上。不含账号和电脑用户名")
+        from src.utils import report_upload
+
+        if report_upload.enabled():
+            self.note.set_text("会先匿名上传这次的完整记录，图片里有代号。不含账号和电脑用户名")
+        else:
+            self.note.set_text("复制后到留言区或聊天框按 Ctrl+V 贴上。不含账号和电脑用户名")
 
     def _done(self, text: str) -> None:
         self.note.set_text(text)
         self._timer.start(FEEDBACK_MS)
 
-    def _copy_image(self) -> None:
+    # ------------------------------------------------------------ upload
+
+    def _with_code(self, action) -> None:
+        """Upload the record once, then ``action(why)`` ("" = it has a code)."""
         if self._record is None:
             return
-        from PySide6.QtGui import QGuiApplication
+        from src.utils import report_upload
 
-        QGuiApplication.clipboard().setImage(self.image())
-        self.copy_image.set_label("图片已复制")
-        self.copy_image.set_icon_name("check")
-        self._done("图片已复制，到留言区或聊天框按 Ctrl+V 贴上")
+        if not report_upload.enabled():
+            action("")  # no upload station yet: the button just does its job
+            return
+        if self._record.get("upload_code") or self._uploading:
+            if not self._uploading:
+                action("")
+            return
+
+        record = dict(self._record)
+        shot = report_upload.jpeg(self.image())
+        self._uploading = True
+        self._pending = action
+        self._enable()
+        self._timer.stop()
+        self.note.set_text("正在上传这次的完整记录…")
+
+        def run():
+            try:
+                code, why = report_upload.upload(record, picture=lambda _record: shot)
+            except Exception:
+                code, why = "", report_upload.NO_NETWORK
+            self.uploaded.emit(str(record.get("path") or ""), code, why)
+
+        threading.Thread(target=run, name="ReportUpload", daemon=True).start()
+
+    def _upload_done(self, path: str, code: str, why: str) -> None:
+        self._uploading = False
+        action, self._pending = self._pending, None
+        self._enable()
+        if self._record is None or str(self._record.get("path") or "") != path:
+            return  # another record is shown now
+        if code:
+            self._record["upload_code"] = code
+            self._image = None
+            self.preview.set_image(self.image())  # the picture now shows the code
+        if action is not None:
+            action("" if code else why)
+
+    def _said(self, done: str, why: str) -> str:
+        """What the note says after a button: with why the upload failed, if it did."""
+        return tf("{done}（没有代号：{why}）", done=t(done), why=t(why)) if why else done
+
+    # ------------------------------------------------------------ buttons
+
+    def _copy_image(self) -> None:
+        def act(why: str) -> None:
+            from PySide6.QtGui import QGuiApplication
+
+            QGuiApplication.clipboard().setImage(self.image())
+            self.copy_image.set_label("图片已复制")
+            self.copy_image.set_icon_name("check")
+            self._done(self._said("图片已复制，到留言区或聊天框按 Ctrl+V 贴上", why))
+
+        self._with_code(act)
 
     def _copy_text(self) -> None:
-        if self._record is None:
-            return
-        problem_image.copy_text(self._record)
-        self._done("文字已复制，到留言区或聊天框按 Ctrl+V 贴上")
+        def act(why: str) -> None:
+            problem_image.copy_text(self._record)
+            self._done(self._said("文字已复制，到留言区或聊天框按 Ctrl+V 贴上", why))
+
+        self._with_code(act)
 
     def _save_image(self) -> None:
-        if self._record is None:
-            return
-        folder = problem_image.desktop()
-        path = folder / problem_image.file_name(self._record)
-        try:
-            saved = self.image().save(str(path), "PNG")
-        except Exception:
-            saved = False
-        if saved:
-            self._done(tf("已保存到桌面：{name}", name=path.name))
-        else:
-            self._done("没能保存到桌面")
+        def act(why: str) -> None:
+            folder = problem_image.desktop()
+            path = folder / problem_image.file_name(self._record)
+            try:
+                saved = self.image().save(str(path), "PNG")
+            except Exception:
+                saved = False
+            if saved:
+                self._done(self._said(tf("已保存到桌面：{name}", name=path.name), why))
+            else:
+                self._done("没能保存到桌面")
+
+        self._with_code(act)
 
     def _show_picture(self) -> None:
         if self._record is None:

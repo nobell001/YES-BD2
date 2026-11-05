@@ -1,0 +1,28 @@
+{
+ "说明": [
+  "每个文件还剩几处「一种方法没看到就整步失败」（tests/test_single_check_guard.py）。",
+  "只能减少：补好其他确认方法或备案后，把数字改成剩下的。"
+ ],
+ "single_checks": {
+  "src/tasks/CraftGearTask.py": 2,
+  "src/tasks/DailyTask.py": 1,
+  "src/tasks/DoomBookTask.py": 2,
+  "src/tasks/EventBattleTask.py": 2,
+  "src/tasks/FreeGachaTask.py": 3,
+  "src/tasks/GearTasks.py": 1,
+  "src/tasks/JunkGearTask.py": 3,
+  "src/tasks/PVPTask.py": 4,
+  "src/tasks/RedemptionTowerTask.py": 3,
+  "src/tasks/RestaurantTask.py": 2,
+  "src/tasks/SquareGoddessTask.py": 2,
+  "src/tasks/TalosTask.py": 3,
+  "src/tasks/claim_page.py": 1,
+  "src/tasks/fiend_hunt/screen.py": 1,
+  "src/tasks/map_trade/navigator_sandbox.py": 2,
+  "src/tasks/map_trade/navigator_story.py": 1,
+  "src/tasks/map_trade/trader_cartridge.py": 5,
+  "src/tasks/map_trade/trader_cooking.py": 1,
+  "src/tasks/map_trade/trader_sell.py": 5,
+  "src/tasks/trigger/AutoLoginTask.py": 3
+ }
+}

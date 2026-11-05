@@ -81,11 +81,21 @@ CHOICE_MIN_CHARS = 3
 CHOICE_SHORT_CENTRE = 960
 CHOICE_SHORT_SLACK = 120
 CHOICE_SENTENCE_ENDS = "。！？…!?.~～"
+# Answers of one or two characters with no ending (「山莓」 of 提尔「澄心无邪兔女郎」
+# question 1, and many 繁中 ones: 「葡萄」「有」「紅茶」) count when centred and
+# the talked costume's bank has that exact answer (player v0.2.31 2026-11-05:
+# 「山莓」 was not a choice, only one button read, the talk ran 120 s).
+# Answer screen never read (a new costume with such answers): after this long
+# without an answer, or when the talk screen stood still STUCK_SECONDS, the
+# first answer's key is pressed once before Esc.
+CHOICE_KEY_FALLBACK_SECONDS = 30.0
 # Answer buttons still up this long after a press: the press missed, answer again.
 CHOICE_RETRY_SECONDS = 2.5
 CHOICE_COLUMN_SLACK = 160
 CHOICE_GAP = (40, 260)
 TALK_MAX_SECONDS = 120.0
+# A talk that did not end on the panel: that costume is tried once more.
+TALK_UNFINISHED = "谈心没完成"
 TALK_TAP_INTERVAL = 0.8
 # A LV20 costume never gets more than this many talks in one run (15 is full).
 FINISH_MAX_TALKS = screen.RECORD_FULL
@@ -173,6 +183,9 @@ class AffinityTalkTask(_ClaimTaskBase):
         self._talks = 0
         for card in work.finish:
             why = self._finish_costume(card)
+            if why == TALK_UNFINISHED:
+                self.log_info(f"{LABEL}：「{card.costume}」谈心没完成，再试一次。")
+                why = self._finish_costume(card)
             if why == NO_PANEL:
                 no_panel.append(card.costume)
             elif why:
@@ -192,6 +205,12 @@ class AffinityTalkTask(_ClaimTaskBase):
                 ]
                 break
             outcome = self._daily_talk(card, allow_locked=self._only_locked_left(card, work))
+            if outcome == TALK_UNFINISHED:
+                # Once more: the panel then tells whether today's talk went.
+                self.log_info(f"{LABEL}：「{card.costume}」谈心没完成，再试一次。")
+                outcome = self._daily_talk(card, allow_locked=self._only_locked_left(card, work))
+                if outcome == "used":
+                    outcome = "talked"  # the first try spent today's talk
             if outcome == NO_PANEL:
                 no_panel.append(card.costume)
                 continue
@@ -517,7 +536,7 @@ class AffinityTalkTask(_ClaimTaskBase):
             before = detail.record[0]
             if not self._talk_once(card, first_answer=True):
                 self._back_to_list()
-                return "谈心没完成"
+                return TALK_UNFINISHED
             talks += 1
             self._talks = getattr(self, "_talks", 0) + 1
             detail = self._settled_detail(card.key, "谈心后面板") or detail
@@ -559,7 +578,7 @@ class AffinityTalkTask(_ClaimTaskBase):
         before = detail.record[0]
         if not self._talk_once(card, first_answer=False):
             self._back_to_list()
-            return "谈心没完成"
+            return TALK_UNFINISHED
         self._record.mark_talked(card.key, self._today)
         record.save(self._record)
         after = self._settled_detail(card.key, "谈心后面板")
@@ -682,7 +701,10 @@ class AffinityTalkTask(_ClaimTaskBase):
         if not self._press_talk(card):
             self._note_why(f"「{card.costume}」按了谈心没有反应")
             return False
-        bank_costume = None if first_answer else answers.find_costume(card.costume, card.character)
+        talked = answers.find_costume(card.costume, card.character)
+        bank_costume = None if first_answer else talked
+        known = answers.short_answers(talked)
+        fallback_step = 0  # unread answer screen remedies done (key 1, the read line)
         answered = False
         answered_at = 0.0
         answered_by_key: str | None = None
@@ -714,7 +736,40 @@ class AffinityTalkTask(_ClaimTaskBase):
                         self._key_result(current, True)
                 return True
             thumb = self._region_thumbs(frame, ((0, 0, 1920, 1080),))
-            if last_thumb is not None and not self._thumbs_changed(last_thumb, thumb):
+            stood = last_thumb is not None and not self._thumbs_changed(last_thumb, thumb)
+            if (
+                not answered
+                and fallback_step < 2
+                and (
+                    (stood and monotonic() - same_since >= STUCK_SECONDS)
+                    or monotonic() - started
+                    >= CHOICE_KEY_FALLBACK_SECONDS + STUCK_SECONDS * fallback_step
+                )
+            ):
+                # Maybe answer buttons that were not read (Esc and H do nothing
+                # there): the first answer's key, then the one line read there.
+                fallback_step += 1
+                if fallback_step == 1:
+                    self._save_flow_diagnostic("affinity_talk_choice_unread")
+                if fallback_step == 1 and CHOICE_KEYS and self._key(CHOICE_KEYS[0], after_sleep=1.0):
+                    self.log_info(
+                        f"{LABEL}：「{card.costume}」一直没认出选项，按 {CHOICE_KEYS[0]} 选第一个。"
+                    )
+                else:
+                    fallback_step = 2
+                    line = self._lone_choice(frame, known)
+                    if line is not None:
+                        self.log_info(
+                            f"{LABEL}：「{card.costume}」只认出一个选项「{line.name}」，点它。"
+                        )
+                        self._click_reference(  # 不用确认：之后看面板
+                            round(line.x + line.width / 2),
+                            round(line.y + line.height / 2),
+                            after_sleep=1.0,
+                        )
+                same_since = monotonic()
+                continue
+            if stood:
                 if monotonic() - same_since >= STUCK_SECONDS:
                     self.log_info(f"{LABEL}：谈心画面 {STUCK_SECONDS:.0f} 秒没变化，按 Esc。")
                     self._save_flow_diagnostic("affinity_talk_stuck")
@@ -728,7 +783,7 @@ class AffinityTalkTask(_ClaimTaskBase):
                 self.log_info(f"{LABEL}：跳过要确认，按确认。")
                 self._click_box(self._box_with(boxes, (CONFIRM_TEXT,)), after_sleep=0.8)  # 不用确认：循环里还在就再按
                 continue
-            choices = self._choices(frame)
+            choices = self._choices(frame, known)
             retry = False
             if answered and (monotonic() - answered_at < CHOICE_RETRY_SECONDS or len(choices) < 2):
                 choices = []
@@ -742,7 +797,7 @@ class AffinityTalkTask(_ClaimTaskBase):
                 pick = (
                     answers.Pick(0, False, "LV20 直接选第一个")
                     if first_answer
-                    else answers.pick_answer([c.name for c in choices], bank_costume)
+                    else answers.pick_answer([c.name for c in choices], bank_costume, text)
                 )
                 chosen = choices[pick.index]
                 self.info_set("谈心选项", " / ".join(c.name for c in choices))
@@ -814,10 +869,24 @@ class AffinityTalkTask(_ClaimTaskBase):
         except (OSError, cv2.error):
             pass
 
-    def _choices(self, frame) -> list:
+    def _lone_choice(self, frame, known: frozenset = frozenset()):
+        """The one answer-like line on the buttons' column when two were not
+        read (「山莓」 missed, 「葡萄。」 read): pressing it ends the question."""
+        lines = [
+            b
+            for b in self._reference_boxes(frame, CHOICE_ROI, "谈心选项")
+            if choice_line(b, known)
+            and abs(float(b.x) + float(b.width) / 2 - CHOICE_SHORT_CENTRE) <= CHOICE_COLUMN_SLACK
+        ]
+        return lines[0] if len(lines) == 1 else None
+
+    def _choices(self, frame, known: frozenset = frozenset()) -> list:
         """The answer buttons: two or more lines stacked in one column in
-        CHOICE_ROI (reference boxes, top first)."""
-        boxes = [b for b in self._reference_boxes(frame, CHOICE_ROI, "谈心选项") if choice_line(b)]
+        CHOICE_ROI (reference boxes, top first).  ``known``: the talked
+        costume's short answers (answers.short_answers)."""
+        boxes = [
+            b for b in self._reference_boxes(frame, CHOICE_ROI, "谈心选项") if choice_line(b, known)
+        ]
         return stacked_choices(boxes)
 
 
@@ -825,18 +894,17 @@ def _numbers(detail: screen.Detail) -> tuple:
     return detail.level, detail.record, detail.daily, detail.locked
 
 
-def choice_line(box) -> bool:
-    """A line that can be an answer: long enough, or short but centred."""
+def choice_line(box, known: frozenset = frozenset()) -> bool:
+    """A line that can be an answer: long enough, or short but centred and
+    ending like a sentence or one of the talked costume's ``known`` answers."""
     chars = len(normalize_ocr_text(box.name))
     if chars >= CHOICE_MIN_CHARS:
         return True
     raw = str(box.name).strip()
     centre = float(box.x) + float(box.width) / 2
-    return (
-        chars >= 1
-        and raw[-1:] in CHOICE_SENTENCE_ENDS
-        and abs(centre - CHOICE_SHORT_CENTRE) <= CHOICE_SHORT_SLACK
-    )
+    if chars < 1 or abs(centre - CHOICE_SHORT_CENTRE) > CHOICE_SHORT_SLACK:
+        return False
+    return raw[-1:] in CHOICE_SENTENCE_ENDS or answers.normalize(raw) in known
 
 
 def stacked_choices(boxes: list) -> list:

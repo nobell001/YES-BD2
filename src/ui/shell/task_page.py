@@ -46,7 +46,8 @@ BATCH_OPTION_LABELS = {
     # Leo 2026-11-02 「讓他選擇」: close only with no failure, or always.
     "关闭游戏时机": "什么时候关",
     "完成日常后自动关机": "全部做完后自动关机",
-    "启用": "允许一键运行",
+    # No 「允许一键运行」 (player 2026-11-05, Leo 「直接移除他」): turned off,
+    # every press of 一键完成日常 ended at once with nothing run.
 }
 
 
@@ -331,20 +332,6 @@ class TaskPage(Page):
             include_row.addWidget(self.include_toggle)
             self.detail_layout.addWidget(include)
 
-        self.disabled_note = None
-        if task is not None and "启用" in task.config:
-            note = Inset()
-            note_row = hbox(note, (16, 10, 16, 10), 12)
-            texts = vbox(None, (0, 0, 0, 0), 2)
-            texts.addWidget(Text("这一项被关掉了", "warn"))
-            texts.addWidget(Text("单独跑时不会做事；一键运行不受影响", "muted"))
-            note_row.addLayout(texts, 1)
-            enable = Toggle(False)
-            enable.toggled.connect(lambda on, t=task: self._enable_task(t, on))
-            note_row.addWidget(enable)
-            self.detail_layout.addWidget(note)
-            self.disabled_note = note
-
         self.form = None
         own = OWN_PAGES.get(type(task).__name__) if task is not None else None
         if own is not None and self._navigate is not None:
@@ -416,18 +403,11 @@ class TaskPage(Page):
         self.run_one.setEnabled(actions.can_start() and item.task is not None)
         if self.include_toggle is not None:
             self.include_toggle.set_checked_quietly(bool(item.included))
-        if self.disabled_note is not None and item.task is not None:
-            self.disabled_note.setVisible(not bool(item.task.config.get("启用", True)))
 
     def _set_included(self, key: str, on: bool) -> None:
         batch = self.batch()
         if batch is not None:
             batch.config[key] = bool(on)
-        self.refresh()
-
-    def _enable_task(self, task, on: bool) -> None:
-        if on:
-            task.config["启用"] = True
         self.refresh()
 
     def _start_one(self, task) -> None:

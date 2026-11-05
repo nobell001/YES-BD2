@@ -38,7 +38,7 @@ from src.utils.cartridge_quick_switch import (
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 class SquareGoddessEntryTest(unittest.TestCase):
-    def test_home_requires_keyword_votes_brightness_and_gacha_ocr(self):
+    def test_home_needs_enough_cues_and_brightness(self):
         task = object.__new__(SquareGoddessTask)
         task.config = {
             "主页确认等待秒数": 0.0,
@@ -51,7 +51,7 @@ class SquareGoddessEntryTest(unittest.TestCase):
         dimmed_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         frame = {"value": bright_frame}
         task.capture_frame = lambda: frame["value"]
-        left_text = {"value": "我的小屋 格鲁TALK 街机游戏"}
+        left_text = {"value": "我的小屋 格鲁TALK"}
         gacha_text = {"value": ""}
 
         def fake_ocr(_frame, name, roi=None, **_kwargs):
@@ -72,7 +72,7 @@ class SquareGoddessEntryTest(unittest.TestCase):
         frame["value"] = dimmed_frame
         self.assertFalse(SquareGoddessTask._wait_for_cartridge_home(task))
         frame["value"] = bright_frame
-        left_text["value"] = "我的小屋"
+        left_text["value"] = ""
         self.assertFalse(SquareGoddessTask._wait_for_cartridge_home(task))
         self.assertEqual([(169 / 1920, 615 / 1080, 0.2)], announcement_clicks)
 
@@ -174,10 +174,30 @@ class SquareGoddessEntryTest(unittest.TestCase):
         task._wait_for_template = lambda *_args, **_kwargs: self.fail(
             "square slot must not be clicked before the life category is confirmed"
         )
-        task._find_square_card = lambda: self.fail("no card look before the category")
+        # The card's picture is the other way to see the row: not there either.
+        task._find_square_card = lambda: None
 
         self.assertFalse(SquareGoddessTask._enter_square_from_home(task))
         self.assertEqual([(*LIFE_GAMEPLAY_CATEGORY_POINT, 0.0)], clicks)
+
+    def test_entry_goes_on_when_the_highlight_is_unread_but_the_card_shows(self):
+        # Leo 2026-11-05 「你不要一個地方沒辨識到就出錯 明明有很多方法」: the
+        # square card's picture in the row proves the category opened.
+        task = object.__new__(SquareGoddessTask)
+        task.config = {}
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_info = lambda *_args, **_kwargs: None
+        task.open_cartridge_quick_switcher = lambda **_kwargs: True
+        task.sleep = lambda *_args, **_kwargs: None
+        task._wait_for_life_gameplay_category = lambda: False
+        task._quick_switch_still_shows = lambda **_kwargs: False
+        clicks = []
+        task.operate_click = lambda x, y, after_sleep=0: clicks.append((x, y))
+        task._wait_for_template = lambda *_args, **_kwargs: True
+        task._find_square_card = lambda: (0.4, 0.9)
+
+        self.assertTrue(SquareGoddessTask._enter_square_from_home(task))
+        self.assertEqual([LIFE_GAMEPLAY_CATEGORY_POINT, (0.4, 0.9)], clicks)
 
     def test_entry_reclicks_only_while_switch_page_still_shown(self):
         # Swallowed clicks leave the switch page as it was: re-click the
@@ -694,7 +714,7 @@ class SquareGoddessEntryTest(unittest.TestCase):
 
         def fake_ocr(_frame, name, roi=None, **_kwargs):
             if name == "主页左列":
-                return "我的小屋 格鲁TALK 街机游戏"
+                return "我的小屋 格鲁TALK"
             return next(ocr_texts)
 
         task._ocr_text = fake_ocr
@@ -746,7 +766,7 @@ class SquareGoddessEntryTest(unittest.TestCase):
 
         def fake_ocr(_frame, name, roi=None, **_kwargs):
             if name == "主页左列":
-                return "我的小屋 格鲁TALK 街机游戏"
+                return "我的小屋 格鲁TALK"
             return ""
 
         task._ocr_text = fake_ocr
@@ -799,7 +819,7 @@ class SquareGoddessEntryTest(unittest.TestCase):
 
         def fake_ocr(_frame, name, roi=None, **_kwargs):
             if name == "主页左列":
-                return "我的小屋 格鲁TALK 街机游戏"
+                return "我的小屋 格鲁TALK"
             return "输入"
 
         task._ocr_text = fake_ocr

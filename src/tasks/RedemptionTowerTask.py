@@ -223,8 +223,9 @@ class RedemptionTowerTask(CartridgeFieldTask):
     card_side_width = CARD_SIDE_WIDTH
     # Evil Castle is the 战斗玩法 bar's second card, as on 游戏卡珍藏集.
     quick_slot_guess = QUICK_SLOT_XS[1]
-    # 战斗 spends keys: a frozen step goes home, never presses again.
-    frozen_retry = False
+    # Leo 2026-11-05 「精煉 製作 爛裝跑商 救贖之塔 這些你就重作沒關係 資源量微乎其微」:
+    # a failed or frozen run goes home and runs once more, like the others.
+    frozen_retry = True
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

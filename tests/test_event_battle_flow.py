@@ -318,8 +318,8 @@ class QuickBattleTest(unittest.TestCase):
         self.assertIn("战斗5", task.clicks)
 
     def test_cost_above_free_ap_is_cancelled(self):
-        # MAX read 8 and lowering failed to bring it under the free 5.
-        task = self._task([8, 8])
+        # MAX read 8 and lowering (set twice) failed to bring it under the free 5.
+        task = self._task([8, 8, 8])
         self.assertEqual("failed", task._run_quick_battle())
         self.assertNotIn("战斗5", task.clicks)
         self.assertEqual(0, task._battles_done)

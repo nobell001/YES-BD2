@@ -31,6 +31,8 @@ from src.utils.chinese import to_simplified
 from src.utils.image_utils import template_match_response
 from src.utils.ocr_utils import normalize_ocr_text
 
+NO_KNOWN_BUTTON = "页面上没有认得的按钮"
+
 EVENT_ENTRY_POINT = (889, 985)  # 主页 bottom bar 「活动」
 EVENT_TITLE_KEYWORDS = ("活动",)
 
@@ -265,10 +267,15 @@ class EventRewardTask(_ClaimTaskBase):
                     skipped[key] = "处理两次还在"
                     continue
                 self.info_set("当前阶段", f"打开活动：{key}")
-                self._click_reference(LIST_CARD_X, badge_y + BADGE_TO_CARD_CENTER, after_sleep=1.2)
+                self._click_reference(LIST_CARD_X, badge_y + BADGE_TO_CARD_CENTER, after_sleep=1.2)  # 不用确认：没打开就红点还在，下一轮再点（最多两次）
                 self._page_skip_why = ""
                 if self._handle_page(caption):
                     handled += 1
+                elif self._page_skip_why == NO_KNOWN_BUTTON and visits[key] < 2:
+                    # The card press may not have been taken: the old page,
+                    # or none, is shown.  Its badge is still there; the next
+                    # look presses the card once more (Leo 2026-11-05).
+                    self.log_info(f"活动「{key}」：页面上没有认得的按钮，再点一次这个活动。")
                 else:
                     skipped[key] = self._page_skip_why or "跳过"
                 continue  # same scroll position: look again
@@ -377,7 +384,7 @@ class EventRewardTask(_ClaimTaskBase):
             self.sleep(0.5)
         if not known:
             self.log_info(f"活动「{label}」：页面上没有认得的按钮，跳过。")
-            self._page_skip_why = "页面上没有认得的按钮"
+            self._page_skip_why = NO_KNOWN_BUTTON
             self._save_flow_diagnostic(f"event_reward_unknown_{label}")
             return False
         self.sleep(0.4)
@@ -477,7 +484,7 @@ class EventRewardTask(_ClaimTaskBase):
             if not points:
                 break
             self.log_info(f"活动「{label}」：领取一行任务奖励。")
-            self._click_reference(*points[0], after_sleep=1.0)
+            self._click_reference(*points[0], after_sleep=1.0)  # 不用确认：循环里手还在就再按
             self._settle(label, frame)
         return True
 
@@ -524,7 +531,9 @@ class EventRewardTask(_ClaimTaskBase):
         dialog still drawing its cost could be confirmed)."""
         end_at = monotonic() + 4.0
         previous = None
-        while monotonic() < end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() < end_at:
+            looked = True
             frame = self.capture_frame()
             boxes = self._reference_boxes(frame, DIALOG_ROI, f"{label}确认")
             text = self._boxes_text(boxes)

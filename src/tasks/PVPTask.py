@@ -70,15 +70,29 @@ from src.utils.ocr_utils import keyword_read, normalize_ocr_text
 from src.utils.pvp_dialog import (
     MULTIPLIER_RANGE,
     adjust_step,
+    multiplier_plan,
+    multiplier_presses,
     step_moves,
-    steps_between,
     parse_battle_count,
     free_cocktails_problem,
     parse_free_cocktails,
     parse_multiplier,
     parse_start_cost,
 )
-from src.utils.stage_walk import NUDGE_SEQUENCE, find_stage, plan_step
+from src.utils.stage_walk import (
+    NUDGE_SEQUENCE,
+    OPPOSITE_KEYS,
+    STAGE_HIDDEN_NEAR,
+    STAGE_JUMP_LIMIT,
+    STAGE_NO_PROGRESS_STEPS,
+    STAGE_PROGRESS_PIXELS,
+    STAGE_RESETS_PER_WALK,
+    STAGE_TARGET,
+    WalkStep,
+    find_stage,
+    plan_step,
+    predict_after_step,
+)
 from src.utils.wait_limits import (
     LOADING_MAX_SECONDS,
     STUCK_SECONDS,
@@ -273,12 +287,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = PROJECT_ROOT / "recognition-assets" / "template-assets"
 
 
+def _distance(a, b) -> float:
+    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+
+
 class PVPTask(BaseBD2Task):
     recover_home_on_failure = True
     start_from_home = True
     frozen_retry = True
     status_keys = [
-        "启用",
         "状态",
         "当前阶段",
         "目标倍率",
@@ -337,7 +354,6 @@ class PVPTask(BaseBD2Task):
         self._match_pause_until = 0.0
         self.default_config.update(
             {
-                "启用": True,
                 "竞技场战斗倍数": 40,
                 "加载页面阈值": 0.72,
                 "主页压暗阈值": HOME_DIMMED_P95_THRESHOLD_DEFAULT,
@@ -405,11 +421,6 @@ class PVPTask(BaseBD2Task):
         )
 
     def run(self):
-        if not bool(self.config.get("启用", True)):
-            self.info_set("状态", "镜中之战已禁用。")
-            self.log_info("镜中之战已禁用。")
-            return True
-
         target_multiplier = self._target_multiplier()
         self.info_set("状态", "镜中之战启动。")
         self.info_set("目标倍率", target_multiplier)
@@ -441,7 +452,7 @@ class PVPTask(BaseBD2Task):
                 self.log_completion("镜中之战：今日免费鸡尾酒已用完，流程结束。")
                 # Cancelling leaves the pre-battle stage screen: its back
                 # arrow returns to the hub (live 2026-09-29).
-                self._click_reference(*PVP_STAGE_BACK_REFERENCE_POINT, after_sleep=1.0)
+                self._click_reference(*PVP_STAGE_BACK_REFERENCE_POINT, after_sleep=1.0)  # 不用确认：下面等箱庭，没回到箱庭就按 H 回主页
                 # Leo 2026-10-05: going back can bring up the rank-down page
                 # (段位下滑) here too; it sat on it until he moved the mouse.
                 # Confirm it the same way as after a battle.
@@ -523,14 +534,14 @@ class PVPTask(BaseBD2Task):
             return False
 
         self.info_set("当前阶段", "点击镜中之战卡带")
-        self._click_reference(*point, after_sleep=0.0)
+        self._click_reference(*point, after_sleep=0.0)  # 不用确认：下面还停在珍藏集就再点
         # A press the game swallowed leaves the shelf up (player 2026-10-13,
         # v0.1.30: 30 s on 游戏卡珍藏集 after one press): press again.
         for _repress in range(PVP_CARD_REPRESSES):
             if not self._collection_still_shows(PVP_CARD_REPRESS_SECONDS):
                 break
             self.log_info("镜中之战：点了镜中之战卡带还停在游戏卡珍藏集，再点一次。")
-            self._click_reference(*point, after_sleep=0.0)
+            self._click_reference(*point, after_sleep=0.0)  # 不用确认：下面还停在珍藏集就再点
         if self._wait_for_pvp_hub_after_cart(
             timeout=self._load_seconds("PVP 入场等待秒数"),
         ):
@@ -557,7 +568,7 @@ class PVPTask(BaseBD2Task):
                 # Leo: 「如果識別不穩時 也可以按畫面上固定位置右下角那一大塊」.
                 self.info_set("当前阶段", "卡带机按键没认稳，按右下角固定位置")
                 self.log_info("镜中之战：主页卡带机的 P 按键没连续认到，改按右下角卡带机的固定位置。")
-            self._click_reference(*HOME_CARTRIDGE_MACHINE_POINT, after_sleep=0.0)
+            self._click_reference(*HOME_CARTRIDGE_MACHINE_POINT, after_sleep=0.0)  # 不用确认：循环两次，没反应改按 P
             if self._wait_for_collection_page():
                 return True
             self.log_info(f"镜中之战：第{attempt}次点击主页卡带机（P）后没看到游戏卡珍藏集。")
@@ -608,7 +619,9 @@ class PVPTask(BaseBD2Task):
         end_at = monotonic() + float(self.config.get("卡带选择页确认等待秒数", 10.0))
         hits = 0
         last_text = ""
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             text = self._ocr_text(
                 self.capture_frame(), name="游戏卡珍藏集", roi=COLLECTION_TITLE_ROI
             )
@@ -677,7 +690,9 @@ class PVPTask(BaseBD2Task):
         end_at = monotonic() + float(self.config.get("玩法类别高亮确认秒数", 3.0))
         last_text = ""
         last_highlight_ratio = 0.0
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             frame = self.capture_frame()
             text = self._ocr_text(
                 frame,
@@ -737,7 +752,9 @@ class PVPTask(BaseBD2Task):
         self.info_set("当前阶段", "确认卡带选择页")
         end_at = monotonic() + float(self.config.get("卡带选择页确认等待秒数", 10.0))
         last_text = ""
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             frame = self.capture_frame()
             text = self._ocr_text(frame, name="卡带选择页")
             last_text = text or last_text
@@ -942,7 +959,7 @@ class PVPTask(BaseBD2Task):
         self.log_info("镜中之战：开场 5 秒没确认赶走跟随角色，先按一次 F，等 1 秒再走去舞台。")
         self.tap_key(FIELD_FOLLOWERS_KEY, after_sleep=PVP_FOLLOWERS_KEY_SETTLE_SECONDS)
 
-    def _click_pvp_stage_once(self, timeout: float) -> bool:
+    def _click_pvp_stage_once(self, timeout: float, by_colour: bool = False) -> bool:
         # Standing on the stage hides it under the line-up, so the template
         # cannot match there (player v0.2.3 1080p 2026-10-20: BATTLE and
         # 阵形设置 already on screen, then 「未找到 PVP 舞台物件」).  Being at
@@ -950,13 +967,38 @@ class PVPTask(BaseBD2Task):
         if self._pre_battle_visible():
             self.info_set("PVP 舞台", "已在战前画面")
             return True
-        return self._click_template_until(  # 不用确认：helper 本身，调用处检查
+        if self._click_template_until(  # 不用确认：helper 本身，调用处检查
             PVP_STAGE_TEMPLATE,
             timeout=timeout,
             name="PVP 舞台",
             target_reference_offset=PVP_STAGE_CLICK_REFERENCE_OFFSET,
             after_sleep=3.0,
+        ):
+            return True
+        # The red shape only after the game's 「定位修正」 (by_colour): far
+        # from the stage, a cut-off piece of the bar carpet has its shape.
+        return by_colour and self._click_stage_by_colour()  # 不用确认：调用处等自动战斗菜单，没出再重点或键盘走上去
+
+    def _click_stage_by_colour(self) -> bool:
+        """Second way to find the stage for players who move by mouse: its
+        red top's shape (stage_walk.find_stage), when the stage picture is
+        not matched (BUG-20260908-04: the template's thin strip missed).
+        Leo 2026-11-05 「記得滑鼠移動的也要做好」."""
+        if self._pre_battle_visible():
+            self.info_set("PVP 舞台", "已在战前画面")
+            return True
+        stage = self._stage_in_view()
+        if stage is None:
+            self.info_set("PVP 舞台", "图片和红色形状都没找到舞台")
+            return False
+        self.info_set("PVP 舞台", f"图片没认到，按红色舞台形状点 {stage}")
+        self.log_info(f"镜中之战：舞台图片没认到，改按红色舞台的位置点击 {stage}。")
+        self.operate_click(  # 不用确认：调用处等自动战斗菜单，没出再重点或键盘走上去
+            stage[0] / FHD_1080.width,
+            stage[1] / FHD_1080.height,
+            after_sleep=3.0,
         )
+        return True
 
     def _stage_move_mode(self) -> str:
         mode = str(self.config.get("舞台移动方式", STAGE_MOVE_CLICK))
@@ -985,29 +1027,112 @@ class PVPTask(BaseBD2Task):
 
         The camera keeps the character centred, so the stage's screen offset is
         the distance still to walk; each step is re-planned from a new frame.
+
+        The game's own 「定位修正」 is pressed first: it walks the character
+        onto the stage by itself (4K PC clone 11-05, also for the WASD walk).
+        Back home and F do not put the character back at the spawn, so the
+        stage can start far away, where a cut-off piece of the bar's red
+        carpet has the stage's size and shape (clone 11-05: W 1.2 s, the walk
+        went for (1430, 369) for 55 s).  So the walk also gives up on a red
+        patch that does not come nearer: no step closer for
+        STAGE_NO_PROGRESS_STEPS steps presses 定位修正 again, then fails.
+
+        Each step moves the stage by a known amount on screen; a red patch
+        far from where the stage should now be is not the stage (W 0.6 s ->
+        stage at (754, 962), largest red patch (1360, 366)).  Then, or when
+        nothing red is left, the last step is walked back.  Nothing red right
+        after a step that should have reached the stage is the line-up
+        hiding it: that is checked for the pre-battle screen, not walked back.
         """
         self.info_set("当前阶段", "键盘走到 PVP 舞台")
+        if self._pre_battle_visible():
+            self.info_set("PVP 舞台走位", "已在战前画面")
+            return True
+        resets_left = STAGE_RESETS_PER_WALK
+        if self._press_stage_reset("开始走之前"):
+            resets_left -= 1
         missing = 0
+        expected = None  # where the stage should be on screen now
+        last_step = None
+        best = None  # the nearest the stage has come to the target
+        since_best = 0
         for step_index in range(1, STAGE_WALK_MAX_STEPS + 1):
             if self._pre_battle_visible():
                 self.info_set("PVP 舞台走位", f"第{step_index}步前已进入战前画面")
                 return True
             stage = self._stage_in_view()
             self.info_set("PVP 舞台位置", str(stage))
+            if stage is not None and expected is not None and _distance(stage, expected) > STAGE_JUMP_LIMIT:
+                self.info_set(
+                    "PVP 舞台走位",
+                    f"红色区块 {stage} 离预估位置 {expected} 太远，不当成舞台（多半是吧台红地毯）",
+                )
+                stage = None
             if stage is None:
+                if expected is not None and _distance(expected, STAGE_TARGET) <= STAGE_HIDDEN_NEAR:
+                    # The last step should have put the character on it.
+                    if self._nudge_until_pre_battle():
+                        return True
+                    expected, last_step = None, None
+                    continue
                 missing += 1
+                if resets_left > 0 and (last_step is None or missing >= 2):
+                    resets_left -= 1
+                    self._press_stage_reset("画面里找不到舞台")
+                    expected, last_step, missing, best, since_best = None, None, 0, None, 0
+                    continue
                 if missing >= 3:
                     self.log_info("镜中之战：画面中找不到红色舞台。")
                     return False
-                self.sleep(0.5)
+                if last_step is None:
+                    self.sleep(0.5)
+                    continue
+                back = WalkStep(OPPOSITE_KEYS[last_step.key], last_step.seconds)
+                self.log_info("镜中之战：上一步把舞台走出画面，往回走一步再找。")
+                if not self.hold_key(back.key, back.seconds, after_sleep=0.5):
+                    return False
+                expected = predict_after_step(expected, back) if expected is not None else None
+                last_step = None
                 continue
             missing = 0
+            distance = _distance(stage, STAGE_TARGET)
+            if best is None or distance < best - STAGE_PROGRESS_PIXELS:
+                best, since_best = distance, 0
+            elif distance > STAGE_HIDDEN_NEAR:
+                since_best += 1
+            if since_best >= STAGE_NO_PROGRESS_STEPS:
+                if resets_left <= 0:
+                    self.log_info(
+                        f"镜中之战：走了 {since_best} 步红色区块 {stage} 都没有靠近，"
+                        "多半不是舞台（吧台红地毯），按过「定位修正」也没用。"
+                    )
+                    return False
+                resets_left -= 1
+                self._press_stage_reset(f"走了 {since_best} 步红色区块都没有靠近")
+                expected, last_step, missing, best, since_best = None, None, 0, None, 0
+                continue
             step = plan_step(stage)
             if step is None:
-                return self._nudge_until_pre_battle()
+                if self._nudge_until_pre_battle():
+                    return True
+                if resets_left <= 0:
+                    return False
+                # Stood on the red patch and nothing opened: not the stage.
+                resets_left -= 1
+                self._press_stage_reset(f"走到红色区块 {stage} 上没进战前画面")
+                expected, last_step, missing, best, since_best = None, None, 0, None, 0
+                continue
             if not self.hold_key(step.key, step.seconds, after_sleep=0.5):
                 return False
+            expected, last_step = predict_after_step(stage, step), step
         return self._nudge_until_pre_battle()
+
+    def _press_stage_reset(self, why: str) -> bool:
+        """The game's 「定位修正」, which walks the character onto the stage."""
+        self.log_info(f"镜中之战：{why}，按游戏的「定位修正」让角色走回舞台。")
+        pressed = self._recover_stage_position()
+        self.info_set("PVP 定位修正", f"{why}：{'已按' if pressed else '没找到按钮'}")
+        return pressed
 
     def _nudge_until_pre_battle(self) -> bool:
         """Short taps around the centre; the stage centroid is biased when occluded."""
@@ -1028,12 +1153,16 @@ class PVPTask(BaseBD2Task):
                 return "failed"
         elif not self._click_pvp_stage_once(STUCK_SECONDS):  # 不用确认：没出自动战斗菜单会定位修正、重点舞台、再走到台上
             self._recover_stage_position()
-            if not self._click_pvp_stage_once(8.0):  # 不用确认：同上，外层循环重点舞台
+            if not self._click_pvp_stage_once(8.0, by_colour=True):  # 不用确认：同上，外层循环重点舞台
                 # BUG-20260908-04：舞台纹理小条失配时无图可查，落帧留存用户
                 # 箱庭实景以定位根因（对照 pvp_hub_entry_failed 等埋点）。
                 self._save_flow_diagnostic("pvp_stage_not_found")
-                self.log_info("镜中之战：未找到 PVP 舞台物件。")
-                return "failed"
+                # Last way before giving up: walk there by keyboard, which
+                # also walks back when the stage is out of view.
+                self.log_info("镜中之战：点不到舞台，改用键盘走到舞台正中。")
+                if not self._walk_onto_stage():
+                    self.log_info("镜中之战：未找到 PVP 舞台物件（图片、红色形状、键盘走位都没找到）。")
+                    return "failed"
 
         self.info_set("当前阶段", "打开自动战斗")
         menu_timeout = capped(self.config.get("PVP 菜单等待秒数", STUCK_SECONDS))
@@ -1065,10 +1194,11 @@ class PVPTask(BaseBD2Task):
                     return "failed"
             elif not self._click_pvp_stage_once(8.0):  # 不用确认：外层循环重点舞台，最后走到台上
                 self._recover_stage_position()
-                if not self._click_pvp_stage_once(8.0):  # 不用确认：外层循环重点舞台，最后走到台上
+                if not self._click_pvp_stage_once(8.0, by_colour=True):  # 不用确认：外层循环重点舞台，最后走到台上
                     self._save_flow_diagnostic("pvp_stage_not_found")
-                    self.log_info("镜中之战：重试点击时未找到 PVP 舞台物件。")
-                    return "failed"
+                    # The keyboard walk just below is the last way.
+                    self.log_info("镜中之战：重试时点不到舞台，改用键盘走上去。")
+                    break
         if not found_auto and not walking:
             # A stage click can leave the character beside the stage (player
             # 2026-10-12: three clicks, the game's move marker behind the
@@ -1110,7 +1240,7 @@ class PVPTask(BaseBD2Task):
             click_label, click = auto_battle_clicks[
                 (attempt - 1) % len(auto_battle_clicks)
             ]
-            clicked = click()
+            clicked = click()  # 不用确认：循环里没见自动战斗菜单就换一种再点
             self.info_set(
                 "PVP 自动战斗点击",
                 (
@@ -1148,7 +1278,7 @@ class PVPTask(BaseBD2Task):
             return "failed"
         if not self._select_battle_count(multiplier):
             self.info_set("当前阶段", "免费鸡尾酒核对失败，取消")
-            self._click_reference(*PVP_DIALOG_CANCEL_POINT, after_sleep=1.0)
+            self._click_reference(*PVP_DIALOG_CANCEL_POINT, after_sleep=1.0)  # 不用确认：下面读到取消还在就再按
             if self._free_cocktails_short:
                 # Today's free cocktails are spent at this multiplier: done,
                 # not a failure (live 2026-09-29: 4 left at 18x).
@@ -1414,8 +1544,57 @@ class PVPTask(BaseBD2Task):
             return False
         if not self._select_setting_multiplier(multiplier):
             return False
+        if self._confirm_setting_multiplier(multiplier, last_round=False):
+            return True
 
+        # A second round, judged by two places that read well: the main
+        # popup's N倍 and the cost on 战斗开始 (a player v0.2.31 2026-11-05:
+        # 10 wanted, both showed 9 while the setting dialog's small value was
+        # misread, so the missing +1 was never pressed).  Only when both agree
+        # on the value now set is the setting reopened to step from there.
+        current = self._set_multiplier_seen()
+        if current is None or current == multiplier:
+            return self._multiplier_round_failed(multiplier)
+        self.log_info(
+            f"镜中之战：主弹窗倍率和战斗开始的消耗都是 {current}，"
+            f"要的是 {multiplier}，重开倍率设置再调一次。"
+        )
+        if not self._open_multiplier_setting():
+            return self._multiplier_round_failed(multiplier)
+        start = current if self._setting_multiplier_matches(current) else None
+        if not self._select_setting_multiplier(multiplier, start=start):
+            return self._multiplier_round_failed(multiplier)
         return self._confirm_setting_multiplier(multiplier)
+
+    def _set_multiplier_seen(self) -> int | None:
+        """The multiplier now set, when the main popup's N倍 and the cost on
+        战斗开始 agree on two looks (None: unread or they disagree)."""
+        values = []
+        for look in range(2):
+            if look:
+                self.sleep(0.4)
+            frame = self.capture_frame()
+            if frame is None:
+                return None
+            shown = parse_multiplier(
+                self._normalize_text(
+                    self._ocr_text(
+                        frame,
+                        name="PVP 倍率",
+                        roi=self._mf_roi(*PVP_MULTIPLIER_OCR_REFERENCE_ROI),
+                    )
+                )
+            )
+            if shown is None or self._start_cost_on(frame) != shown:
+                return None
+            values.append(shown)
+        return values[0] if values[0] == values[1] else None
+
+    def _multiplier_round_failed(self, multiplier: int) -> bool:
+        self.info_set("PVP 倍率 OCR", "未确认")
+        self.log_info(f"镜中之战：倍率没能设成 {multiplier}，{self._multiplier_seen()}")
+        self._save_flow_diagnostic("pvp_multiplier_confirm_failed")
+        return False
 
     def _open_multiplier_setting(self) -> bool:
         # BUG-20260906-01：倍率按钮点击被网络吞掉时设置弹窗不会出现，重试点击。
@@ -1440,15 +1619,24 @@ class PVPTask(BaseBD2Task):
         self.log_info("镜中之战：未能打开倍率设置。")
         return False
 
-    def _select_setting_multiplier(self, multiplier: int) -> bool:
+    def _select_setting_multiplier(self, multiplier: int, start: int | None = None) -> bool:
         # BUG-20260906-01：选项点击被吞时设置值不变，先重试点击同一选项直到
         # 回读匹配（重复点击同一选项无副作用），再按原逻辑用加号步进到目标。
+        # ``start``: the value the dialog was read to show already (a second
+        # round after 确认 set the wrong value); the presses go on from it.
+        if start is not None and start != multiplier:
+            presses = multiplier_presses(start, multiplier)
+            self.log_info(
+                f"镜中之战：倍率设置里现在是 {start}，照按法"
+                f"「{self._press_names(presses)}」调到 {multiplier}。"
+            )
+            return self._step_setting_multiplier(multiplier, start, presses)
+        option_value, presses = multiplier_plan(multiplier)
         option_point = (
             PVP_MULTIPLIER_40_OPTION_SCREEN_POINT
-            if multiplier == 40
+            if option_value == 40
             else PVP_MULTIPLIER_1_OPTION_SCREEN_POINT
         )
-        option_value = 40 if multiplier == 40 else 1
         for attempt in range(1, PVP_CLICK_VERIFY_ATTEMPTS + 1):
             self._click_screen_reference(*option_point, after_sleep=0.5)  # 不用确认：循环里没读到倍率就重点
             if self._setting_multiplier_matches(option_value):
@@ -1471,23 +1659,34 @@ class PVPTask(BaseBD2Task):
                 f" {multiplier} 倍，确认后再用主弹窗和战斗开始的消耗核对。"
             )
 
-        # From MIN (1) or MAX (40) the presses that reach the target are
-        # known: press them, then read.  A read that is off only steps on
-        # toward the target (a swallowed press); one that would turn back is
-        # a misread and stepping stops (a player 2026-10-21: 「镜中之战一直点
+        return self._step_setting_multiplier(multiplier, option_value, presses)
+
+    @staticmethod
+    def _press_names(presses: list[str]) -> str:
+        names = {"big_plus": "+5", "big_minus": "-5", "plus": "+1", "minus": "-1"}
+        return " ".join(names[step] for step in presses) or "不用按"
+
+    def _step_setting_multiplier(
+        self, multiplier: int, start: int, presses: list[str]
+    ) -> bool:
+        # From ``start`` the presses that reach the target are known from the
+        # buttons' real rules (src/utils/pvp_dialog.py multiplier_after): press
+        # them, then read.  A read that is off only steps on toward the
+        # target (a swallowed press); one on the far side of the target is a
+        # misread and stepping stops (a player 2026-10-21: 「镜中之战一直点
         # 右边+1 和-5死循环了」, the value read back wrong after each press).
-        for step in steps_between(option_value, multiplier, 5):
-            self._click_reference(*PVP_MULTIPLIER_STEP_POINTS[step], after_sleep=0.4)
-        upward = multiplier > option_value
+        for step in presses:
+            self._click_reference(*PVP_MULTIPLIER_STEP_POINTS[step], after_sleep=0.4)  # 不用确认：按完都回读，没到就再按，确认后再看主弹窗
+        upward = multiplier > start
         for _ in range(24):
             if self._setting_multiplier_matches(multiplier):
                 return True
             # A dropped digit is retried instead of ending the stepping.
             current = self._read_until(self._setting_multiplier_value)
-            step = adjust_step(current, multiplier, 5) if current is not None else None
-            if step is None or (step_moves(step, 5) > 0) != upward:
+            if current is None or current == multiplier or (current < multiplier) != upward:
                 break
-            self._click_reference(*PVP_MULTIPLIER_STEP_POINTS[step], after_sleep=0.4)
+            step = multiplier_presses(current, multiplier)[0]
+            self._click_reference(*PVP_MULTIPLIER_STEP_POINTS[step], after_sleep=0.4)  # 不用确认：每按一次都回读，没到就再按
 
         for look in range(3):
             if look:
@@ -1502,7 +1701,7 @@ class PVPTask(BaseBD2Task):
         )
         return True
 
-    def _confirm_setting_multiplier(self, multiplier: int) -> bool:
+    def _confirm_setting_multiplier(self, multiplier: int, last_round: bool = True) -> bool:
         # BUG-20260906-01：确认点击被吞时设置弹窗不关、主弹窗回读不变；仅在
         # 设置弹窗仍开着时重试确认，弹窗已关则不盲重试（避免误点主弹窗）。
         # A player's run (v0.1.17, 1920×1080 windowed, 2026-10-10) pressed
@@ -1538,10 +1737,9 @@ class PVPTask(BaseBD2Task):
                 break
             self.log_info(f"镜中之战：倍率确认第{attempt}次点击未生效，重试。")
 
-        self.info_set("PVP 倍率 OCR", "未确认")
-        self.log_info(f"镜中之战：倍率没能设成 {multiplier}，{self._multiplier_seen()}")
-        self._save_flow_diagnostic("pvp_multiplier_confirm_failed")
-        return False
+        if not last_round:
+            return False
+        return self._multiplier_round_failed(multiplier)
 
     def _setting_dialog_open(self, multiplier: int) -> bool:
         """The 倍率 setting dialog is still up: its own 确认 or its value.
@@ -1616,7 +1814,8 @@ class PVPTask(BaseBD2Task):
         it unchanged too, so the cap is taken only after one more press.
         """
         self.info_set("当前阶段", f"设置战斗次数 {count}")
-        self._click_reference(*PVP_COUNT_MIN_POINT, after_sleep=0.6)
+        self._click_reference(*PVP_COUNT_MIN_POINT, after_sleep=0.6)  # 不用确认：下面读到比目标多就再按一次 MIN
+        min_again = True
         for _ in range(30):
             current = self._read_until(self._battle_count_value)
             if current is None:
@@ -1625,9 +1824,20 @@ class PVPTask(BaseBD2Task):
             if step is None:
                 return current
             if step_moves(step, 10) < 0:
+                if min_again:
+                    # Above the target right after MIN: the press was not
+                    # taken (MIN never leaves more than any count asked).
+                    # Pressing MIN again is harmless.
+                    min_again = False
+                    self.log_info(
+                        f"镜中之战：按了 MIN 后战斗次数读到 {current}，比要的 {count} 多，再按一次 MIN。"
+                    )
+                    self._click_reference(*PVP_COUNT_MIN_POINT, after_sleep=0.6)  # 不用确认：这就是 MIN 的补点，下一轮再读
+                    continue
                 # Counted up from MIN: a step back down is a misread, and
                 # stepping on would go round in a loop (see the multiplier).
                 return current
+            min_again = False  # only the read right after MIN can show a MIN not taken
             if self.press_and_confirm(
                 "镜中之战「战斗次数」",
                 lambda: self._click_reference(*PVP_COUNT_STEP_POINTS[step], after_sleep=0.4),
@@ -2214,7 +2424,9 @@ class PVPTask(BaseBD2Task):
         last_leave_text = ""
         last_leave_point: tuple[float, float] | None = None
         reward_taps = 0
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             frame = self.capture_frame()
 
             hub = self._match(frame, PVP_MEDALS_TEMPLATE)
@@ -2334,7 +2546,7 @@ class PVPTask(BaseBD2Task):
         # The home wait below polls straight through any loading screen.  The
         # old "wait for loading to appear" step never matched (score -1 all
         # day, 2026-09-27) and froze the screen 6 s on every run.
-        self._click_reference(*PVP_BACK_HOME_REFERENCE_POINT, after_sleep=1.0)
+        self._click_reference(*PVP_BACK_HOME_REFERENCE_POINT, after_sleep=1.0)  # 不用确认：还在箱庭就再点，再不行按 H
         home_deadline = monotonic() + home_timeout
         home_ok = self._wait_for_home(timeout=home_timeout / 2.0)
         if not home_ok:
@@ -2349,7 +2561,7 @@ class PVPTask(BaseBD2Task):
                 self.info_set("PVP 箱庭", f"{hub.score:.3f}")
                 if self._passes(hub, PVP_MEDALS_TEMPLATE):
                     self.info_set("PVP 返回主页", "首次点击后仍在PVP箱庭，重试一次")
-                    self._click_reference(
+                    self._click_reference(  # 不用确认：第二次就是补点，再不行按 H
                         *PVP_BACK_HOME_REFERENCE_POINT,
                         after_sleep=1.0,
                     )
@@ -2444,7 +2656,7 @@ class PVPTask(BaseBD2Task):
         )
         return confirmed, left_hits, p95_brightness, gacha_text
 
-    def _recover_stage_position(self) -> None:
+    def _recover_stage_position(self) -> bool:
         if self._click_template_until(  # 不用确认：本身就是补救（定位修正）
             PVP_LOC_RESET_TEMPLATE,
             timeout=2.0,
@@ -2452,7 +2664,7 @@ class PVPTask(BaseBD2Task):
             target_offset=(0, 100),
             after_sleep=6.0,
         ):
-            return
+            return True
 
         for spec in PVP_NO_FIND_TEMPLATES:
             if self._click_template_until(  # 不用确认：本身就是补救（舞台搜索）
@@ -2461,7 +2673,8 @@ class PVPTask(BaseBD2Task):
                 name="PVP 舞台搜索",
                 after_sleep=5.0,
             ):
-                return
+                return True
+        return False
 
     def _click_template_until(
         self,
@@ -2477,7 +2690,9 @@ class PVPTask(BaseBD2Task):
     ) -> bool:
         end_at = monotonic() + max(0.0, timeout)
         last_score = -1.0
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             frame = self.capture_frame()
             frame_height, frame_width = frame.shape[:2]
             result = self._match(frame, spec)
@@ -2566,7 +2781,9 @@ class PVPTask(BaseBD2Task):
     ) -> bool:
         end_at = monotonic() + max(0.0, timeout)
         last_score = -1.0
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             frame = self.capture_frame()
             result = self._match(frame, spec)
             last_score = result.score
@@ -2590,7 +2807,9 @@ class PVPTask(BaseBD2Task):
     ) -> tuple[bool, str]:
         end_at = monotonic() + max(0.0, timeout)
         last_text = ""
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             frame = self.capture_frame()
             text = self._ocr_text(frame, name=name, roi=roi)
             if normalize_multiplier:
@@ -2630,7 +2849,9 @@ class PVPTask(BaseBD2Task):
         cap_at = started + max(timeout, max_timeout or 0.0)
         still = StillTimer() if extra_wait_patterns else None
         last_text = ""
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             frame = self.capture_frame()
             still_for = still.still_for(frame, monotonic()) if still is not None else 0.0
             if still is not None and still_for < 1.0:
@@ -2674,7 +2895,9 @@ class PVPTask(BaseBD2Task):
 
         # Only the loading screen is waited for here (Leo 2026-10-15).
         end_at = monotonic() + self._load_seconds("loading 消失等待秒数")
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             frame = self.capture_frame()
             result = self._match(frame, LOADING_TEMPLATE)
             self.info_set(f"{name}_loading_gone", f"{result.score:.3f}")
@@ -2826,7 +3049,7 @@ class PVPTask(BaseBD2Task):
         return False
 
     def _click_reference(self, x: int, y: int, after_sleep: float = 0.0):
-        self.operate_click(
+        self.operate_click(  # 不用确认：helper 本身，调用处检查
             max(0.0, min(1.0, x / REFERENCE_WIDTH)),
             max(0.0, min(1.0, y / REFERENCE_HEIGHT)),
             after_sleep=after_sleep,
@@ -2839,7 +3062,7 @@ class PVPTask(BaseBD2Task):
         after_sleep: float = 0.0,
     ) -> None:
         frame_height, frame_width = frame.shape[:2]
-        self.operate_click(
+        self.operate_click(  # 不用确认：helper 本身，调用处检查
             max(0.0, min(1.0, point[0] / max(1, frame_width))),
             max(0.0, min(1.0, point[1] / max(1, frame_height))),
             after_sleep=after_sleep,
@@ -2867,7 +3090,7 @@ class PVPTask(BaseBD2Task):
         return left, top, max(1, right - left), max(1, bottom - top)
 
     def _click_screen_reference(self, x: int, y: int, after_sleep: float = 0.0):
-        self.operate_click(
+        self.operate_click(  # 不用确认：helper 本身，调用处检查
             max(0.0, min(1.0, x / ENTRY_REFERENCE_WIDTH)),
             max(0.0, min(1.0, y / ENTRY_REFERENCE_HEIGHT)),
             after_sleep=after_sleep,
@@ -2905,7 +3128,7 @@ class PVPTask(BaseBD2Task):
         frame_height: int,
         after_sleep: float = 0.0,
     ):
-        self.operate_click(
+        self.operate_click(  # 不用确认：helper 本身，调用处检查
             max(0.0, min(1.0, x / max(1, frame_width))),
             max(0.0, min(1.0, y / max(1, frame_height))),
             after_sleep=after_sleep,
