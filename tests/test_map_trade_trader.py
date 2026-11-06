@@ -120,7 +120,7 @@ from src.tasks.map_trade.trader_constants import (
     SALE_DIALOG_REGION,
     SALE_DIALOG_TITLE_REGION,
     SALE_EMPTY_NAME_STABLE_HITS,
-    SALE_FULL_PAGE_OCR_TARGET_HEIGHTS,
+    SALE_FULL_PAGE_OCR_LOOKS,
     SALE_MARKER_RELAXED_PIXEL_SCORE,
     SALE_MAX_POINT,
     SALE_NAME_FRAGMENT_MIN_CHARS,
@@ -681,7 +681,7 @@ class SellFlowTest(unittest.TestCase):
             self._marker_result(1157, 563),
         )
         trader, match_calls = self._make_sale_template_trader(
-            lambda _frame, _name, target_height=900: boxes,
+            lambda _frame, _name, **_look: boxes,
             markers,
         )
 
@@ -769,14 +769,14 @@ class SellFlowTest(unittest.TestCase):
             ],
         )
 
-    def test_locate_sale_items_retries_adjacent_ocr_height_for_item_name(self):
+    def test_locate_sale_items_reads_again_bordered_for_item_name(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-        target_heights = []
+        looks = []
         markers = (self._marker_result(493, 563),)
 
-        def ocr_boxes(_frame, _name, target_height=900):
-            target_heights.append(target_height)
-            item_name = "胡萝卜" if target_height == 900 else "水果罐头"
+        def ocr_boxes(_frame, _name, **look):
+            looks.append(look)
+            item_name = "胡萝卜" if not look else "水果罐头"
             return [
                 self._text_box("4120%", 492, 451, 56, 13),
                 self._text_box("4129", 824, 451, 56, 13),
@@ -792,13 +792,14 @@ class SellFlowTest(unittest.TestCase):
         )
 
         self.assertEqual([(634, 572)], [candidate.center for candidate in candidates])
-        self.assertEqual((900, 840, 960), SALE_FULL_PAGE_OCR_TARGET_HEIGHTS)
-        self.assertEqual([900, 840], target_heights)
+        # Never shrunk: the captured size, then bordered, then enlarged.
+        self.assertEqual(({}, {"bordered": True}, {"ocr_scale": 1.5}), SALE_FULL_PAGE_OCR_LOOKS)
+        self.assertEqual([{}, {"bordered": True}], looks)
         self.assertFalse(trader._last_sale_unavailable)
 
     def test_locate_sale_items_ignores_bad_percent_ocr_when_local_template_misses(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-        target_heights = []
+        looks = []
         boxes = [
             self._text_box("4120%", 492, 451, 56, 13),
             self._text_box("4129", 824, 451, 56, 13),
@@ -806,8 +807,8 @@ class SellFlowTest(unittest.TestCase):
             self._text_box("水果罐头", 945, 560, 42, 23),
         ]
 
-        def ocr_boxes(_frame, _name, target_height=900):
-            target_heights.append(target_height)
+        def ocr_boxes(_frame, _name, **look):
+            looks.append(look)
             return boxes
 
         trader, match_calls = self._make_sale_template_trader(ocr_boxes, ())
@@ -819,7 +820,7 @@ class SellFlowTest(unittest.TestCase):
                 frame,
             ),
         )
-        self.assertEqual([900, 840, 960], target_heights)
+        self.assertEqual(list(SALE_FULL_PAGE_OCR_LOOKS), looks)
         # The strict pass misses, then the relaxed pass (which still needs a
         # template hit, OCR alone never makes a marker) finds nothing either.
         self.assertEqual(2, len(match_calls))
@@ -870,7 +871,7 @@ class SellFlowTest(unittest.TestCase):
         marker = MatchResult(0.981, (657, 252), (70, 19), pixel_score=0.923)
         crop_calls = []
 
-        def ocr_boxes(_frame, name, target_height=900, ocr_scale=1.0):
+        def ocr_boxes(_frame, name, target_height=0, ocr_scale=1.0, bordered=False):
             if name == "出售↑120%标志":
                 crop_calls.append(ocr_scale)
                 text = crop_reads.get(ocr_scale, "")
@@ -907,10 +908,10 @@ class SellFlowTest(unittest.TestCase):
 
     def test_locate_sale_items_with_no_ocr_output_is_not_marked_sold_out(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-        target_heights = []
+        looks = []
         trader, _match_calls = self._make_sale_template_trader(
-            lambda _frame, _name, target_height=900: (
-                target_heights.append(target_height) or []
+            lambda _frame, _name, **look: (
+                looks.append(look) or []
             ),
             (self._marker_result(493, 563),),
         )
@@ -922,17 +923,17 @@ class SellFlowTest(unittest.TestCase):
                 frame,
             ),
         )
-        self.assertEqual([900, 840, 960], target_heights)
+        self.assertEqual(list(SALE_FULL_PAGE_OCR_LOOKS), looks)
         self.assertFalse(trader._last_sale_unavailable)
         self.assertEqual("全画面OCR未返回任何文本", trader._last_sale_reason)
 
     def test_name_missed_with_other_page_text_is_marked_unavailable(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-        target_heights = []
+        looks = []
         other_item = self._text_box("胡萝卜", 613, 560, 42, 23)
         trader, match_calls = self._make_sale_template_trader(
-            lambda _frame, _name, target_height=900: (
-                target_heights.append(target_height) or [other_item]
+            lambda _frame, _name, **look: (
+                looks.append(look) or [other_item]
             ),
             (self._marker_result(493, 563),),
         )
@@ -944,7 +945,7 @@ class SellFlowTest(unittest.TestCase):
                 frame,
             ),
         )
-        self.assertEqual([900, 840, 960], target_heights)
+        self.assertEqual(list(SALE_FULL_PAGE_OCR_LOOKS), looks)
         self.assertEqual([], match_calls)
         self.assertTrue(trader._last_sale_unavailable)
         self.assertEqual("全画面OCR未识别到商品名", trader._last_sale_reason)

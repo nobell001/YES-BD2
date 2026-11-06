@@ -953,7 +953,7 @@ class CollectorSkillTest(unittest.TestCase):
         self.assertTrue(
             all(
                 kwargs["relative_roi"] == ACTION_FEEDBACK_RELATIVE_ROI
-                and kwargs["target_height"] == 1080
+                and kwargs["target_height"] == 0
                 for _name, kwargs in calls
             )
         )
@@ -1483,7 +1483,7 @@ class CollectorSkillTest(unittest.TestCase):
         self.assertEqual((7, 60), count)
         self.assertEqual("压制次数", calls[0][0])
         self.assertNotIn("roi", calls[0][1])
-        self.assertEqual(1080, calls[0][1]["target_height"])
+        self.assertEqual(0, calls[0][1]["target_height"])
         self.assertEqual(
             SUPPRESS_ACTION.fixed_count_relative_roi,
             calls[0][1]["relative_roi"],
@@ -1584,7 +1584,7 @@ class CollectorSkillTest(unittest.TestCase):
         for name, kwargs in calls:
             self.assertIn(name, {"吸收次数", "召集次数"})
             self.assertNotIn("roi", kwargs)
-            self.assertEqual(1080, kwargs["target_height"])
+            self.assertEqual(0, kwargs["target_height"])
             self.assertEqual(
                 next(
                     action.fixed_count_relative_roi
@@ -1626,7 +1626,7 @@ class CollectorSkillTest(unittest.TestCase):
                     "战斗区域1探查倒计时",
                     {
                         "relative_roi": session.relative_roi,
-                        "target_height": 1080,
+                        "target_height": 0,
                         "ocr_scale": SKILL_OCR_UPSCALE,
                     },
                 )

@@ -20,6 +20,7 @@ from src.tasks.map_trade.models import (
 )
 from src.utils import ocr_count, task_vision
 from src.utils.calibration import FHD_1080
+from src.utils.home_confirmation import grey_picture_gain, screen_whitest
 from src.utils.image_utils import (
     candidate_scales,
     independent_match_candidates,
@@ -40,6 +41,7 @@ from src.utils.template_resolution import (
     offline_template_uses_main_region,
 )
 from src.utils.vision_models import FrameGeometry, MatchCandidateEvidence
+from src.utils import ocr_size
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATE_DIR = PROJECT_ROOT / "recognition-assets" / "template-assets"
@@ -1019,12 +1021,21 @@ class Vision:
         region = gray[max(0, y) : y + height, max(0, x) : x + width]
         if region.shape != scaled.shape:
             return 0.0
-        return self.foreground_brightness_ratio(
+        ratio = self.foreground_brightness_ratio(
             scaled,
             region,
             minimum_reference_gray=minimum_template_gray,
             mask=scaled_mask,
         )
+        # HDR or a dim filter greys the whole picture, and a lit skill icon
+        # then read about 0.65 of its template and counted as used.  Library
+        # check 2026-11-06 (26 field frames darkened to 0.65x, 0.8x and a
+        # lifted black level): all 8 lit icons were misread before; judged
+        # against the picture's whitest they all read lit, and no dim icon
+        # turned lit.  A normal picture has white somewhere, so its gain is
+        # 1.0 and nothing changes (2 of 347 library frames, neither a field
+        # frame, have another gain).
+        return ratio * grey_picture_gain(screen_whitest(frame))
 
     @classmethod
     def foreground_brightness_ratio(
@@ -1151,7 +1162,7 @@ class Vision:
         name: str,
         roi: tuple[int, int, int, int] | None = None,
         relative_roi: tuple[float, float, float, float] | None = None,
-        target_height: int = 720,
+        target_height: int = ocr_size.READ_HEIGHT,
         minimum_threshold: float | None = None,
         ocr_scale: float = 1.0,
         bordered: bool = False,
@@ -1257,7 +1268,7 @@ class Vision:
         name: str,
         roi: tuple[int, int, int, int] | None = None,
         relative_roi: tuple[float, float, float, float] | None = None,
-        target_height: int = 720,
+        target_height: int = ocr_size.READ_HEIGHT,
         minimum_threshold: float | None = None,
         ocr_scale: float = 1.0,
         bordered: bool = False,

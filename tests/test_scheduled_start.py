@@ -436,6 +436,36 @@ class UiTest(unittest.TestCase):
         self.assertFalse(self.config[CLOSE_GAME_KEY])
         self.assertEqual(len(self.ui.settings().slots), 2)
 
+    def test_dialog_close_when_is_one_key_setting(self):
+        """Leo 2026-11-06: 定时启动 shows 全部成功才关 / 跑失败也关 too; it is
+        一键日常's own 关闭游戏时机, written on 保存 and left alone on 取消."""
+        from src.tasks.DailyBatchTask import (
+            CLOSE_GAME_WHEN_KEY,
+            CLOSE_WHEN_ALWAYS,
+            CLOSE_WHEN_CLEAN,
+        )
+
+        dialog = self.ui.ScheduleDialog(None)
+        self.addCleanup(dialog.close)
+        self.assertEqual(dialog.close_when.value(), CLOSE_WHEN_CLEAN)
+        self.assertFalse(dialog.close_when.isHidden())
+        dialog.close_game.setChecked(False)
+        self.assertTrue(dialog.close_when.isHidden())
+        dialog.close_game.setChecked(True)
+        dialog.close_when.set_value(CLOSE_WHEN_ALWAYS)
+        dialog.reject()
+        self.assertNotIn(CLOSE_GAME_WHEN_KEY, self.config)
+
+        dialog = self.ui.ScheduleDialog(None)
+        self.addCleanup(dialog.close)
+        dialog.close_when.set_value(CLOSE_WHEN_ALWAYS)
+        with mock.patch.object(ss, "apply"):
+            dialog._save()
+        self.assertEqual(self.config[CLOSE_GAME_WHEN_KEY], CLOSE_WHEN_ALWAYS)
+        again = self.ui.ScheduleDialog(None)
+        self.addCleanup(again.close)
+        self.assertEqual(again.close_when.value(), CLOSE_WHEN_ALWAYS)
+
     def test_master_off_in_dialog_greys_the_slots(self):
         dialog = self.ui.ScheduleDialog(None)
         self.addCleanup(dialog.close)

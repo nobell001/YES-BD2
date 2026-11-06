@@ -409,15 +409,26 @@ class CartridgeFieldTask(_ClaimTaskBase):
 
     def _reach_marker(self) -> bool:
         """Onto the marker the chosen way; the other way when that fails."""
-        from src.tasks.PVPTask import STAGE_MOVE_CLICK, STAGE_MOVE_WASD
+        from src.tasks.PVPTask import (
+            STAGE_MOVE_CLICK,
+            STAGE_MOVE_WASD,
+            clicks_moved_nothing,
+            move_mode_note,
+        )
 
         first = self._move_mode()
         ways = [first, STAGE_MOVE_WASD if first == STAGE_MOVE_CLICK else STAGE_MOVE_CLICK]
+        # The last click left the screen as it was: clicking does nothing in
+        # this game; the report then says the setting looks wrong (Leo 11-06).
+        first_still = False
         for index, way in enumerate(ways):
             if index:
+                first_still = first == STAGE_MOVE_CLICK and clicks_moved_nothing(self)
                 self.log_info(f"{self.label}：{ways[0]}没走到战斗标记，改用{way}再试。")
             arrived = self._click_to_marker() if way == STAGE_MOVE_CLICK else self._walk_to_marker()  # 不用确认：没走到会换另一种走法
             if arrived:
+                if index:
+                    move_mode_note(self, way, first_still)
                 return True
             if self._keys_refused or not self.look_again(
                 lambda: self._field_visible(self.capture_frame())

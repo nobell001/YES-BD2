@@ -22,6 +22,7 @@ from src.ui.shell.widgets import (
     CheckBox,
     IconTile,
     Inset,
+    OptionSwitch,
     Segmented,
     StateIcon,
     Text,
@@ -306,12 +307,7 @@ class RunConfirm(Floating):
             from src.tasks.DailyBatchTask import CLOSE_WHEN_CLEAN, CLOSE_WHEN_OPTIONS
 
             self.close_when_options = CLOSE_WHEN_OPTIONS
-            self.close_when = Segmented(
-                CLOSE_WHEN_OPTIONS, close_when or CLOSE_WHEN_CLEAN, accent=True
-            )
-            self.close_when.setStyleSheet(
-                "QPushButton { min-height: 26px; max-height: 26px; padding: 0 10px; font-size: 12px; }"
-            )
+            self.close_when = OptionSwitch(*CLOSE_WHEN_OPTIONS, close_when or CLOSE_WHEN_CLEAN)
             self.close_when.setVisible(close_game)
             self.close_game.toggled.connect(self.close_when.setVisible)
             buttons.addWidget(self.close_when, 0, Qt.AlignVCenter)

@@ -59,6 +59,7 @@ from src.tasks.map_trade.models import (
 from src.tasks.map_trade import skill_layout
 from src.utils import ocr_count
 from src.utils.plain_text import DIAGNOSTIC_PREFIX
+from src.utils import ocr_size
 
 # Used to split a count read without its slash ("7180" -> 7/80) until the
 # HUD has shown today's limit (see ``_known_limit``).
@@ -517,7 +518,7 @@ class SkillExecutionMixin:
                 self.vision.capture(),
                 f"{action.name}执行反馈",
                 relative_roi=ACTION_FEEDBACK_RELATIVE_ROI,
-                target_height=1080,
+                target_height=ocr_size.READ_HEIGHT,
             )
             # OCR 只输出简体中文（繁体转换已取消）；引擎可能粘连相邻文本，
             # 先归一再打分，并让显式失败关键字在平分（或更强正向词）时获胜，
@@ -739,7 +740,7 @@ class SkillExecutionMixin:
                 frame,
                 "探查倒计时",
                 relative_roi=countdown_roi,
-                target_height=1080,
+                target_height=ocr_size.READ_HEIGHT,
                 ocr_scale=SKILL_OCR_UPSCALE,
             )
             countdown = re.sub(r"\D", "", last_text)
@@ -835,7 +836,7 @@ class SkillExecutionMixin:
             frame,
             "探查倒计时",
             relative_roi=SEARCH_COUNTDOWN_RELATIVE_ROI,
-            target_height=1080,
+            target_height=ocr_size.READ_HEIGHT,
             ocr_scale=SKILL_OCR_UPSCALE,
         )
         countdown = re.sub(r"\D", "", text)
@@ -1015,7 +1016,7 @@ class SkillExecutionMixin:
                 self.vision.capture(),
                 "战斗区域1探查倒计时",
                 relative_roi=session.relative_roi,
-                target_height=1080,
+                target_height=ocr_size.READ_HEIGHT,
                 ocr_scale=SKILL_OCR_UPSCALE,
             )
             countdown = re.sub(r"\D", "", last_text)
@@ -2271,7 +2272,7 @@ class SkillExecutionMixin:
                 frame,
                 name,
                 relative_roi=self._action_text_relative_roi(detection, frame.shape),
-                target_height=1080,
+                target_height=ocr_size.READ_HEIGHT,
             )
 
         if roi is not None:
@@ -2294,7 +2295,7 @@ class SkillExecutionMixin:
             self.vision.capture(),
             f"{action.name}次数",
             relative_roi=action.fixed_count_relative_roi,
-            target_height=1080,
+            target_height=ocr_size.READ_HEIGHT,
             ocr_scale=look.scale,
             **({"bordered": True} if look.bordered else {}),
         )

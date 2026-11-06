@@ -101,8 +101,11 @@ from src.utils.wait_limits import (
     capped,
     is_loading_dark,
     load_wait,
+    scene,
     scene_at_press,
+    scene_moved,
 )
+from src.utils import ocr_size
 
 REFERENCE_WIDTH = FHD_1080.width
 REFERENCE_HEIGHT = FHD_1080.height
@@ -226,6 +229,41 @@ PVP_CLICK_VERIFY_ATTEMPTS = 3
 STAGE_MOVE_CLICK = "鼠标点击舞台"
 STAGE_MOVE_WASD = "键盘WASD走到舞台"
 STAGE_MOVE_OPTIONS = [STAGE_MOVE_CLICK, STAGE_MOVE_WASD]
+# Leo 2026-11-06 「點了畫面沒動代表用戶設定錯誤 程式可以自動執行另外一種移動方式
+# 且在結算報表提醒」: the chosen way left the screen as it was, the other way got
+# there.  Said in the report (镜中之战、末日之书、救赎之塔).
+# Only this way round: a game set to click-to-move still takes WASD (Leo
+# 2026-11-06 「反過來不用 因為遊戲設定成點擊地板的話 其實是吃的到WASD的」).
+MOVE_MODE_NOTES = {
+    STAGE_MOVE_WASD: "点了画面没动，改用 WASD 才走到。移动方式可能设错了，请到「设置 → 移动方式」改成 WASD",
+}
+
+
+def clicks_moved_nothing(task) -> bool:
+    """The screen now is the one seen right before the last click: that click
+    did not move the character at all (the game moves by WASD)."""
+    before = scene_at_press(task)
+    if before is None:
+        return False
+    try:
+        return not scene_moved(before, scene(task.capture_frame()))
+    except Exception:
+        return False
+
+
+def move_mode_note(task, used: str, first_still: bool) -> None:
+    """Tell the report the setting looks wrong: the first way did not move the
+    screen at all and the other way (``used``) got there."""
+    note = MOVE_MODE_NOTES.get(used)
+    if not (first_still and note):
+        return
+    task.log_info(f"{getattr(task, 'name', '') or '任务'}：{note}。")
+    try:
+        run_report.add_current_note(note)
+    except Exception:
+        pass
+
+
 STAGE_WALK_MAX_STEPS = 14
 # 自动战斗弹窗（1920×1080 参考，2026-09-26 实测）。
 PVP_MULTIPLIER_STEP_POINTS = {
@@ -1146,6 +1184,8 @@ class PVPTask(BaseBD2Task):
     def _start_auto_battle(self, multiplier: int) -> str:
         self.info_set("当前阶段", "寻找 PVP 舞台")
         walking = self._stage_move_mode() == STAGE_MOVE_WASD
+        first_still = False
+        switched = False
         if walking:
             if not self._walk_onto_stage():
                 self._save_flow_diagnostic("pvp_stage_walk_failed")
@@ -1160,9 +1200,11 @@ class PVPTask(BaseBD2Task):
                 # Last way before giving up: walk there by keyboard, which
                 # also walks back when the stage is out of view.
                 self.log_info("镜中之战：点不到舞台，改用键盘走到舞台正中。")
+                first_still = clicks_moved_nothing(self)
                 if not self._walk_onto_stage():
                     self.log_info("镜中之战：未找到 PVP 舞台物件（图片、红色形状、键盘走位都没找到）。")
                     return "failed"
+                switched = True
 
         self.info_set("当前阶段", "打开自动战斗")
         menu_timeout = capped(self.config.get("PVP 菜单等待秒数", STUCK_SECONDS))
@@ -1205,11 +1247,15 @@ class PVPTask(BaseBD2Task):
             # stage, no menu).  Standing on its centre opens the pre-battle
             # screen, as for players who walk with WASD.
             self.log_info("镜中之战：点了舞台没出自动战斗菜单，改用键盘走到舞台正中。")
+            first_still = clicks_moved_nothing(self)
             found_auto = self._walk_onto_stage()
+            switched = True
         if not found_auto:
             self.log_info("镜中之战：多次点击舞台后自动战斗菜单仍未出现。")
             self._save_flow_diagnostic("pvp_auto_battle_failed")
             return "failed"
+        if switched:
+            move_mode_note(self, STAGE_MOVE_WASD, first_still)
 
         menu_roi = self._mf_roi(*PVP_AUTO_BATTLE_MENU_OCR_REFERENCE_ROI)
         # 2026-09 客户端改版把按钮热区收到图标/背板上（RPT-20260905-201103），
@@ -3003,7 +3049,7 @@ class PVPTask(BaseBD2Task):
             return self.ocr(
                 frame=ocr_frame,
                 threshold=float(self.config.get("PVP OCR 阈值", 0.2)),
-                target_height=720,
+                target_height=ocr_size.READ_HEIGHT,
                 log=False,
                 name=name,
                 reread=ocr_scale == 1.0,

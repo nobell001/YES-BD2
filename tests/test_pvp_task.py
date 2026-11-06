@@ -1112,7 +1112,7 @@ class PVPTaskHelperTest(unittest.TestCase):
 
                 self.assertEqual([], task._recent_cartridge_ocr_boxes())
                 self.assertEqual(threshold, ocr_calls[0]["threshold"])
-                self.assertEqual(720, ocr_calls[0]["target_height"])
+                self.assertEqual(0, ocr_calls[0]["target_height"])  # read at the captured size (src/utils/ocr_size.py)
 
     def test_recent_pvp_special_pages_can_handle_reward_then_rank_page(self):
         task = object.__new__(PVPTask)

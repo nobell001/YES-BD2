@@ -20,6 +20,7 @@ from src.utils.home_confirmation import (
 from src.utils.ocr_utils import normalize_ocr_text
 from src.utils.press_confirm import wait_for
 from src.utils.wait_limits import LOADING_MAX_SECONDS, is_loading_dark, load_wait, scene_at_press
+from src.utils import ocr_size
 
 GUILD_TEMPLATE = TemplateSpec(
     name="guild",
@@ -925,7 +926,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             boxes = self.ocr(
                 frame=frame,
                 threshold=float(self.config.get("日常 OCR 阈值", 0.2)),
-                target_height=720,
+                target_height=ocr_size.READ_HEIGHT,
                 log=False,
                 name=name,
             )

@@ -432,8 +432,139 @@ class ChannelButtonTest(unittest.TestCase):
         reached, presses, keys, _escapes, task, _warnings = self._run(channel=False)
         self.assertFalse(reached)
         self.assertTrue(presses)
-        self.assertNotIn("移动键", keys)
+        # Movement keys are let go before H even without the 「Ch.」 read:
+        # with W held the game ignores clicks (4K 桌面分身 2026-11-06).
+        self.assertEqual(["移动键", "H"], keys)
         self.assertEqual("", task._recovery_why)
+
+
+class ChannelDialogCueTest(unittest.TestCase):
+    """Player report 2026-11-06 (桌面分身): after the goddess wish the way
+    home kept pressing the channel button.  The button's own read is one
+    cue; the 选择频道 dialog that press opens is a second one."""
+
+    def _run(self, button_read, dialog_after_press=True, h_works=False):
+        from src.tasks.map_trade.models import ScreenState
+
+        square = np.full((1080, 1920, 3), 120, np.uint8)
+        presses, keys, escapes = [], [], []
+        state = {"dialog": False, "home": False}
+
+        class FakeNavigator:
+            def __init__(self, task, vision):
+                self.vision = SimpleNamespace(capture=lambda: square)
+
+            def _home_confirmation_signals(self, frame):
+                return (state["home"], 0, 0.0, "")
+
+            def classify(self):
+                return ScreenState.HOME if state["home"] else ScreenState.UNKNOWN
+
+            def clear_home_announcement(self, _frame, _clicks=0):
+                return False
+
+        def ocr_boxes(frame, name, relative_roi=None, **_k):
+            return [_box(button_read, x=70, y=38)] if button_read else []
+
+        def handle_dialog(*_a):
+            if state["dialog"]:
+                state["dialog"] = False
+                return "channel"
+            return "none"
+
+        def press(*_a, **_k):
+            presses.append(1)
+            state["dialog"] = dialog_after_press
+
+        def tap_key(key, after_sleep=0.0):
+            keys.append(key)
+            if key == "H" and h_works and "移动键" in keys:
+                state["home"] = True
+            return True
+
+        task = SimpleNamespace(
+            info_set=lambda *a: None,
+            log_info=lambda *a, **k: None,
+            log_warning=lambda *a, **k: None,
+            sleep=lambda *_a: None,
+            operate_click=press,
+            tap_key=tap_key,
+            tap_escape=lambda after_sleep=0.0: escapes.append(1) or True,
+            release_move_keys=lambda after_sleep=0.0: keys.append("移动键") or True,
+        )
+        with (
+            mock.patch.object(recovery, "Navigator", FakeNavigator),
+            mock.patch.object(recovery, "Vision", lambda task: SimpleNamespace(ocr_boxes=ocr_boxes)),
+            mock.patch.object(recovery, "_handle_dialog", handle_dialog),
+            mock.patch.object(recovery, "_keep_failure_picture", lambda *_a: None),
+            mock.patch.object(recovery, "_frames_differ", lambda *_a: True),
+            mock.patch.object(recovery, "monotonic", iter(range(0, 10000)).__next__),
+        ):
+            reached = recovery.recover_to_home(task)
+        return reached, presses, keys, escapes, task
+
+    def test_button_misread_the_dialog_stops_the_presses(self):
+        # 「Ch.137」 read as something else: one press opens 选择频道, never two.
+        reached, presses, keys, _escapes, _task = self._run("Gh.I37")
+        self.assertFalse(reached)
+        self.assertEqual(1, len(presses))
+        self.assertEqual(["移动键", "H"], keys)
+
+    def test_button_misread_still_reaches_home(self):
+        reached, presses, keys, _escapes, _task = self._run("Gh.I37", h_works=True)
+        self.assertTrue(reached)
+        self.assertEqual(1, len(presses))
+        self.assertEqual(["移动键", "H"], keys)
+
+    def test_misread_digits_still_count_as_the_button(self):
+        for text in ("Ch.l37", "Ch.1O", "CH.65", "Ch 137", "ch:2"):
+            with self.subTest(text=text):
+                reached, presses, keys, _escapes, _task = self._run(text)
+                self.assertEqual([], presses)
+                self.assertEqual(["移动键", "H"], keys)
+
+    def test_dialog_words_and_grid(self):
+        self.assertTrue(recovery._channel_dialog([_box("选择频道")]))
+        self.assertTrue(recovery._channel_dialog([_box("選擇頻道")]))
+        self.assertTrue(recovery._channel_dialog([_box("當前頻道 Ch.137")]))
+        self.assertTrue(
+            recovery._channel_dialog([_box("Ch.1"), _box("Ch.2"), _box("Ch. 3")])
+        )
+        self.assertFalse(recovery._channel_dialog([_box("Ch.1"), _box("取消")]))
+        self.assertFalse(recovery._channel_dialog([_box("活动"), _box("确认")]))
+
+    def test_cancel_unread_closes_the_dialog_by_esc(self):
+        escapes = []
+        task = SimpleNamespace(
+            capture_frame=lambda: np.zeros((1080, 1920, 3), np.uint8),
+            log_info=lambda *a, **k: None,
+            tap_escape=lambda after_sleep=0.0: escapes.append(1) or True,
+        )
+        vision = SimpleNamespace(ocr_boxes=lambda *_a, **_k: [_box("选择频道"), _box("Ch.1")])
+        self.assertEqual("channel", recovery._handle_dialog(task, vision))
+        self.assertEqual([1], escapes)
+
+    def test_cancel_pressed_on_the_dialog_reports_channel(self):
+        clicks = []
+        task = SimpleNamespace(
+            capture_frame=lambda: np.zeros((1080, 1920, 3), np.uint8),
+            log_info=lambda *a, **k: None,
+            operate_click=lambda *a, **k: clicks.append(a),
+            _ocr_box_center=lambda box: (box.x + 20, box.y + 10),
+        )
+        vision = SimpleNamespace(
+            ocr_boxes=lambda *_a, **_k: [
+                _box("选择频道", 590, 290), _box("Ch.1", 607, 360), _box("取消", 830, 748), _box("确认", 1060, 748)
+            ]
+        )
+        self.assertEqual("channel", recovery._handle_dialog(task, vision))
+        self.assertEqual(1, len(clicks))
+        self.assertAlmostEqual((830 + 20) / 1920, clicks[0][0])
+
+    def test_real_back_arrow_still_pressed(self):
+        reached, presses, keys, _escapes, _task = self._run(None, dialog_after_press=False)
+        self.assertGreaterEqual(len(presses), 2)
+        self.assertEqual(["移动键", "H"], keys)
 
 
 HOME = np.full((1080, 1920, 3), 200, np.uint8)

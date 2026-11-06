@@ -52,6 +52,34 @@ class HomePopularityTest(unittest.TestCase):
         # Pressed once only: a second press could take the like back.
         self.assertEqual([LIKE_BUTTON_POINT], clicks)
 
+    def test_a_counter_that_reads_nothing_at_the_end_still_counts_the_like(self):
+        # 4K 2026-11-06: 76, the like landed (77 on screen), the last reads
+        # were empty and the home counted as not liked: a fourth was visited.
+        from src.tasks import WeeklyTasks as weekly
+
+        task = _task(lambda: True)
+        clock = iter(range(0, 1000))
+        reads = iter([76, 76, None, None, None, None, None, 77, 77])
+        task._like_count = lambda: next(reads, None)
+        task.sleep = lambda _s: None
+        task.look_again = lambda read: read()
+        clicks = []
+        task._click_reference = lambda x, y, after_sleep=0: clicks.append((x, y))
+        with mock.patch.object(weekly, "monotonic", lambda: next(clock)):
+            self.assertTrue(task._like_current_home(3))
+        self.assertEqual([LIKE_BUTTON_POINT], clicks)
+
+    def test_one_read_above_before_the_reads_went_blank_is_kept(self):
+        from src.tasks import WeeklyTasks as weekly
+
+        task = _task(lambda: True)
+        clock = iter(range(0, 1000))
+        task.sleep = lambda _s: None
+        reads = iter([77] + [None] * 20)
+        task._like_count = lambda: next(reads, None)
+        with mock.patch.object(weekly, "monotonic", lambda: next(clock)):
+            self.assertEqual(77, task._wait_like_count_above(76))
+
     def test_like_without_counter_change_is_not_pressed_again(self):
         task = _task(lambda: True)
         task._like_count = lambda: 10

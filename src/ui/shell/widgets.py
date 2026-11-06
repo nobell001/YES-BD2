@@ -743,6 +743,50 @@ class Toggle(QAbstractButton):
         painter.drawEllipse(QRectF(x, 3, knob, knob))
 
 
+class OptionSwitch(Button):
+    """A small button that says the current choice; a click switches to the
+    other one (Leo 2026-11-06 「ui小一點 然後用切換的」「文字要包含在按鈕裡」).
+    Same calls as :class:`Segmented`: ``value``, ``set_value``, ``changed``.
+    ``labels`` maps a stored value to the shorter words on the button."""
+
+    changed = Signal(str)
+
+    def __init__(
+        self,
+        off: str,
+        on: str,
+        current: str | None = None,
+        parent=None,
+        labels: dict[str, str] | None = None,
+    ):
+        self._options = (off, on)
+        self._labels = dict(labels or {})
+        self._value = on if current == on else off
+        super().__init__(self._label(self._value), "secondary", "arrow-left-right", "sm", parent)
+        self.clicked.connect(self._flip)
+
+    def _label(self, value: str) -> str:
+        return self._labels.get(value, value)
+
+    def _flip(self) -> None:
+        self.set_value(self._options[0] if self._value == self._options[1] else self._options[1])
+
+    def value(self) -> str:
+        return self._value
+
+    def set_value(self, value: str | None, quiet: bool = False) -> None:
+        value = value if value in self._options else self._options[0]
+        if value == self._value:
+            return
+        self._value = value
+        self.setText(t(self._label(value)))
+        if not quiet:
+            self.changed.emit(value)
+
+    def _clicked(self, value: str) -> None:
+        self.set_value(value)
+
+
 # ---------------------------------------------------------------- segmented
 
 

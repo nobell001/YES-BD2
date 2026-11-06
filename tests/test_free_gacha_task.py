@@ -62,7 +62,7 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
             "抽抽乐",
         )
         task._wait_for_gacha_page = lambda *_args, **_kwargs: True
-        task._wait_for_clothing_pool_page = lambda *_args, **_kwargs: True
+        task._ensure_clothing_pool = lambda *_args, **_kwargs: True
         task._switch_to_equipment_pool = lambda *_args, **_kwargs: True
         task._run_free_section = lambda *_args, **_kwargs: True
         task._sleep_after_recognition = lambda: None
@@ -94,7 +94,7 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
             or True
         )
         pool_waits = []
-        task._wait_for_clothing_pool_page = (
+        task._ensure_clothing_pool = (
             lambda name: pool_waits.append(("clothing", name)) or True
         )
         task._switch_to_equipment_pool = (
@@ -122,7 +122,7 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
         task._click_reference = lambda *_args, **_kwargs: None
         task._wait_for_home_confirmation = lambda *_args, **_kwargs: True
         task._wait_loading_or_gacha_page = lambda *_args, **_kwargs: ("target", True, "抽抽乐")
-        task._wait_for_clothing_pool_page = lambda *_args, **_kwargs: True
+        task._ensure_clothing_pool = lambda *_args, **_kwargs: True
         task._switch_to_equipment_pool = lambda *_args, **_kwargs: True
         task._run_free_section = lambda *_args, **_kwargs: True
         task._sleep_after_recognition = lambda: None
@@ -209,6 +209,80 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
             self.assertTrue(FreeGachaTask._switch_to_equipment_pool(task, "切换装备抽卡"))
         self.assertEqual([("click", 175, 432), ("click", 175, 432)], presses)
         self.assertEqual([], waits)
+
+    def _clothing_task(self, after_presses):
+        """after_presses[n]: the pool shown after n 服装 tab presses (last repeats)."""
+        task = object.__new__(FreeGachaTask)
+        task.config = {}
+        task.info_set = lambda *_args, **_kwargs: None
+        logs = []
+        task.log_info = lambda message, *_args, **_kwargs: logs.append(message)
+        presses = []
+        task._click_reference = lambda x, y, after_sleep=0.0: presses.append((x, y))
+        task.sleep = lambda _seconds: None
+        task.capture_frame = lambda: after_presses[min(len(presses), len(after_presses) - 1)]
+        task._pool_seen = lambda frame, keywords, _name: frame == (
+            "equipment" if keywords == free_gacha_module.EQUIPMENT_POOL_KEYWORDS else "clothing"
+        )
+        task._wait_for_ocr_keywords = lambda keywords, **_kwargs: (
+            task._pool_seen(task.capture_frame(), keywords, ""), ""
+        )
+        return task, presses, logs
+
+    def _clothing_patches(self):
+        from contextlib import ExitStack
+        from functools import partial
+
+        clock = iter(range(0, 10000))
+        stack = ExitStack()
+        stack.enter_context(patch.object(free_gacha_module, "is_loading_dark", lambda _f: False))
+        stack.enter_context(
+            patch.object(
+                free_gacha_module,
+                "press_next",
+                partial(free_gacha_module.press_next, clock=lambda: next(clock)),
+            )
+        )
+        return stack
+
+    def test_clothing_pool_read_at_once_needs_no_tab_press(self):
+        with self._clothing_patches():
+            task, presses, _logs = self._clothing_task(["clothing"])
+            self.assertTrue(FreeGachaTask._ensure_clothing_pool(task, "确认服装池"))
+        self.assertEqual([], presses)
+
+    def test_page_on_equipment_pool_presses_the_clothing_tab(self):
+        # Leo 2026-11-05 「一個地方沒辨識到就出錯」: this used to end the chore.
+        with self._clothing_patches():
+            task, presses, _logs = self._clothing_task(["equipment", "clothing"])
+            self.assertTrue(FreeGachaTask._ensure_clothing_pool(task, "确认服装池"))
+        self.assertEqual([free_gacha_module.CLOTHING_TAB_REFERENCE_POINT], presses)
+
+    def test_clothing_tab_ignored_twice_stops_before_any_draw(self):
+        with self._clothing_patches():
+            task, presses, logs = self._clothing_task(["equipment"])
+            task._wait_for_clothing_pool_page = lambda _name: self.fail("装备池还在，不再长等")
+            self.assertFalse(FreeGachaTask._ensure_clothing_pool(task, "确认服装池"))
+        self.assertEqual([free_gacha_module.CLOTHING_TAB_REFERENCE_POINT] * 2, presses)
+        self.assertTrue(any("还是装备抽抽乐" in line for line in logs))
+
+    def test_unknown_screen_after_clothing_tab_gets_one_more_press(self):
+        with self._clothing_patches():
+            task, presses, _logs = self._clothing_task(["popup", "popup", "clothing"])
+            waits = []
+            task._wait_for_clothing_pool_page = lambda name: waits.append(len(presses)) or (
+                task.capture_frame() == "clothing"
+            )
+            self.assertTrue(FreeGachaTask._ensure_clothing_pool(task, "确认服装池"))
+        point = free_gacha_module.CLOTHING_TAB_REFERENCE_POINT
+        self.assertEqual([point, point], presses)
+        self.assertEqual(2, len(waits))
+
+    def test_clothing_tab_sits_above_the_equipment_tab(self):
+        clothing = free_gacha_module.CLOTHING_TAB_REFERENCE_POINT
+        equipment = free_gacha_module.EQUIPMENT_TAB_REFERENCE_POINT
+        self.assertEqual(clothing[0], equipment[0])
+        self.assertLess(clothing[1], equipment[1])
 
     def test_unknown_screen_without_home_still_gets_one_more_press(self):
         # Leo 2026-10-31 「總之最少都要補按」.
@@ -932,7 +1006,7 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
             True,
             "抽抽乐",
         )
-        task._wait_for_clothing_pool_page = lambda *_args, **_kwargs: False
+        task._ensure_clothing_pool = lambda *_args, **_kwargs: False
         task._run_free_section = lambda *_args, **_kwargs: self.fail(
             "服装池未确认时不得进入免费抽流程"
         )

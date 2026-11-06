@@ -67,6 +67,39 @@ class ServerErrorRecogniseTest(unittest.TestCase):
                 self.assertIsNone(known_popups.server_error([_box(n) for n in names]))
 
 
+# 「與伺服器連接中斷。重新開始遊戲 (-6)」 as OCR reads it on the live frame
+# (tests/fixtures/pvp/server_disconnect_6_over_home_1440.jpg, 2026-11-06):
+# raw 繁中, and after the tool's 繁→简 step.  No 「error:」 on it.
+DISCONNECT_NOTICE_TW = ["公告", "與伺服器連接中斷。重新開始遊戲（-6)", "確認"]
+DISCONNECT_NOTICE_CN = ["公告", "与伺服器连接中断。重新开始游戏（-6)", "确认"]
+
+
+class DisconnectNoticeTest(unittest.TestCase):
+    def test_disconnect_notice_is_known_in_both_scripts(self):
+        for names in (DISCONNECT_NOTICE_TW, DISCONNECT_NOTICE_CN):
+            with self.subTest(names=names):
+                boxes = [_box(n) for n in names]
+                error = known_popups.server_error(boxes)
+                self.assertIsNotNone(error)
+                self.assertEqual("-6", error.code)
+                self.assertTrue(error.disconnected)
+                self.assertFalse(error.season_over)
+                self.assertIs(boxes[-1], error.confirm)
+                self.assertIn("连接断了（-6）", known_popups.server_error_note(error))
+                press = known_popups.pick(boxes)
+                self.assertIs(boxes[-1], press.box)
+
+    def test_a_bracketed_number_alone_is_not_a_notice(self):
+        for names in (
+            ["攻击力（-6)", "确认"],  # no disconnect word
+            ["与伺服器连接中断。重新开始游戏（-6)", "取消", "确认"],
+            ["與伺服器連接中斷。重新開始遊戲（-6)", "取消", "確認"],
+            ["与伺服器连接中断。重新开始游戏（-6)"],  # no button
+        ):
+            with self.subTest(names=names):
+                self.assertIsNone(known_popups.server_error([_box(n) for n in names]))
+
+
 class WayHomeTest(unittest.TestCase):
     def test_way_home_closes_the_notice_and_says_why(self):
         clicks, warnings = [], []

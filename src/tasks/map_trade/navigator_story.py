@@ -129,6 +129,7 @@ from src.utils.colour_rules import switch_knob_side, switch_yellow_ratio
 from src.utils.ocr_utils import keyword_read
 from src.utils.press_confirm import RETRY_AFTER_SECONDS, press_and_confirm
 from src.utils.wait_limits import STUCK_SECONDS
+from src.utils import ocr_size
 
 # Told to the player when the tool turned 「查看战场奖励」 on, or could not.
 BATTLE_REWARDS_TURNED_ON_MESSAGE = (
@@ -2808,7 +2809,7 @@ class StoryCardNavigationMixin:
         )
         try:
             text = self.vision.ocr_text(
-                frame, "卡带吸取剩余", relative_roi=box, target_height=1080, ocr_scale=2.0
+                frame, "卡带吸取剩余", relative_roi=box, target_height=ocr_size.READ_HEIGHT, ocr_scale=2.0
             )
         except (RuntimeError, ValueError, cv2.error, AttributeError):
             return None

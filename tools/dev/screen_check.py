@@ -90,16 +90,41 @@ def _ocr_engine():
 
     engine = ONNXPaddleOcr(use_angle_cls=False, use_openvino=True, use_npu=False)
 
-    def ocr(frame=None, threshold=0.2, **kwargs):
-        """ok-script's onnx read: boxes at the threshold, top to bottom."""
+    def ocr(frame=None, threshold=0.2, box=None, match=None, target_height=0, **kwargs):
+        """ok-script's onnx read, as the app does it: the box cut out, the
+        picture shrunk by ``target_height`` against the whole frame
+        (ok.feature.FeatureSet.resize_image), boxes mapped back to the frame,
+        then filtered by ``match``."""
+        from ok.feature.Box import find_boxes_by_name
+        from ok.feature.FeatureSet import resize_image
+
         image = frame if frame is not None else kwargs.get("image")
+        frame_height = image.shape[0]
+        offset_x = offset_y = 0
+        if box is not None:
+            if isinstance(box, str):
+                raise ValueError(f"named box not supported here: {box}")
+            offset_x, offset_y = box.x, box.y
+            image = image[box.y : box.y + box.height, box.x : box.x + box.width]
+        image, scale = resize_image(image, frame_height, target_height)
         lines = engine.ocr(image)[0] or []
         boxes = []
         for pos, (text, confidence) in lines:
             width = round(pos[2][0] - pos[0][0])
             height = round(pos[2][1] - pos[0][1])
             if width > 0 and height > 0 and confidence >= threshold:
-                boxes.append(Box(pos[0][0], pos[0][1], width, height, confidence, text.strip()))
+                boxes.append(
+                    Box(
+                        round(pos[0][0] / scale) + offset_x,
+                        round(pos[0][1] / scale) + offset_y,
+                        round(width / scale),
+                        round(height / scale),
+                        confidence,
+                        text.strip(),
+                    )
+                )
+        if match is not None:
+            boxes = find_boxes_by_name(boxes, match)
         return sort_boxes(boxes)
 
     return ocr

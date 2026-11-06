@@ -1848,5 +1848,25 @@
   "en": "{done} (no code: {why})",
   "ja": "{done}（コードなし：{why}）",
   "ko": "{done} (코드 없음: {why})"
+ },
+ "移动方式": {
+  "en": "Movement",
+  "ja": "移動方法",
+  "ko": "이동 방식"
+ },
+ "点击": {
+  "en": "Click",
+  "ja": "クリック",
+  "ko": "클릭"
+ },
+ "镜中之战、末日之书、救赎之塔走到战斗点的方式，跟游戏里的设定一样": {
+  "en": "How Mirror Wars, Last Night and Tower of Redemption walk to the battle spot. Match your game setting",
+  "ja": "鏡戦争・終末の書・救済の塔で戦闘地点まで移動する方法。ゲーム側の設定に合わせてください",
+  "ko": "거울전쟁, 종말의 서, 구원의 탑에서 전투 지점까지 이동하는 방식. 게임 설정과 같게 맞춰 주세요"
+ },
+ "点了画面没动，改用 WASD 才走到。移动方式可能设错了，请到「设置 → 移动方式」改成 WASD": {
+  "en": "Clicking didn't move the screen, so it walked there with WASD. Your movement setting may be wrong: set Settings → Movement to WASD",
+  "ja": "クリックしても画面が動かなかったため、WASD で移動しました。移動方法の設定が違うかもしれません。「設定 → 移動方法」を WASD に変更してください",
+  "ko": "클릭해도 화면이 움직이지 않아 WASD로 이동했습니다. 이동 방식 설정이 잘못되었을 수 있습니다. 「설정 → 이동 방식」을 WASD로 바꿔 주세요"
  }
 }

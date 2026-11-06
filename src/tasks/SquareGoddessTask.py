@@ -72,6 +72,7 @@ from src.utils.wait_limits import (
     load_wait,
     scene_at_press,
 )
+from src.utils import ocr_size
 
 REFERENCE_WIDTH = FHD_1080.width
 REFERENCE_HEIGHT = FHD_1080.height
@@ -1324,7 +1325,7 @@ class SquareGoddessTask(BaseBD2Task):
             return self.ocr(
                 frame=ocr_frame,
                 threshold=float(self.config.get("广场 OCR 阈值", 0.2)),
-                target_height=720,
+                target_height=ocr_size.READ_HEIGHT,
                 log=False,
                 name=name,
                 reread=ocr_scale == 1.0,

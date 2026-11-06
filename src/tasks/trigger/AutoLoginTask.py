@@ -31,6 +31,7 @@ from src.utils.image_utils import (
     crop_relative,
 )
 from src.utils.ocr_utils import normalize_ocr_text
+from src.utils import ocr_size
 
 REFERENCE_WIDTH = FHD_1080.width
 REFERENCE_HEIGHT = FHD_1080.height
@@ -677,7 +678,7 @@ class AutoLoginTask(BaseBD2Task):
                 self.ocr(
                     frame=frame,
                     threshold=float(self.config.get("BrownDustX OCR 阈值", 0.2)),
-                    target_height=720,
+                    target_height=ocr_size.READ_HEIGHT,
                     log=False,
                     name="自动登录页面",
                 )
@@ -1072,7 +1073,7 @@ class AutoLoginTask(BaseBD2Task):
                 boxes = self.ocr(
                     frame=target,
                     threshold=float(self.config.get("主页 OCR 阈值", 0.2)),
-                    target_height=720,
+                    target_height=ocr_size.READ_HEIGHT,
                     log=False,
                     name=f"主页抽抽乐 x{scale:g}",
                     reread=scale == 1.0,
@@ -1318,7 +1319,7 @@ class AutoLoginTask(BaseBD2Task):
             boxes = self.ocr(
                 frame=crop,
                 threshold=float(self.config.get("BrownDustX OCR 阈值", 0.2)),
-                target_height=720,
+                target_height=ocr_size.READ_HEIGHT,
                 log=False,
                 name=name,
             )

@@ -16,6 +16,7 @@ from src.ui.shell import actions, data, theme
 from src.ui.shell.page import Page
 from src.ui.shell.widgets import (
     Button,
+    OptionSwitch,
     Card,
     IconLabel,
     IconTile,
@@ -105,6 +106,34 @@ def set_system_notification(on: bool) -> None:
     config = _notification_config()
     if config is not None:
         config[SYSTEM_NOTIFICATION_ENABLED] = bool(on)
+
+
+# 移动方式 (Leo 2026-11-06 「設定也要可以設定移動方式」「WASD 和點擊」): the same
+# setting as 镜中之战's 「舞台移动方式」, which 末日之书 and 救赎之塔 read too.
+MOVE_KEY = "舞台移动方式"
+MOVE_LABELS = {"鼠标点击舞台": "点击", "键盘WASD走到舞台": "WASD"}
+
+
+def _move_options() -> tuple[str, str]:
+    from src.tasks.PVPTask import STAGE_MOVE_CLICK, STAGE_MOVE_WASD
+
+    return STAGE_MOVE_CLICK, STAGE_MOVE_WASD
+
+
+def move_mode() -> str:
+    click, wasd = _move_options()
+    pvp = data.task_by_class_name("PVPTask")
+    try:
+        mode = str(pvp.config.get(MOVE_KEY, click)) if pvp is not None else click
+    except Exception:
+        mode = click
+    return mode if mode in (click, wasd) else click
+
+
+def set_move_mode(mode: str) -> None:
+    pvp = data.task_by_class_name("PVPTask")
+    if pvp is not None and mode in _move_options():
+        pvp.config[MOVE_KEY] = mode
 
 
 class HubRow(QWidget):
@@ -208,6 +237,17 @@ class SettingsPage(Page):
                 )
             )
             game.addWidget(Separator())
+        self.move_switch = OptionSwitch(*_move_options(), move_mode(), labels=MOVE_LABELS)
+        self.move_switch.changed.connect(set_move_mode)
+        game.addWidget(
+            HubRow(
+                "mouse",
+                "移动方式",
+                "镜中之战、末日之书、救赎之塔走到战斗点的方式，跟游戏里的设定一样",
+                control=self.move_switch,
+            )
+        )
+        game.addWidget(Separator())
         # Leo 2026-10-09: the player chooses; off unless ticked here.
         self.mute_toggle = Toggle(game_sound.enabled())
         self.mute_toggle.toggled.connect(game_sound.set_enabled)
@@ -498,6 +538,7 @@ class SettingsPage(Page):
         self.notify_toggle.set_checked_quietly(system_notification_on())
         self.mute_toggle.set_checked_quietly(game_sound.enabled())
         self.status_bar_toggle.set_checked_quietly(game_status_bar.enabled())
+        self.move_switch.set_value(move_mode(), quiet=True)
         self.wait_row.set_sub(self._waits_text())
         self.wechat_toggle.set_checked_quietly(self._wechat_on())
         self._show_wechat()

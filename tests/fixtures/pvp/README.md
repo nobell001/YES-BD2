@@ -17,3 +17,9 @@ Only the 主页 checks' boxes are kept: the left icon column
 `(110, 165, 430, 155)`, the 抽抽乐 label `(110, 993, 95, 54)` and the medal
 strip `(793, 29, 340, 55)`, where a soft glow passed as the medal once its
 contrast was stretched up to the template's.
+
+## server_disconnect_6_over_home_1440.jpg
+
+The game's 「與伺服器連接中斷。重新開始遊戲 (-6)」 notice over a dimmed 主页.
+Live, 2560x1440 繁中 client, 2026-11-06 16:17 (the same account was logged in
+on another PC). The account name and avatar are blurred.

@@ -8,7 +8,7 @@
   "src/tasks/DailyTask.py": 1,
   "src/tasks/DoomBookTask.py": 2,
   "src/tasks/EventBattleTask.py": 2,
-  "src/tasks/FreeGachaTask.py": 3,
+  "src/tasks/FreeGachaTask.py": 2,
   "src/tasks/GearTasks.py": 1,
   "src/tasks/JunkGearTask.py": 3,
   "src/tasks/PVPTask.py": 4,

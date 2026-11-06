@@ -3691,3 +3691,15 @@ msgstr "Uploading this run's full log…"
 
 msgid "{done}（没有代号：{why}）"
 msgstr "{done} (no code: {why})"
+
+msgid "移动方式"
+msgstr "Movement"
+
+msgid "点击"
+msgstr "Click"
+
+msgid "镜中之战、末日之书、救赎之塔走到战斗点的方式，跟游戏里的设定一样"
+msgstr "How Mirror Wars, Last Night and Tower of Redemption walk to the battle spot. Match your game setting"
+
+msgid "点了画面没动，改用 WASD 才走到。移动方式可能设错了，请到「设置 → 移动方式」改成 WASD"
+msgstr "Clicking didn't move the screen, so it walked there with WASD. Your movement setting may be wrong: set Settings → Movement to WASD"

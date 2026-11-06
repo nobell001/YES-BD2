@@ -138,11 +138,10 @@ SHOP_MODE_SWITCH_MAX_CLICKS = 3
 # 在全画面搜索。
 SALE_MARKER_SEARCH_WIDTH = 150
 SALE_MARKER_VERTICAL_PADDING = 12
-# 全帧 OCR 目标高度：仅用于商品名识别重试。↑120% 标志本身不再依赖 OCR。
-SALE_FULL_PAGE_OCR_TARGET_HEIGHT = 900
-# 售出一组后的短暂重排/动画仍可能让 900 高度漏读商品名；
-# 保持 900 优先，并在同一帧追加相邻 OCR 高度。
-SALE_FULL_PAGE_OCR_TARGET_HEIGHTS = (900, 840, 960)
+# 全帧 OCR 读商品名：原尺寸读，不缩小（src/utils/ocr_size.py）。↑120% 标志本身不依赖 OCR。
+# 售出一组后的短暂重排/动画仍可能漏读商品名，同一帧再加边读、放大 1.5 倍读各一次。
+# 以前是缩到 900/840/960 各读一次，缩小会让笔画多的字读错（4K 2026-11-06）。
+SALE_FULL_PAGE_OCR_LOOKS = ({}, {"bordered": True}, {"ocr_scale": 1.5})
 # beta 模板移除了人工标注中不稳定的数字像素，仅在商品名左侧局部 ROI 内
 # 使用；全局误匹配由局部空间门禁阻断。
 SALE_120_PERCENT_MARKER_BETA_TEMPLATE = TemplateSpec(

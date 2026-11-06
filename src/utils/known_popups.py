@@ -28,7 +28,8 @@ does it once for every task; this module is that one place (Leo 2026-10-12,
   技能过场动画 setting;
 - 「确认」 on a server notice that carries an error code and has no other
   button (「当前并非赛季。，error:100019」 over a 镜中之战 battle when the
-  season settles, player report 2026-11-01 23:00).
+  season settles, player report 2026-11-01 23:00; 「与伺服器连接中断。重新开始
+  游戏（-6）」 when the connection drops, live 2026-11-06).
 
 The game's quit dialog (Esc pressed on a top page) is recognised so the way
 home cancels it and stops pressing Esc (Leo 2026-10-12 「這遊戲按沒幾下就會變成
@@ -117,6 +118,15 @@ SERVER_ERROR_BLOCKING_WORDS = ("购买", "钻石", "消耗", "支付", "是否")
 # connection and a battle still running gets this notice (Leo 2026-11-02
 # 「镜中之战每个周日23:00点结算时，服务器会主动断开链接」).
 SEASON_OVER_WORDS = ("并非赛季", "並非賽季")
+# The connection dropped: 「公告：與伺服器連接中斷。重新開始遊戲 (-6)」 with a
+# lone 確認, which sends the game back to its title screen (live 2026-11-06,
+# 15:38 / 15:42 / 15:53 / 16:17, the same account logged in elsewhere).  Its
+# code has no 「error:」, only a bracketed negative number, so the notice was
+# not known: a step failed on it, 商品邮箱 read 「没有可领」 and skipped, and it
+# took about a minute to be closed.  The bracketed code counts only next to
+# one of these words.
+DISCONNECT_WORDS = ("连接中断", "連接中斷", "重新开始游戏", "重新開始遊戲")
+DISCONNECT_CODE = re.compile(r"[（(]\s*(-\d+)\s*[)）]")
 
 
 @dataclass(frozen=True)
@@ -132,14 +142,23 @@ class ServerError:
         text = normalize_ocr_text(self.message)
         return any(normalize_ocr_text(word) in text for word in SEASON_OVER_WORDS)
 
+    @property
+    def disconnected(self) -> bool:
+        """The (-6) style notice; an 「error:」 one keeps the game's own words."""
+        text = normalize_ocr_text(self.message)
+        return self.code.startswith("-") and any(
+            normalize_ocr_text(word) in text for word in DISCONNECT_WORDS
+        )
+
 
 def server_error(boxes) -> ServerError | None:
     """The server notice on screen (an 「error:<code>」 line and its lone
     确认), or None.  Two cues: the code and the 确认; never with 取消 or a
     spend word on the same frame."""
     named = _named(boxes)
-    confirm = _exact(named, CONFIRM_TEXT)
-    if confirm is None or _exact(named, CANCEL_TEXT) is not None:
+    # 確認: a 繁中 game read without the tool's 繁→简 step.
+    confirm = _exact(named, CONFIRM_TEXT) or _exact(named, "確認")
+    if confirm is None or _exact(named, CANCEL_TEXT) is not None or _exact(named, "取消") is not None:
         return None
     text = "".join(name for name, _box in named)
     if any(word in text for word in SERVER_ERROR_BLOCKING_WORDS):
@@ -149,6 +168,8 @@ def server_error(boxes) -> ServerError | None:
         str(getattr(box, "name", "")) for box in boxes or () if box is not confirm
     ).replace(" ", "")
     found = SERVER_ERROR_CODE.search(raw)
+    if found is None and any(normalize_ocr_text(word) in text for word in DISCONNECT_WORDS):
+        found = DISCONNECT_CODE.search(raw)
     if found is None:
         return None
     message = raw[: found.start()].strip("，,。.:：")
@@ -159,6 +180,8 @@ def server_error_note(error: ServerError) -> str:
     """The notice in the player's words."""
     if error.season_over:
         return "镜中之战赛季结算中，无法进行镜中之战"
+    if error.disconnected:
+        return f"和游戏服务器的连接断了（{error.code}），游戏要重新登录，同一个账号在别处登录也会这样"
     return f"游戏提示「{error.message}」（error:{error.code}）"
 
 

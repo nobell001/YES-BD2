@@ -1420,3 +1420,14 @@ class NewMarkedLiveTest(unittest.TestCase):
 
         frame = self._grid("grid_ur_no_marks_leo_4k_at_1080.jpg")
         self.assertEqual([], leading_new_cells(frame, GRID_COLUMNS, GRID_ROWS, 40))
+
+
+class KeptGradeNoteTest(unittest.TestCase):
+    def test_a_ur_label_reads_as_ur_not_as_unreadable(self):
+        # 4K 2026-11-06: 「格子颜色 1-1 UR」 reported as 「格子稀有度认不出」.
+        from src.tasks.JunkGearTask import kept_grade_note
+
+        self.assertEqual("格子是UR，不拆", kept_grade_note("UR"))
+        self.assertEqual("格子稀有度SR", kept_grade_note("SR"))
+        self.assertEqual("格子稀有度认不出", kept_grade_note(None))
+

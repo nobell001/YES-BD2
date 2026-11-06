@@ -381,6 +381,17 @@ def badge_text_cells(boxes) -> set[tuple[int, int]]:
     return marked
 
 
+
+def kept_grade_note(rarity: str | None) -> str:
+    """Why a grid cell was kept for its grade: a grade that is not junk
+    (UR, or not the filtered one) reads apart from a label not read at all."""
+    if rarity == "UR":
+        return "格子是UR，不拆"
+    if rarity:
+        return f"格子稀有度{rarity}"
+    return "格子稀有度认不出"
+
+
 class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRefineTask):
     claim_log_name = "junk_gear"
 
@@ -1139,6 +1150,10 @@ class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRef
         x, y = GRID_COLUMNS[column] + dx, GRID_ROWS[row] + dy
         label = frame[y : y + height, x : x + width]
         rarity = grid_label_rarity(label)
+        # What the colour said, for the report: a UR label is read fine and
+        # simply never junk off the grid; it must not read as 「认不出」
+        # (4K 2026-11-06: a new UR kept as 「格子稀有度认不出」).
+        self._grid_colour = rarity
         if rarity not in ("R", "SR"):
             hues = label_hues(label)
             self.info_set(
@@ -1217,11 +1232,15 @@ class JunkGearTask(BagFilterMixin, NGearCraftMixin, EnhanceDialogMixin, DailyRef
                 report.append(f"{where}:保留[{kept}]")
                 self._kept_reasons.append(kept)
                 continue
+            self._grid_colour = None
             rarity = self._grid_rarity(frame, (row, column)) if frame is not None else None
             wanted = grade or (rarity if rarity in FILTER_GRADES else None)
             if wanted is None or rarity != wanted:
-                report.append(f"{where}:保留[格子稀有度{rarity or '认不出'}]")
-                self._kept_reasons.append(rarity or "稀有度认不出")
+                shown = rarity or (
+                    "UR" if getattr(self, "_grid_colour", None) == "UR" else None
+                )
+                report.append(f"{where}:保留[{kept_grade_note(shown)}]")
+                self._kept_reasons.append(shown or "稀有度认不出")
                 continue
             if wanted not in OPENED_GRADES or five_star_sr:
                 # R is junk off the grid (Leo 2026-10-11 「r不點開」); SR too

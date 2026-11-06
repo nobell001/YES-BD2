@@ -19,6 +19,7 @@ from src.tasks.recovery import recover_to_home
 from src.tasks.RewardClaimTasks import _ClaimTaskBase
 from src.utils.ocr_utils import keyword_match_count
 from src.utils.press_next import Next, press_next
+from src.utils import ocr_size
 
 BUSINESS_ENTRY_POINT = business_entry.ENTRY_POINT
 BUSINESS_POPUP_ROI = (650, 240, 640, 110)
@@ -120,7 +121,7 @@ class RestaurantStoneTask(_ClaimTaskBase):
             boxes = self.ocr(
                 frame=frame,
                 threshold=float(self.config.get("日常 OCR 阈值", 0.2)),
-                target_height=720,
+                target_height=ocr_size.READ_HEIGHT,
                 log=False,
                 name="经营管理弹窗",
             )

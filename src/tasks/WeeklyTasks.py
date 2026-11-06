@@ -31,6 +31,8 @@ VISIT_PAGE_ROI = (0, 110, 1920, 970)
 VISIT_RANDOM_WAIT_SECONDS = 2.5
 # One read 1.5 s after the like missed a counter that updated late.
 LIKE_RESULT_SECONDS = 4.0
+# Looks after that wait when the counter read nothing or had not gone up yet.
+LIKE_EXTRA_LOOKS = 4
 # 下一间 counts once another home's like counter shows.
 NEXT_HOME_WAIT_SECONDS = 5.0
 HOME_PAGES_TITLE_KEYWORDS = VISIT_TITLE_KEYWORDS + MY_HOME_TITLE_KEYWORDS
@@ -192,6 +194,7 @@ class HomePopularityTask(_ClaimTaskBase):
         """
         end_at = monotonic() + LIKE_RESULT_SECONDS
         last = None
+        seen = None  # the latest count actually read
         while True:
             count = self._like_count()
             if before is None:
@@ -199,6 +202,21 @@ class HomePopularityTask(_ClaimTaskBase):
             if count is not None and count > before and count == last:
                 return count
             last = count
+            if count is not None:
+                seen = count
             if monotonic() >= end_at:
-                return count
+                break
             self.sleep(0.3)
+        if seen is not None and seen > before:
+            return seen
+        # The last reads were empty or not yet above (4K 2026-11-06: 76 ->
+        # nothing read while the screen showed 77; the like had landed and a
+        # third home was liked).  A few more looks before calling it missed.
+        for _look in range(LIKE_EXTRA_LOOKS):
+            self.sleep(0.4)
+            count = self._like_count()
+            if count is not None:
+                seen = count
+                if count > before:
+                    return count
+        return seen

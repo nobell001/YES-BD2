@@ -105,6 +105,13 @@ CHECKS = {
         lambda nav, frame: _channel_button(nav, frame),
         {"field_nav_menu", "square_hud_hidden"},
     ),
+    # The dialog that button opens is the second cue: recovery never
+    # presses the top-left spot again once it shows (player report
+    # 2026-11-06, 桌面分身).
+    "选择频道弹窗": (
+        lambda nav, frame: _channel_dialog(nav, frame),
+        {"square_hud_hidden"},
+    ),
     "抽卡结果页": (
         lambda nav, frame: _gacha_result(nav, frame),
         {"gacha_result"},
@@ -116,6 +123,12 @@ def _channel_button(nav, frame):
     from src.tasks.recovery import channel_button_at_back
 
     return channel_button_at_back(nav.vision, frame)
+
+
+def _channel_dialog(nav, frame):
+    from src.tasks.recovery import _channel_dialog
+
+    return _channel_dialog(nav.task.ocr(frame=frame))
 
 
 def _gacha_result(nav, frame):

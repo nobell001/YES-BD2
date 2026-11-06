@@ -60,6 +60,7 @@ from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS, PressOutcome, wait_fo
 from src.utils.press_confirm import press_and_confirm as _press_and_confirm
 from src.utils.template_resolution import offline_template_scale
 from src.utils.wait_limits import STUCK_SECONDS, scene, set_loading_reader, set_popup_closer
+from src.utils import ocr_size
 
 logger = Logger.get_logger(__name__)
 PROBE_OUTPUT_DIR = Path("probe_outputs")
@@ -735,7 +736,11 @@ class BaseBD2Task(BaseTask):
         the player's 跑商 title as 「4」 at 0.77, where v5 read nothing and the
         bordered read found 购买).  Callers that already enlarge the box
         themselves pass ``reread=False``.
+
+        Never shrunk first, whatever a caller asks (``src/utils/ocr_size.py``):
+        a frame shrunk to 720 high read 戰鬥 as 戰門.
         """
+        kwargs["target_height"] = ocr_size.READ_HEIGHT
         boxes = super().ocr(*args, **kwargs)
         if not reread or args or ocr_reread.trusted(boxes):
             return boxes
@@ -2166,7 +2171,7 @@ class BaseBD2Task(BaseTask):
             boxes = self.ocr(
                 frame=frame,
                 threshold=threshold,
-                target_height=720,
+                target_height=ocr_size.READ_HEIGHT,
                 log=False,
                 name=name,
             )

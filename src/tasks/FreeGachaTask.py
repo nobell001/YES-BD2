@@ -11,6 +11,7 @@ from src.utils.ocr_utils import keyword_match_count
 from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS
 from src.utils.press_next import Next, per_frame, press_next
 from src.utils.wait_limits import LOADING_MAX_SECONDS, STUCK_SECONDS, StillTimer, is_loading_dark, load_wait, scene_at_press
+from src.utils import ocr_size
 
 KEYWORD_MATCH_RATIO = 0.9
 
@@ -23,6 +24,12 @@ FREE_ENTRY_RETRY_CHANGED = "changed"
 # 以下点击点均为 1920×1080 参考（_click_reference 按当前客户区归一）。
 GACHA_ENTRY_REFERENCE_POINT = (162, 986)
 EQUIPMENT_TAB_REFERENCE_POINT = (175, 432)
+# The 服装 tab above it (2K clone recording 2026-11-03, 繁中 and 简中: the
+# tab icons stand at about (170, 328) and (170, 432) in 1080p terms).
+CLOTHING_TAB_REFERENCE_POINT = (175, 328)
+# A short look for the 服装抽抽乐 title before the tab is pressed: the
+# gacha page itself was already confirmed, so no loading is waited out here.
+CLOTHING_FIRST_LOOK_SECONDS = 3.0
 BACK_BUTTON_REFERENCE_POINT = (105, 51)
 FREE_GACHA_BUTTON_REFERENCE_POINT = (347, 973)
 CONFIRM_DIALOG_OK_REFERENCE_POINT = (1045, 649)
@@ -135,10 +142,9 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
         if not self._enter_gacha_page():
             return self._fail_run("进入抽卡页")
 
-        # 通用抽卡页关键词在装备页同样能命中，无法证明首段处于服装池；
-        # 没有服装页签参考点无法安全切换，校验失败时只能停止不点击
-        # （BUG-20260913-01 合并前 review）。
-        if not self._wait_for_clothing_pool_page("确认服装池"):
+        # 通用抽卡页关键词在装备页同样能命中，无法证明首段处于服装池
+        # （BUG-20260913-01 合并前 review）：没看到服装抽抽乐就点服装页签再看。
+        if not self._ensure_clothing_pool("确认服装池"):  # 有备案：先看标题，再点服装页签、补点
             return self._fail_run("确认服装池")
 
         if not self._run_free_section(
@@ -214,6 +220,54 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
 
     def _pool_seen(self, frame, keywords: list[str], name: str) -> bool:
         return self._ocr_keywords_in_frame(frame, keywords, 1, name)[0]
+
+    def _ensure_clothing_pool(self, name: str) -> bool:
+        """The first pool must be 服装抽抽乐 before its free entry is pressed.
+
+        The game opens on 服装 (2K clone 2026-11-03, 繁中 and 简中), but a
+        title read badly once, or a page left on 装备, used to end the whole
+        chore here with no remedy (Leo 2026-11-05 「一個地方沒辨識到就出錯」).
+        Now: a short look for the title; else press the 服装 tab (a tab,
+        harmless) and expect 服装抽抽乐, re-press while 装备抽抽乐 still
+        shows; then the long wait; then one more press on any screen.  The
+        free entry is still only pressed once 服装抽抽乐 was read.
+        """
+        found, _text = self._wait_for_ocr_keywords(
+            CLOTHING_POOL_KEYWORDS,
+            timeout=CLOTHING_FIRST_LOOK_SECONDS,
+            minimum_matches=1,
+            name=f"{name}_clothing_pool",
+        )
+        if found:
+            self.log_info(f"{name}：已确认服装抽抽乐页面。")
+            return True
+        self.log_info(f"{name}：没马上看到服装抽抽乐，点服装页签再看。")
+        outcome = press_next(
+            name,
+            lambda: self._click_reference(*CLOTHING_TAB_REFERENCE_POINT, after_sleep=0.8),
+            [
+                Next("服装抽抽乐", lambda f: self._pool_seen(f, CLOTHING_POOL_KEYWORDS, f"{name}_clothing_pool"), goal=True),
+                Next("加载画面", is_loading_dark, loading=True),
+                Next("装备抽抽乐", lambda f: self._pool_seen(f, EQUIPMENT_POOL_KEYWORDS, f"{name}_equipment_pool"), before=True),
+            ],
+            capture=self.capture_frame,
+            sleep=self.sleep,
+            log=self.log_info,
+            timeout=BACK_LOOK_SECONDS,
+            retry_after=0.5,
+        )
+        if outcome.reached:
+            self.log_info(f"{name}：点了服装页签，已确认服装抽抽乐页面。")
+            return True
+        if outcome.screen == "装备抽抽乐":
+            self.log_info(f"{name}：点了服装页签又补点一次，还是装备抽抽乐，不点免费入口。")
+            return False
+        if self._wait_for_clothing_pool_page(name):
+            return True
+        # Leo 2026-10-31 「總之最少都要補按」: one more press on any screen.
+        self.log_info(f"{name}：点了服装页签没看到服装抽抽乐（{outcome.screen}），补点一次。")
+        self._click_reference(*CLOTHING_TAB_REFERENCE_POINT, after_sleep=0.8)  # 不用确认：下面等服装抽抽乐标题
+        return self._wait_for_clothing_pool_page(name)
 
     def _switch_to_equipment_pool(self, name: str) -> bool:
         """Press the 装备 tab, expect 装备抽抽乐; still 服装抽抽乐 → press again.
@@ -812,7 +866,7 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
             boxes = self.ocr(
                 frame=frame,
                 threshold=float(self.config.get("抽卡 OCR 阈值", 0.2)),
-                target_height=720,
+                target_height=ocr_size.READ_HEIGHT,
                 log=False,
                 name=name,
             )

@@ -38,6 +38,7 @@ from src.ui.shell.schedule_ui import (
 from src.ui.shell.widgets import (
     Button,
     CheckBox,
+    OptionSwitch,
     Separator,
     Text,
     Toggle,
@@ -805,6 +806,30 @@ def _with_tasks(slot: Slot) -> Slot:
     return slot
 
 
+def _batch_config():
+    from src.ui.shell import data
+
+    batch = data.task_by_name(data.DAILY_BATCH)
+    return getattr(batch, "config", None)
+
+
+def _close_when() -> str:
+    from src.tasks.DailyBatchTask import CLOSE_GAME_WHEN_KEY, CLOSE_WHEN_CLEAN, CLOSE_WHEN_OPTIONS
+
+    config = _batch_config() or {}
+    value = config.get(CLOSE_GAME_WHEN_KEY, CLOSE_WHEN_CLEAN)
+    return value if value in CLOSE_WHEN_OPTIONS else CLOSE_WHEN_CLEAN
+
+
+def _store_close_when(value: str) -> None:
+    """Written on 保存 only, so 取消 leaves 一键日常's choice as it was."""
+    from src.tasks.DailyBatchTask import CLOSE_GAME_WHEN_KEY
+
+    config = _batch_config()
+    if config is not None and value and config.get(CLOSE_GAME_WHEN_KEY) != value:
+        config[CLOSE_GAME_WHEN_KEY] = value
+
+
 class ScheduleDialog(Floating):
     """定时启动: the week calendar, the 帳號 above it, the options below."""
 
@@ -870,11 +895,22 @@ class ScheduleDialog(Floating):
         self.close_game = CheckBox("做完关闭游戏", self.working.close_game)
         self.shutdown = CheckBox("做完关机", self.working.shutdown)
         self.shutdown.setToolTip(t("定时启动跑的那次，全部做完且没有失败时才会做"))
-        # 什么时候关 is the one in 一键日常's own settings (Leo 2026-11-02).
         self.close_game.setToolTip(t("定时启动跑的那次做完才会做，什么时候关照一键日常的设定"))
+        # 什么时候关 right here too (Leo 2026-11-06 「排程自動日常的時候能不能
+        # 也設定失敗的時候也關」): the same setting as 一键日常's window and
+        # 任务设定, shown only while 做完关闭游戏 is ticked.
+        from src.tasks.DailyBatchTask import CLOSE_WHEN_OPTIONS
+
+        self.close_when = OptionSwitch(*CLOSE_WHEN_OPTIONS, _close_when())
+        self.close_when.setVisible(self.working.close_game)
+        self.close_game.toggled.connect(self.close_when.setVisible)
         options = hbox(None, (0, 2, 0, 0), OPTION_GAP)
-        for box in (self.wake, self.close_game, self.shutdown):
-            options.addWidget(box)
+        options.addWidget(self.wake)
+        pair = hbox(None, (0, 0, 0, 0), 10)
+        pair.addWidget(self.close_game, 0, Qt.AlignVCenter)
+        pair.addWidget(self.close_when, 0, Qt.AlignVCenter)
+        options.addLayout(pair)
+        options.addWidget(self.shutdown)
         options.addStretch(1)
         body.addLayout(options)
         column.addWidget(self.body, 1)
@@ -996,6 +1032,7 @@ class ScheduleDialog(Floating):
             self.message.show()
             self._place()
             return
+        _store_close_when(self.close_when.value())
         self.accept()
 
     def mouseReleaseEvent(self, event):

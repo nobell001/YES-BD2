@@ -1032,6 +1032,14 @@ class TradeNavigationMixin:
                     return
             if attempt < SHOP_CLOSE_CLICK_RETRIES:
                 self.task.sleep(SHOP_CLOSE_CLICK_INTERVAL)
+        from src.tasks.recovery import channel_button_at_back
+
+        if channel_button_at_back(self.vision, self.vision.capture()):
+            # The menu is already closed: on the field that spot is the
+            # channel button 「Ch.<n>」 and opens 选择频道 (4K 桌面分身 probe
+            # 2026-11-06, tmp/clone-channel-1106/probeA-1-after-fixed-point.jpg).
+            self._status("折扣商店关闭按钮", "模板未命中，左上角是频道按钮（已回到场景），不点")
+            return
         self._status("折扣商店关闭按钮", "模板未命中，回退到标定相对点(82,36)")
         self.vision.click_reference(
             *DISCOUNT_SHOP_CLOSE_CONTROL_REFERENCE_POINT,

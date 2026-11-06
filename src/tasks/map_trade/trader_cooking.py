@@ -30,6 +30,7 @@ from src.tasks.map_trade.vision import normalize_text
 from src.utils.calibration import FHD_1080
 from src.utils.image_utils import to_gray
 from src.utils.wait_limits import STUCK_SECONDS, StillTimer
+from src.utils import ocr_size
 
 # The supplied 1920x1080 PC recording shows the complete recipe grid on one
 # page.  Every fixed control below is stored as a ratio; recipe and action
@@ -608,7 +609,7 @@ class CookingFlowMixin:
             frame,
             "料理列表标题",
             relative_roi=COOKING_HEADER_ROI,
-            target_height=900,
+            target_height=ocr_size.READ_HEIGHT,
         )
         if "料理" not in normalize_text(self.vision.simplify(header)):
             return None
@@ -724,7 +725,7 @@ class CookingFlowMixin:
             frame,
             "料理详情标题",
             relative_roi=COOKING_HEADER_ROI,
-            target_height=900,
+            target_height=ocr_size.READ_HEIGHT,
         )
         if "料理" not in normalize_text(self.vision.simplify(header)):
             return None
@@ -732,7 +733,7 @@ class CookingFlowMixin:
             frame,
             f"料理详情-{recipe}",
             relative_roi=COOKING_DETAIL_NAME_ROI,
-            target_height=900,
+            target_height=ocr_size.READ_HEIGHT,
         )
         if (
             _character_coverage(recipe, self.vision.simplify(name))
@@ -765,7 +766,7 @@ class CookingFlowMixin:
             frame,
             "料理详情恢复标题",
             relative_roi=COOKING_HEADER_ROI,
-            target_height=900,
+            target_height=ocr_size.READ_HEIGHT,
         )
         if "料理" not in normalize_text(self.vision.simplify(header)):
             return None
@@ -789,7 +790,7 @@ class CookingFlowMixin:
             detail.frame,
             f"料理-{recipe}数量选项",
             relative_roi=COOKING_QUANTITY_CHOICES_ROI,
-            target_height=900,
+            target_height=ocr_size.READ_HEIGHT,
         )
         for box in boxes:
             text = normalize_text(self.vision.simplify(str(getattr(box, "name", ""))))
@@ -845,7 +846,7 @@ class CookingFlowMixin:
                 frame,
                 f"料理-{recipe}结果",
                 relative_roi=COOKING_RESULT_ROI,
-                target_height=900,
+                target_height=ocr_size.READ_HEIGHT,
             )
             last_text = text or last_text
             simplified = self.vision.simplify(text)

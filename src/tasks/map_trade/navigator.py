@@ -123,6 +123,7 @@ from src.tasks.map_trade.navigator_sandbox import SandboxNavigationMixin
 from src.tasks.map_trade.navigator_story import StoryCardNavigationMixin
 from src.tasks.map_trade.navigator_trade import TradeNavigationMixin
 from src.tasks.map_trade.vision import Vision, normalize_text
+from src.utils import near_miss
 from src.utils.frozen_screen import LOADING_RING_ROI, ring_percent
 from src.utils.home_confirmation import (
     HOME_ANNOUNCEMENT_CLEAR_RELATIVE_POINT,
@@ -333,6 +334,14 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
                 for keyword in SANDBOX_NAVIGATION_PAGE_KEYWORDS
             )
             evidence.append(f"箱庭大地图关键词={keyword_hits}/3")
+            near_miss.note(
+                getattr(self.task, "log_info", None),
+                "箱庭大地图底部控件",
+                [normalize_text(keyword) for keyword in SANDBOX_NAVIGATION_PAGE_KEYWORDS],
+                normalized_footer,
+                keyword_hits,
+                2,
+            )
             if keyword_hits >= 2:
                 left, left_evidence = self._map_page_template_signal(
                     frame,
@@ -908,6 +917,15 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
         normalized = normalize_text(self.vision.simplify(text))
         matched = sum(keyword_read(value, normalized) for value in required)
         self._status(f"{name} OCR命中", f"{matched}/{len(required)}")
+        near_miss.note(
+            getattr(self.task, "log_info", None),
+            name,
+            required,
+            normalized,
+            matched,
+            len(required),
+            found=keyword_read,
+        )
         return matched == len(required), text
 
     @staticmethod

@@ -57,8 +57,7 @@ from src.tasks.map_trade.trader_constants import (
     SALE_DIALOG_TITLE_REGION,
     SALE_DIALOG_TITLE_STABLE_HITS,
     SALE_EMPTY_NAME_STABLE_HITS,
-    SALE_FULL_PAGE_OCR_TARGET_HEIGHT,
-    SALE_FULL_PAGE_OCR_TARGET_HEIGHTS,
+    SALE_FULL_PAGE_OCR_LOOKS,
     SALE_ITEM_LIST_REGION,
     SALE_LIST_DRAG_BOTTOM,
     SALE_LIST_DRAG_SECONDS,
@@ -1200,14 +1199,10 @@ class SellFlowMixin:
         self._last_sale_name_seen = False
         self._last_sale_ocr_output = False
 
-        for target_height in SALE_FULL_PAGE_OCR_TARGET_HEIGHTS:
+        for look_number, look in enumerate(SALE_FULL_PAGE_OCR_LOOKS):
             name_boxes: list[object] = []
-            ocr_boxes = self.vision.ocr_boxes(
-                frame,
-                "出售商品列表",
-                target_height=target_height,
-            )
-            if target_height == SALE_FULL_PAGE_OCR_TARGET_HEIGHT:
+            ocr_boxes = self.vision.ocr_boxes(frame, "出售商品列表", **look)
+            if look_number == 0:
                 self._sale_page_boxes_cache = (frame, list(ocr_boxes))
             saw_ocr_output = saw_ocr_output or bool(ocr_boxes)
             for box in ocr_boxes:
@@ -1368,11 +1363,7 @@ class SellFlowMixin:
         if cached is not None and cached[0] is frame:
             return cached[1]
         boxes = list(
-            self.vision.ocr_boxes(
-                frame,
-                "出售商品列表",
-                target_height=SALE_FULL_PAGE_OCR_TARGET_HEIGHT,
-            )
+            self.vision.ocr_boxes(frame, "出售商品列表")
         )
         self._sale_page_boxes_cache = (frame, boxes)
         return boxes
