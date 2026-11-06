@@ -241,6 +241,13 @@ SALE_OCR_INTERVAL = 0.25
 SALE_COMPLETION_TIMEOUT = 8.0
 SALE_COMPLETION_INTERVAL = 0.25
 SALE_COMPLETION_STABLE_HITS = 2
+# Card stock number, in name-box heights from the name's top left (FHD
+# sell_page fixture: name 香草牛排 at x=435 y=149 h=20, stock 2650 at
+# x=378..423 y=198..219).
+SALE_CARD_STOCK_LEFT_LINES = 5.0
+SALE_CARD_STOCK_RIGHT_SLACK_LINES = 0.3
+SALE_CARD_STOCK_TOP_LINES = 1.6
+SALE_CARD_STOCK_BOTTOM_LINES = 3.6
 # Require two consecutive scans without the target name before treating a
 # post-sale page as empty; a single OCR miss can occur during card reflow.
 SALE_EMPTY_NAME_STABLE_HITS = 2

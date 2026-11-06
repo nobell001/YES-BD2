@@ -103,6 +103,12 @@ TOWER_CARD_POINT = (960, 540)
 QUICK_BATTLE_KEYWORDS = ("快速战斗", "快速戰鬥")
 QUICK_BATTLE_ROI = (1310, 940, 280, 90)
 QUICK_BATTLE_POINT = (1445, 985)
+# Between two seasons the 救赎之塔 card opens the 排名 page instead, with
+# 「赛季结算中 / 离结算结束还有…」 in the middle (繁中 4K 2026-11-05: 賽季結算中,
+# 7 小时 56 分 before the 08:00 reset).  Nothing to fight until it ends.
+SETTLING_ROI = (1080, 440, 420, 110)
+SETTLING_KEYWORDS = ("赛季结算中", "結算中", "结算中")
+SETTLING_NOTE = "救赎之塔赛季结算中，这期结束了，新一期开始前打不了"
 # Keys at the top right: 「10/10」.
 KEYS_ROI = (1690, 25, 200, 60)
 # The 快速战斗 dialog.
@@ -241,6 +247,7 @@ class RedemptionTowerTask(CartridgeFieldTask):
 
     def run_claim(self) -> bool:
         self._why = ""
+        self.done_already_note = ""
         forced = self._fallback_test()
         if forced:
             self.log_info(f"{LABEL}：试跑备用方案，每步跳过第一种做法。")
@@ -289,6 +296,11 @@ class RedemptionTowerTask(CartridgeFieldTask):
             return False
         text = self._text_in(frame, TOWER_CARD_ROI, "救赎之塔卡")
         return keyword_match_count(text, TOWER_KEYWORDS, fuzzy_ratio=0.8) >= 1
+
+    def _settling_page_visible(self, frame) -> bool:
+        """The 排名 page with 赛季结算中: the season is over."""
+        text = self._text_in(frame, SETTLING_ROI, "赛季结算中")
+        return keyword_match_count(text, SETTLING_KEYWORDS, fuzzy_ratio=0.8) >= 1
 
     def _tower_page_visible(self, frame) -> bool:
         """The 救赎之塔 title, or else its 快速战斗 button (no dialog over it)."""
@@ -501,7 +513,13 @@ class RedemptionTowerTask(CartridgeFieldTask):
             lambda: self._tower_page_visible(self.capture_frame()),
             still_before=lambda: self._castle_page_visible(self.capture_frame()),
             timeout=4.0,
-        ) or self._wait_for(self._tower_page_visible, timeout=STUCK_SECONDS):
+        ) or self._wait_for(
+            lambda shown: self._tower_page_visible(shown) or self._settling_page_visible(shown),
+            timeout=STUCK_SECONDS,
+        ):
+            if self._settling_page_visible(self.capture_frame()):
+                self.log_info(f"{LABEL}：{SETTLING_NOTE}，跳过。")
+                self.done_already(SETTLING_NOTE)
             return True
         self._note_why("点了救赎之塔没有进入")
         return False
@@ -521,6 +539,8 @@ class RedemptionTowerTask(CartridgeFieldTask):
     def _quick_battle(self) -> bool:
         if not self._open_tower():
             return False
+        if getattr(self, "done_already_note", "") == SETTLING_NOTE:
+            return True
         if not self.look_again(lambda: level_ticks(self._reference(self.capture_frame()))):
             self.log_info(f"{LABEL}：左边关卡一个勾都没有，这一期还没打过，不能快速战斗，退出。")
             return True
@@ -671,7 +691,11 @@ class RedemptionTowerTask(CartridgeFieldTask):
             if self._dialog_visible(frame):
                 self._cancel_dialog()
                 continue
-            if self._tower_page_visible(frame) or self._castle_page_visible(frame):
+            if (
+                self._tower_page_visible(frame)
+                or self._castle_page_visible(frame)
+                or self._settling_page_visible(frame)
+            ):
                 self.info_set("当前阶段", "返回恶魔城地图")
                 self._click_reference(*DOOM_PAGE_BACK_POINT, after_sleep=1.5)  # 不用确认：等地图
                 self._wait_for(

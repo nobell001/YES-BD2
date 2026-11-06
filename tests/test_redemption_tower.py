@@ -20,6 +20,7 @@ from src.tasks.RedemptionTowerTask import (
     DRY_RUN_KEY,
     FALLBACK_TEST_KEY,
     MAX_POINT,
+    SETTLING_NOTE,
     RedemptionTowerTask,
     find_castle_marker,
     keys_empty,
@@ -296,6 +297,39 @@ class QuickBattleTest(unittest.TestCase):
         with mock.patch("src.tasks.RedemptionTowerTask.level_ticks", return_value=0):
             self.assertTrue(task._quick_battle())
         task.press_and_confirm.assert_not_called()
+
+
+class SeasonSettlingTest(unittest.TestCase):
+    """繁中 4K 2026-11-05: between seasons the card opens 排名 with 賽季結算中;
+    the run is 跳过 (not 失败) and nothing is pressed there."""
+
+    def task(self, text):
+        task = RedemptionTowerTask(SimpleNamespace(scene=None), SimpleNamespace(debug=False))
+        task.config = {DRY_RUN_KEY: False}
+        task.capture_frame = lambda: np.zeros((1080, 1920, 3), np.uint8)
+        task._wait_boxes = lambda *a, **k: []
+        task._box_with = lambda *a: None
+        task.press_and_confirm = mock.Mock(return_value=False)
+        task._wait_for = lambda look, timeout=0: look(task.capture_frame())
+        task._tower_page_visible = lambda frame: False
+        task._text_in = lambda frame, roi, name: text
+        task._click_reference = mock.Mock()
+        task.info_set = lambda *a: None
+        task.log_info = lambda *a, **k: None
+        return task
+
+    def test_settling_page_is_skipped_without_a_battle(self):
+        task = self.task("賽季結算中 離結算結束還有7小時56分鐘")
+        task.done_already_note = ""
+        self.assertTrue(task._quick_battle())
+        self.assertEqual(SETTLING_NOTE, task.done_already_note)
+        self.assertEqual(1, task.press_and_confirm.call_count)  # the card only
+
+    def test_other_page_still_fails(self):
+        task = self.task("排名")
+        task.done_already_note = ""
+        self.assertFalse(task._open_tower())
+        self.assertEqual("", task.done_already_note)
 
 
 class AfterBattleTest(unittest.TestCase):

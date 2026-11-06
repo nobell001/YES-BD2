@@ -99,11 +99,23 @@ CHECKS = {
     ),
     # 白嫖抽抽乐 presses back once more, then Esc, then the arrow, only while
     # the draw result reads (player 2026-11-02: one back press did nothing).
+    # Recovery never presses its top-left back there: the field's 「Ch.<n>」
+    # opens 选择频道 (player v0.2.29 2026-11-03, square buttons hidden).
+    "频道按钮": (
+        lambda nav, frame: _channel_button(nav, frame),
+        {"field_nav_menu", "square_hud_hidden"},
+    ),
     "抽卡结果页": (
         lambda nav, frame: _gacha_result(nav, frame),
         {"gacha_result"},
     ),
 }
+
+
+def _channel_button(nav, frame):
+    from src.tasks.recovery import channel_button_at_back
+
+    return channel_button_at_back(nav.vision, frame)
 
 
 def _gacha_result(nav, frame):

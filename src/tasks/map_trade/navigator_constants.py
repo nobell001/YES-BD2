@@ -61,6 +61,15 @@ CLASSIFY_LOADING_RELATIVE_ROI = reference_rect_to_relative_roi(
     CLASSIFY_LOADING_REFERENCE_ROI,
     FHD_1080,
 )
+# The other loading screen: all black, only 「NOW / LOADING」 in white in the
+# bottom-right corner (4K PC clone 1080p 2026-11-05: words at x 1590-1728,
+# y 929-1026; no BROWN DUST logo, so it read as unknown).  Over 272 saved
+# frames 「loading」 was read here on that screen only.
+CLASSIFY_NOW_LOADING_REFERENCE_ROI = (1400, 860, 520, 220)
+CLASSIFY_NOW_LOADING_RELATIVE_ROI = reference_rect_to_relative_roi(
+    CLASSIFY_NOW_LOADING_REFERENCE_ROI,
+    FHD_1080,
+)
 # 商店页签（购买/出售）位于左上，标题/仓库/严加管理位于中部标题牌。
 CLASSIFY_SHOP_TABS_REFERENCE_ROI = (100, 120, 300, 220)
 CLASSIFY_SHOP_TABS_RELATIVE_ROI = reference_rect_to_relative_roi(

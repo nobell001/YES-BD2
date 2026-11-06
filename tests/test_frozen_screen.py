@@ -458,3 +458,44 @@ class PressedButStillTest(unittest.TestCase):
                 if second in (3, 8):
                     watch.pressed((10, 10))
         self.assertNotIn("点了", str(fired.exception))
+
+
+class LoadingRingTest(unittest.TestCase):
+    """The ring's percent is read from its own crop (4K PC clone 2026-11-05)."""
+
+    def test_ring_percent(self):
+        from types import SimpleNamespace
+
+        from src.utils.frozen_screen import ring_percent
+
+        box = lambda text: SimpleNamespace(name=text)  # noqa: E731
+        self.assertEqual("94%", ring_percent([box("94 %")]))
+        self.assertEqual("100%", ring_percent([box("x"), box("100%")]))
+        for text in ("4112%", "+112%", "94", "loading"):
+            self.assertEqual("", ring_percent([box(text)]))
+
+    def test_ring_crop_is_the_bottom_right_corner(self):
+        from src.utils.frozen_screen import ring_crop
+
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        self.assertEqual((140, 140), ring_crop(frame).shape[:2])
+        frame4k = np.zeros((2160, 3840, 3), dtype=np.uint8)
+        self.assertEqual((280, 280), ring_crop(frame4k).shape[:2])
+
+    def test_the_stuck_check_reads_the_ring_when_the_whole_frame_misses_it(self):
+        # A whole-frame OCR read no percent on 4 of 4 ring screens tried.
+        from types import SimpleNamespace
+
+        from src.tasks.BaseBD2Task import BaseBD2Task
+
+        task = object.__new__(BaseBD2Task)
+        calls = []
+
+        def ocr(frame, name, reread):
+            calls.append(frame.shape[:2])
+            return [] if len(calls) == 1 else [SimpleNamespace(name="94%")]
+
+        task.ocr = ocr
+        frame = np.full((1080, 1920, 3), 180, dtype=np.uint8)
+        self.assertEqual("94%", task._loading_words_on(frame))
+        self.assertEqual([(1080, 1920), (140, 140)], calls)

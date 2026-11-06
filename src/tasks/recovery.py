@@ -39,6 +39,12 @@ BACK_HOME_WAIT_SECONDS = 4.5
 # Mean grey difference (on a 1/8 thumbnail) that counts as a new screen.
 FRAME_CHANGE_MIN_DIFF = 8.0
 BACK_BUTTON_POINT = (150 / REFERENCE_WIDTH, 50 / REFERENCE_HEIGHT)
+# In a field (广场, 箱庭) the top-left spot holds the channel button
+# 「Ch.137」 instead of a back arrow: a press there opens 选择频道 (player
+# v0.2.29 2026-11-03, square buttons hidden after the goddess wish: back
+# opened it, 取消 closed it, eight times, and H never got its turn).
+CHANNEL_BUTTON_RELATIVE_ROI = (0.0, 0.0, 320 / REFERENCE_WIDTH, 95 / REFERENCE_HEIGHT)
+CHANNEL_BUTTON_TEXT = re.compile(r"^c[hn][.,·:]?\d{1,4}", re.IGNORECASE)
 # Loading between pages is black with a faint logo (p99 grey ~40 live);
 # every real page has bright UI text.
 TRANSITION_P99_MAX = 70.0
@@ -276,10 +282,29 @@ def recover_to_home(task, attempts: int = RECOVERY_ATTEMPTS) -> bool:
             watch.loading_hold = False
 
 
+def channel_button_at_back(vision, frame) -> bool:
+    """The field's channel button 「Ch.<n>」 sits where the back arrow is
+    pressed."""
+    try:
+        boxes = vision.ocr_boxes(
+            frame, "恢复主页频道按钮", relative_roi=CHANNEL_BUTTON_RELATIVE_ROI
+        )
+    except (TaskDisabledException, FinishedException):
+        raise
+    except Exception:
+        return False
+    return any(
+        CHANNEL_BUTTON_TEXT.match(re.sub(r"\s+", "", str(getattr(box, "name", ""))))
+        for box in boxes
+    )
+
+
 def _recover_to_home(task, attempts: int) -> bool:
     vision = Vision(task)
     navigator = Navigator(task, vision)
     task._recovery_saw_title = False
+    task._recovery_why = ""
+    channel_seen = False
     home_key_pressed = False
     back_did_nothing = False
     back_moved = 0
@@ -357,6 +382,13 @@ def _recover_to_home(task, attempts: int) -> bool:
             # 餐厅...): the game's own H once (Leo 2026-10-11 「在餐廳也可以按
             # H回主頁」「凡事總要有備用方案 不要失敗就卡死」).
             home_key_pressed = True
+            release = getattr(task, "release_move_keys", None)
+            if channel_seen and callable(release):
+                # A field with its 主页/H hidden: a movement key the game
+                # still holds keeps it so and H does nothing (4K live test
+                # 2026-11-04, player v0.2.29 frames look the same).
+                task.log_info("恢复主页：场景上方的主页按钮被收起来了，先把移动键各按一下放开。")
+                release(after_sleep=0.5)
             task.log_info("恢复主页：返回没回到主页，改按快捷键 H。")
             if task.tap_key(HOME_KEY, after_sleep=0.5) and _wait_after_back(
                 task, navigator, frame
@@ -379,6 +411,13 @@ def _recover_to_home(task, attempts: int) -> bool:
                 return True
             back_did_nothing = False
             continue
+        if channel_button_at_back(vision, frame):
+            # Not a back arrow: the field's channel button.  H, then Esc.
+            if not channel_seen:
+                task.log_info("恢复主页：左上角是频道按钮（在广场等场景里），不点它，改按 H 和 Esc。")
+            channel_seen = True
+            back_did_nothing = True
+            continue
         task.log_info("恢复主页：点击左上角返回。")
         task.operate_click(*BACK_BUTTON_POINT, after_sleep=0.5)
         # Live 2026-09-27: a fixed 1.5 s sleep plus a full classification per
@@ -392,6 +431,9 @@ def _recover_to_home(task, attempts: int) -> bool:
             back_moved += 1
     if navigator.classify() == ScreenState.HOME:
         return True
+    if channel_seen:
+        task._recovery_why = "还在广场之类的场景里，画面上方的主页按钮没有出现，放开移动键、按 H 和 Esc 也没回到主页"
+        task.log_warning(f"恢复主页：{task._recovery_why}。", notify=True)
     _keep_failure_picture(task, navigator)
     return False
 

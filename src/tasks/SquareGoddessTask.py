@@ -123,6 +123,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = PROJECT_ROOT / "recognition-assets" / "template-assets"
 
 
+def home_fail_why(task) -> str:
+    """Why the shared way home gave up, for the status line."""
+    why = str(getattr(task, "_recovery_why", "") or "")
+    return f"：{why}" if why else ""
+
+
 class SquareGoddessTask(BaseBD2Task):
     recover_home_on_failure = True
     start_from_home = True
@@ -252,7 +258,7 @@ class SquareGoddessTask(BaseBD2Task):
             self.info_set("状态", "今天已许愿，跳过。")
             self._status_set("女神像许愿结果", "今天已许愿")
             if not self._return_home_from_square():
-                self.info_set("状态", "广场女神像失败：今天已许愿，但未能返回主页。")
+                self.info_set("状态", f"广场女神像失败：今天已许愿，但未能返回主页{home_fail_why(self)}。")
                 return False
             self.info_set("状态", "今天已许愿，跳过并返回主页。")
             self.log_completion("广场女神像：今天已经许愿过，跳过并返回主页。")
@@ -260,7 +266,7 @@ class SquareGoddessTask(BaseBD2Task):
         self.info_set("状态", "女神像许愿完成。")
         self._status_set("女神像许愿结果", "完成")
         if not self._return_home_from_square():
-            self.info_set("状态", "广场女神像失败：许愿完成，但未能返回主页。")
+            self.info_set("状态", f"广场女神像失败：许愿完成，但未能返回主页{home_fail_why(self)}。")
             return False
         self.info_set("状态", "女神像许愿完成并返回主页。")
         self.log_completion("广场女神像：许愿完成并返回主页。")

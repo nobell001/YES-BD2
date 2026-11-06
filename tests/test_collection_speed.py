@@ -38,6 +38,7 @@ def _navigator(texts, reads, *, sandbox):
         threshold_for=lambda spec: spec.threshold,
         template_brightness_ratio=lambda *_args: 0.0,
         ocr_text=lambda _frame, name, **_kwargs: reads.append(name) or texts.get(name, ""),
+        ocr_boxes=lambda _frame, name, **_kwargs: reads.append(name) or [],
         simplify=lambda value: value,
     )
     task = SimpleNamespace(config={}, info_set=lambda *_args: None, sleep=lambda *_args: None)

@@ -97,6 +97,32 @@ def loading_percent(boxes, width: int, height: int) -> str:
     return ""
 
 
+# The loading ring itself, as a fraction of the frame (1920x1080: x 1770-1910,
+# y 930-1070).  Measured on 15 scene loading screens (镜中之战 11, 餐厅 2,
+# 广场 2; 4K PC clone 1080p 2026-11-05): an OCR of this crop read the percent
+# on all 15, a whole-frame OCR on none of the 4 tried, and a wider corner
+# crop missed one.  Over 272 saved frames this crop read a percent on those
+# 15 only; the wider corner also holds the 跑商 price change (+112% read as
+# 4112%).
+LOADING_RING_ROI = (1770 / 1920, 930 / 1080, 1910 / 1920, 1070 / 1080)
+
+
+def ring_crop(frame):
+    """The loading ring's part of ``frame`` (LOADING_RING_ROI)."""
+    height, width = frame.shape[:2]
+    x0, y0, x1, y1 = LOADING_RING_ROI
+    return frame[int(y0 * height) : int(y1 * height), int(x0 * width) : int(x1 * width)]
+
+
+def ring_percent(boxes) -> str:
+    """A percent ("94%") read inside the ring crop, "" when none."""
+    for box in boxes or ():
+        match = _PERCENT.match("".join(str(getattr(box, "name", "") or "").split()))
+        if match and int(match.group(1)) <= 100:
+            return f"{int(match.group(1))}%"
+    return ""
+
+
 def loading_sign(boxes, width: int, height: int) -> str:
     """What marks the OCR'd frame as a loading screen: its ring's percent or
     a loading word ("" when neither)."""

@@ -44,6 +44,10 @@ from src.tasks.map_trade.trader_constants import (
     SALE_CANDIDATE_STILL_MIN,
     SALE_CLOSE_POINT,
     SALE_COMPLETION_INTERVAL,
+    SALE_CARD_STOCK_BOTTOM_LINES,
+    SALE_CARD_STOCK_LEFT_LINES,
+    SALE_CARD_STOCK_RIGHT_SLACK_LINES,
+    SALE_CARD_STOCK_TOP_LINES,
     SALE_COMPLETION_STABLE_HITS,
     SALE_COMPLETION_TIMEOUT,
     SALE_CONFIRM_POINT,
@@ -545,6 +549,7 @@ class SellFlowMixin:
         a dialog cannot be proven closed.
         """
 
+        self._unconfirmed_sale = None
         if self._sell_selected_entry(entry):
             return True
         if self._last_sale_unavailable or getattr(self, "_sale_drag_refused", False):
@@ -702,6 +707,7 @@ class SellFlowMixin:
         if available is None:
             self.task.log_warning(f"卖：{entry.item}出售弹窗未识别到可购买数量。")
             return None
+        self._settle_unconfirmed_sale(entry, owned)
         if previous_owned is not None and owned >= previous_owned:
             self.task.log_warning(
                 f"卖：{entry.item}出售后拥有数量未下降（当前{owned}，上次{previous_owned}），停止以避免重复出售。"
@@ -748,15 +754,27 @@ class SellFlowMixin:
         self.task.log_info(
             f"卖：{entry.item}已点击出售，本组最大可出售{available}个，等待交易完成。"
         )
+        selected_quantity = getattr(self, "_last_selected_sale_quantity", None)
         if not self._wait_sale_completion(
             entry,
             frame,
             before_signature,
             before_toast_id=before_toast_id,
+            owned=owned,
+            selected=selected_quantity,
+            name_box=getattr(candidate, "name_box", None),
         ):
+            # The sale may still have gone through (a partial sale leaves the
+            # card in place); the retry's dialog count settles it.
+            self._unconfirmed_sale = (entry.item, owned, selected_quantity)
             return None
+        confirmed = getattr(self, "_confirmed_sale_quantity", None)
         trade_detail.note_sale(
-            self, entry.item, getattr(self, "_last_selected_sale_quantity", None)
+            self,
+            entry.item,
+            confirmed
+            if confirmed is not None
+            else getattr(self, "_last_selected_sale_quantity", None),
         )
         return owned, True
 
@@ -1406,13 +1424,22 @@ class SellFlowMixin:
         timeout: float = SALE_COMPLETION_TIMEOUT,
         *,
         before_toast_id: int | None = None,
+        owned: int | None = None,
+        selected: int | None = None,
+        name_box=None,
     ) -> bool:
         """Wait until the sale dialog closes and the page advances.
 
-        A transaction toast is preferred.  If it is missed, two consecutive
-        post-sale OCR signatures that differ from the pre-sale page are an
-        equivalent reflow confirmation.  A still-open sale dialog never
-        counts as completion.
+        Three cues, any one confirms: the transaction toast; two consecutive
+        post-sale OCR signatures that differ from the pre-sale page (the card
+        moved or vanished); or, for a partial sale that leaves the card in
+        place, the card's own stock number dropping below owned into the
+        range this sale can reach (owned - selected .. owned - 1), the same
+        value twice in a row (live 4K 2026-11-05: 甜椒 2640 -> 2287 sold, yet
+        the page never reflowed and no toast was read).  Leo 11-05: any
+        result in that range counts, not only the exact sum; the report
+        then takes the real drop.  A still-open sale dialog
+        never counts as completion.
         """
 
         if before_toast_id is None:
@@ -1422,6 +1449,15 @@ class SellFlowMixin:
         stable_hits = 0
         last_text = ""
         dialog_closed = False
+        self._confirmed_sale_quantity = None
+        lowest_left = (
+            (owned - selected if selected is not None and 0 < selected < owned else 0)
+            if owned is not None and owned > 1
+            else None
+        )
+        stock_hits = 0
+        last_stock: int | None = None
+        stock_candidate: int | None = None
         while True:
             frame = self.vision.capture()
             if not dialog_closed:
@@ -1463,13 +1499,146 @@ class SellFlowMixin:
                     if stable_hits >= SALE_COMPLETION_STABLE_HITS:
                         self._status("出售完成确认", f"{entry.item}:页面重排")
                         return True
+                if lowest_left is not None and name_box is not None:
+                    stock = self._sale_card_stock(frame, name_box)
+                    if stock is not None:
+                        last_stock = stock
+                    if self._stock_shows_sale(owned, stock, lowest_left):
+                        stock_hits = stock_hits + 1 if stock == stock_candidate else 1
+                        stock_candidate = stock
+                    else:
+                        stock_hits = 0
+                        stock_candidate = None
+                    if stock_hits >= SALE_COMPLETION_STABLE_HITS:
+                        sold = owned - stock
+                        self._confirmed_sale_quantity = sold
+                        self._status(
+                            "出售完成确认",
+                            f"{entry.item}:库存{owned}→{stock}",
+                        )
+                        self.task.log_info(
+                            f"卖：{entry.item}商品卡库存由{owned}变为{stock}，"
+                            f"确认已卖出{sold}个。"
+                        )
+                        return True
             if monotonic() >= end_at:
                 break
             self.task.sleep(SALE_COMPLETION_INTERVAL)
+        stock_note = ""
+        if lowest_left is not None:
+            stock_note = (
+                f"，商品卡库存读到{last_stock if last_stock is not None else '-'}"
+                f"（应在{lowest_left}到{owned - 1}之间）"
+            )
         self.task.log_warning(
-            f"卖：{entry.item}点击出售后未确认交易完成，OCR={last_text or '-'}。"
+            f"卖：{entry.item}点击出售后未确认交易完成{stock_note}，"
+            f"OCR={last_text or '-'}。"
         )
         return False
+
+    @staticmethod
+    def _stock_shows_sale(owned: int, stock: int | None, lowest_left: int) -> bool:
+        """The card's stock is lower than before, by no more than was chosen.
+
+        A read with one digit lost (2287 -> 228) falls below the range, and
+        one equal to the old count is not a sale.
+        """
+
+        if stock is None or not lowest_left <= stock < owned:
+            return False
+        return not _with_one_extra_digit(owned, stock)
+
+    def _settle_unconfirmed_sale(self, entry: CalendarEntry, owned: int) -> None:
+        """Count an earlier unconfirmed sale once the dialog shows fewer owned.
+
+        The dialog's 拥有 count is read independently of the page cues, so a
+        lower count on the retry proves the earlier press sold (and how many).
+        """
+
+        pending = getattr(self, "_unconfirmed_sale", None)
+        if not pending or pending[0] != entry.item:
+            return
+        self._unconfirmed_sale = None
+        _, owned_before, selected = pending
+        if owned_before is None or owned >= owned_before:
+            self.task.log_info(
+                f"卖：{entry.item}重试时弹窗库存{owned}未少于之前的{owned_before}，"
+                "上次出售确实没有成交。"
+            )
+            return
+        sold = owned_before - owned
+        if selected is not None and sold != selected:
+            self.task.log_info(
+                f"卖：{entry.item}弹窗库存减少{sold}个，与上次选择的{selected}个不同，"
+                "按实际减少记入。"
+            )
+        self.task.log_info(
+            f"卖：{entry.item}重试时弹窗库存由{owned_before}降到{owned}，"
+            f"确认上次已卖出{sold}个，记入报表。"
+        )
+        self._status("出售完成确认", f"{entry.item}:重试时库存{owned_before}→{owned}")
+        trade_detail.note_sale(self, entry.item, sold)
+
+    def _sale_card_stock(self, frame: np.ndarray, name_box) -> int | None:
+        """Read the stock number printed on the card whose name is name_box.
+
+        The number sits at the icon's lower right, left of and about two
+        lines below the name.  The page OCR of this frame is tried first;
+        if it has no number there, that small area is read on its own.
+        """
+
+        geometry = self._ocr_box_geometry(name_box)
+        if geometry is None:
+            return None
+        name_x, name_y, _, name_height = geometry
+        line = max(1.0, name_height)
+        left = name_x - SALE_CARD_STOCK_LEFT_LINES * line
+        right = name_x + SALE_CARD_STOCK_RIGHT_SLACK_LINES * line
+        top = name_y + SALE_CARD_STOCK_TOP_LINES * line
+        bottom = name_y + SALE_CARD_STOCK_BOTTOM_LINES * line
+
+        def in_area(box) -> bool:
+            box_geometry = self._ocr_box_geometry(box)
+            if box_geometry is None:
+                return False
+            x, y, width, height = box_geometry
+            center_y = y + height / 2
+            return x >= left and x + width <= right and top <= center_y <= bottom
+
+        values = [
+            self._card_stock_value(str(getattr(box, "name", "")))
+            for box in self._sale_page_boxes(frame)
+            if in_area(box)
+        ]
+        values = [value for value in values if value is not None]
+        if len(values) == 1:
+            return values[0]
+        if values:
+            return None  # two numbers there: not sure which one is the stock
+        height, width = frame.shape[:2]
+        x0 = max(0, int(left))
+        y0 = max(0, int(name_y + SALE_CARD_STOCK_TOP_LINES * line - line))
+        x1 = min(width, int(right))
+        y1 = min(height, int(bottom + line))
+        if x1 - x0 < 4 or y1 - y0 < 4:
+            return None
+        crop_values = [
+            self._card_stock_value(str(getattr(box, "name", "")))
+            for box in self.vision.ocr_boxes(
+                frame,
+                "出售商品卡库存",
+                relative_roi=(x0 / width, y0 / height, (x1 - x0) / width, (y1 - y0) / height),
+            )
+        ]
+        crop_values = [value for value in crop_values if value is not None]
+        return crop_values[0] if len(crop_values) == 1 else None
+
+    @staticmethod
+    def _card_stock_value(text: str) -> int | None:
+        compact = re.sub(r"\s", "", str(text))
+        if not re.fullmatch(r"[0-9][0-9,，.]*", compact):
+            return None
+        return int(re.sub(r"\D", "", compact))
 
     def _sale_page_text(self, frame: np.ndarray) -> str:
         text = " ".join(

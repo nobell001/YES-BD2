@@ -43,7 +43,7 @@ from src.utils.frozen_screen import FrozenScreen
 from src.utils.image_utils import template_match_response
 from src.utils.ocr_utils import keyword_match_count, normalize_ocr_text
 from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS, wait_for
-from src.utils.wait_limits import LOADING_MAX_SECONDS, ProgressWait, is_loading_dark
+from src.utils.wait_limits import LOADING_MAX_SECONDS, ProgressWait, StillTimer, is_loading_dark
 
 # 1920x1080 reference coordinates / ROIs.
 HOME_BANNER_ROI = (1400, 480, 520, 420)
@@ -100,6 +100,20 @@ DEFEAT_BLANK_POINT = (960, 140)
 # battle text must not get a pause menu, and the battle is never ended.  The
 # battle text coming back counts as still fighting.
 UNKNOWN_END_SECONDS = 8.0
+# Between two battles of the game's own chain (第3次 of 共5次 done) there is
+# no battle text: the camera pans, VICTORY shows, the screen fades and the
+# next battle loads.  A player's 1080p HDR PC (v0.2.31, 2026-11-05) took
+# longer than 8 s plus the blank tap there, and the run failed while the game
+# was already fighting 第4次／共5次.  That gap is the game working (Leo
+# 2026-10-15: loading does not count, at most LOADING_MAX_SECONDS): once a
+# battle of the chain was seen, VICTORY, the black loading screen or a picture
+# that keeps moving count as busy, never longer than LOADING_MAX_SECONDS
+# after the last battle frame.  That includes the end of the last battle (Leo
+# 2026-11-05 「如果他是第五場的victory呢」): the same pan and MVP screen come
+# before 返回 there, and replaying the real 5-run chain 8x slower failed on
+# them with the 8 s rule.  A still, unknown screen is still caught after
+# UNKNOWN_END_SECONDS.
+VICTORY_TEXT = "VICTORY"
 # Leo 2026-10-14 「如果要等待不要再有20幾30秒這種這麼長的時間頂多等8秒10秒」: every
 # wait for a page or a cue is 10 s at most (battles themselves are not waits).
 MAX_WAIT_SECONDS = 10.0
@@ -1088,6 +1102,20 @@ class EventBattleTask(_ClaimTaskBase):
         Nothing is pressed."""
         return field_battle.auto_on(self._roi_boxes(frame, None, "活动战斗画面"))
 
+    def _between_battles(self, frame, boxes, battle_seen: bool, still, since_battle: float) -> bool:
+        """The game is moving on by itself to the chain's next battle or its
+        result screen (see VICTORY_TEXT's note): VICTORY read, or a battle
+        seen and the screen loading or moving.  Never past LOADING_MAX_SECONDS
+        after the last battle frame.  Nothing is pressed."""
+        if since_battle > LOADING_MAX_SECONDS:
+            return False
+        text = normalize_ocr_text(self._boxes_text(boxes)).upper().replace(" ", "")
+        if VICTORY_TEXT in text:
+            return True
+        if not battle_seen:
+            return False
+        return is_loading_dark(frame) or still.still_for(frame, monotonic()) < UNKNOWN_END_SECONDS
+
     def _wait_in_battle(self, timeout: float) -> bool:
         end_at = monotonic() + timeout
         looked = False  # 至少看一次：时间已到也先看一眼再说没看到
@@ -1238,6 +1266,8 @@ class EventBattleTask(_ClaimTaskBase):
         calm = 0
         defeat_calm = 0
         busy_at = monotonic()  # last frame in battle or on a known screen
+        battle_at = busy_at  # last frame in battle
+        still = StillTimer()
         tapped = False
         looked = False  # 至少看一次：时间已到也先看一眼再说没看到
         while not looked or monotonic() <= end_at:
@@ -1259,7 +1289,8 @@ class EventBattleTask(_ClaimTaskBase):
             if in_battle:
                 calm = 0
                 defeat_calm = 0
-                busy_at = monotonic()
+                busy_at = battle_at = monotonic()
+                still.reset()
                 tapped = False
             elif self._defeat_shown(frame):
                 # Two calm frames, as for the win screen.
@@ -1281,9 +1312,15 @@ class EventBattleTask(_ClaimTaskBase):
                 defeat_calm = 0
                 if self._dismiss_ap_shortage():
                     return max(seen, 1)
-                if self._auto_battle_shown(frame):
+                screen = self._roi_boxes(frame, None, "活动战斗画面")
+                if field_battle.auto_on(screen):
                     busy_at = monotonic()
                     tapped = False
+                elif self._between_battles(
+                    frame, screen, seen > 0, still, monotonic() - battle_at
+                ):
+                    busy_at = monotonic()
+                    self.info_set("当前阶段", "连战之间：等下一场开打")
                 elif monotonic() - busy_at > UNKNOWN_END_SECONDS:
                     # Neither battle nor a result screen it knows.
                     if mode and self._wait_for_stage_page(mode, timeout=0.0, quiet=True):

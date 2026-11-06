@@ -36,6 +36,8 @@ from src.utils.frozen_screen import (
     FrozenScreen,
     FrozenWatch,
     loading_sign,
+    ring_crop,
+    ring_percent,
 )
 from src.utils.game_day import DAILY_REFRESH_HOUR
 from src.utils.home_confirmation import (
@@ -84,6 +86,8 @@ DISMISS_SAME_SPOT = 0.04  # share of the window width/height
 FOREGROUND_ATTEMPTS = 3
 # A shortcut tap: long enough for the PC client to read it (WASD holds work live).
 KEY_TAP_SECONDS = 0.08
+# W A S D, then ← ↑ → ↓ (virtual-key codes).
+MOVE_KEY_CODES = (0x57, 0x41, 0x53, 0x44, 0x25, 0x26, 0x27, 0x28)
 # The game's own shortcuts, shown under its buttons: H 主页 in every field
 # (广场、餐厅、箱庭、镜中之战...); F on 主页 goes back to the recent
 # cartridge (Leo 「f上面是直接返回卡帶」); P in a field opens the quick switch.
@@ -999,7 +1003,18 @@ class BaseBD2Task(BaseTask):
         except Exception:
             return ""
         height, width = frame.shape[:2]
-        return loading_sign(boxes, width, height)
+        sign = loading_sign(boxes, width, height)
+        if sign:
+            return sign
+        # The ring's percent is often too small for a whole-frame read
+        # (frozen_screen.LOADING_RING_ROI): read the ring by itself too.
+        try:
+            ring = list(self.ocr(frame=ring_crop(frame), name="卡住前看载入圈", reread=False) or [])
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception:
+            return ""
+        return ring_percent(ring)
 
     def press_dismiss(self, x: float, y: float, after_sleep: float = 1.0, label: str = "") -> bool:
         """Press a popup's closing spot (relative x, y).  False, without a
@@ -1419,6 +1434,23 @@ class BaseBD2Task(BaseTask):
             self.log_warning(f"游戏窗口不在最前面，快捷键 {letter} 没有发送。")
             return False
         self.info_set("快捷键", letter)
+        self.sleep(after_sleep)
+        return True
+
+    def release_move_keys(self, after_sleep: float = 0.0) -> bool:
+        """Tap each movement key (WASD and the arrows) once, so one the game
+        still holds as pressed is let go.  A movement key the game holds keeps
+        the field's top-right 主页/H and bottom P/Q row hidden and H does
+        nothing, even with the character blocked and standing still; one tap
+        of that key brings them back (4K live test 2026-11-04,
+        tmp/square-hud-1104).  The character may take a step."""
+        sent = False
+        for code in MOVE_KEY_CODES:
+            sent = self._send_game_key(code, KEY_TAP_SECONDS) or sent
+        if not sent:
+            self.log_warning("游戏窗口不在最前面，移动键没有发送。")
+            return False
+        self.info_set("快捷键", "移动键各按一下")
         self.sleep(after_sleep)
         return True
 

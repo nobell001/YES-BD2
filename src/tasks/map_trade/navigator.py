@@ -17,6 +17,7 @@ from src.tasks.map_trade.navigator_constants import (
     CLASSIFY_COOKING_MATERIALS_RELATIVE_ROI,
     CLASSIFY_COOKING_TITLE_RELATIVE_ROI,
     CLASSIFY_LOADING_RELATIVE_ROI,
+    CLASSIFY_NOW_LOADING_RELATIVE_ROI,
     CLASSIFY_SHOP_TABS_RELATIVE_ROI,
     CLASSIFY_SHOP_TITLE_RELATIVE_ROI,
     DISCOUNT_SHOP_CLOSE_DIALOG_REGION,
@@ -122,6 +123,7 @@ from src.tasks.map_trade.navigator_sandbox import SandboxNavigationMixin
 from src.tasks.map_trade.navigator_story import StoryCardNavigationMixin
 from src.tasks.map_trade.navigator_trade import TradeNavigationMixin
 from src.tasks.map_trade.vision import Vision, normalize_text
+from src.utils.frozen_screen import LOADING_RING_ROI, ring_percent
 from src.utils.home_confirmation import (
     HOME_ANNOUNCEMENT_CLEAR_RELATIVE_POINT,
     HOME_GACHA_OCR_RELATIVE_ROI,
@@ -458,6 +460,30 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
             )
         )
         if "browndust" in loading_text:
+            return ScreenState.LOADING
+        # The game has more than one loading screen (Leo 2026-11-05 「還有轉圈圈
+        # 不能一言堂」); any of these is one, beside the logo above (4K PC
+        # clone 1080p, 2026-11-05, every saved loading frame sorted):
+        # - a scene picture with the loading ring and its percent bottom
+        #   right (镜中之战, 餐厅, 广场 entries; not dark, so only the
+        #   percent tells it);
+        # - black with 「NOW LOADING」 bottom right and no logo.
+        # Darkness alone is not one: a black screen with only the top
+        # resource bar, and the dark teleport map page, are no loading.
+        ring = ring_percent(
+            self.vision.ocr_boxes(frame, "界面分类加载圈", relative_roi=LOADING_RING_ROI)
+        )
+        if ring:
+            self._status("加载画面", f"右下加载圈 {ring}")
+            return ScreenState.LOADING
+        if "loading" in normalize_text(
+            self.vision.ocr_text(
+                frame,
+                "界面分类加载NOW LOADING",
+                relative_roi=CLASSIFY_NOW_LOADING_RELATIVE_ROI,
+            )
+        ):
+            self._status("加载画面", "右下 NOW LOADING")
             return ScreenState.LOADING
         if loading_text:
             # The loading screen and the arrival banner name the new map in

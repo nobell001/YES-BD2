@@ -371,4 +371,69 @@ class FastRecoveryTest(unittest.TestCase):
         self.assertEqual([], presses)
 
 
+class ChannelButtonTest(unittest.TestCase):
+    """Player v0.2.29 2026-11-03: the square's buttons were hidden after the
+    goddess wish.  Each 「左上角返回」 hit the channel button 「Ch.137」 and
+    opened 选择频道; 取消 closed it; eight times, and H never got its turn."""
+
+    def _run(self, channel):
+        from src.tasks.map_trade.models import ScreenState
+
+        square = np.full((1080, 1920, 3), 120, np.uint8)
+        presses, keys, escapes, warnings = [], [], [], []
+
+        class FakeNavigator:
+            def __init__(self, task, vision):
+                self.vision = SimpleNamespace(capture=lambda: square)
+
+            def _home_confirmation_signals(self, frame):
+                return (False, 0, 0.0, "")
+
+            def classify(self):
+                return ScreenState.UNKNOWN
+
+            def clear_home_announcement(self, _frame, _clicks=0):
+                return False
+
+        def ocr_boxes(frame, name, relative_roi=None, **_k):
+            return [_box("Ch.137", x=70, y=38)] if channel else []
+
+        task = SimpleNamespace(
+            info_set=lambda *a: None,
+            log_info=lambda *a, **k: None,
+            log_warning=lambda text, **k: warnings.append(text),
+            sleep=lambda *_a: None,
+            operate_click=lambda *_a, **_k: presses.append(1),
+            tap_key=lambda key, after_sleep=0.0: keys.append(key) or True,
+            tap_escape=lambda after_sleep=0.0: escapes.append(1) or True,
+            release_move_keys=lambda after_sleep=0.0: keys.append("移动键") or True,
+        )
+        with (
+            mock.patch.object(recovery, "Navigator", FakeNavigator),
+            mock.patch.object(recovery, "Vision", lambda task: SimpleNamespace(ocr_boxes=ocr_boxes)),
+            mock.patch.object(recovery, "_handle_dialog", lambda *_a: "none"),
+            mock.patch.object(recovery, "_keep_failure_picture", lambda *_a: None),
+            mock.patch.object(recovery, "monotonic", iter(range(0, 10000)).__next__),
+        ):
+            reached = recovery.recover_to_home(task)
+        return reached, presses, keys, escapes, task, warnings
+
+    def test_channel_button_is_never_pressed_h_and_esc_are(self):
+        reached, presses, keys, escapes, task, warnings = self._run(channel=True)
+        self.assertFalse(reached)
+        self.assertEqual([], presses)
+        # A held movement key hides 主页/H (4K live 2026-11-04): let go first.
+        self.assertEqual(["移动键", "H"], keys)
+        self.assertEqual(recovery.ESCAPE_STEPS_MAX, len(escapes))
+        self.assertIn("主页按钮没有出现", task._recovery_why)
+        self.assertEqual(1, len(warnings))
+
+    def test_a_real_back_arrow_is_still_pressed(self):
+        reached, presses, keys, _escapes, task, _warnings = self._run(channel=False)
+        self.assertFalse(reached)
+        self.assertTrue(presses)
+        self.assertNotIn("移动键", keys)
+        self.assertEqual("", task._recovery_why)
+
+
 HOME = np.full((1080, 1920, 3), 200, np.uint8)

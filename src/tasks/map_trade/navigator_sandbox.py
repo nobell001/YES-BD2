@@ -202,6 +202,10 @@ NAV_MENU_WORDS = (
     "旅馆", "招募", "商店", "酒馆", "码头", "领地", "餐厅", "虚拟角色", "脱离当前场景"
 )
 NAV_MENU_ROW_CHARS = 8
+# The square's quest tracker sits where the menu opens: 「招募 所有酒馆客人招募
+# 完毕」 and its button 「招募情况」 carry menu words but are no rows (player
+# v0.2.29 2026-11-03, tests/fixtures/square/hud_hidden_channel_popup_player_1080.jpg).
+NAV_MENU_NOT_ROW_WORDS = ("情况", "所有", "完毕")
 # A ≡ press after which the menu lists nothing is made once more.
 NAV_MENU_PRESSES = 2
 # The game's interact key, as its hand prompt shows it in the field.
@@ -3435,7 +3439,9 @@ class SandboxNavigationMixin:
         """The texts read where the ≡ menu opens hold a row it lists.  A row
         is short: the 珍藏集 page's 「可体验广场钓鱼领地等…」 is not 领地."""
         return any(
-            len(text) <= NAV_MENU_ROW_CHARS and word in text
+            len(text) <= NAV_MENU_ROW_CHARS
+            and word in text
+            and not any(other in text for other in NAV_MENU_NOT_ROW_WORDS)
             for text in texts
             for word in NAV_MENU_WORDS
         )
