@@ -1,5 +1,5 @@
-"""Audit #77: the event page's 钻石 guard fails closed, and 确认 is pressed
-only after two agreeing frames."""
+"""Audit #77: 确认 is pressed only after two agreeing frames; a 付费 cost
+cancels.  (Leo 11-07: event pages no longer look for 钻石.)"""
 
 import unittest
 from types import SimpleNamespace
@@ -8,7 +8,7 @@ from unittest import mock
 import numpy as np
 
 from src.tasks import EventRewardTask as event_module
-from src.tasks.EventRewardTask import CURRENCY_ROI, DIALOG_ROI, EventRewardTask, diamond_icon
+from src.tasks.EventRewardTask import EventRewardTask
 
 
 def _frame():
@@ -44,23 +44,6 @@ def _task(dialogs):
     return task
 
 
-class FailClosedTest(unittest.TestCase):
-    def test_no_template_means_a_gem_may_be_there(self):
-        with mock.patch.object(event_module, "_diamond_template", None), mock.patch.object(
-            event_module.image_io, "read", lambda *_a, **_k: None
-        ):
-            self.assertTrue(diamond_icon(_frame(), (CURRENCY_ROI,)))
-            task = _task([[]])
-            self.assertTrue(task._page_has_diamonds(_frame(), [], "", "测试"))
-        self.assertIn("缺少钻石图案模板", task.logs[-1])
-
-    def test_no_frame_means_a_gem_may_be_there(self):
-        self.assertTrue(diamond_icon(None, (DIALOG_ROI,)))
-
-    def test_a_plain_frame_still_has_no_gem(self):
-        self.assertFalse(diamond_icon(_frame(), (DIALOG_ROI,)))
-
-
 class ConfirmTwoFramesTest(unittest.TestCase):
     def setUp(self):
         patcher = mock.patch.object(event_module, "monotonic", _Clock())
@@ -77,9 +60,9 @@ class ConfirmTwoFramesTest(unittest.TestCase):
         self.assertFalse(task._confirm_dialog("测试"))
         self.assertEqual([], task.clicks)
 
-    def test_a_cost_drawn_on_the_second_frame_cancels(self):
+    def test_a_paid_cost_drawn_on_the_second_frame_cancels(self):
         plain = [_box("确认"), _box("取消", x=700)]
-        task = _task([plain, [_box("消耗钻石x50"), *plain]])
+        task = _task([plain, [_box("消耗付费钻石x50"), *plain]])
         self.assertFalse(task._confirm_dialog("测试"))
         self.assertEqual(["取消"], task.clicks)
 
@@ -88,6 +71,19 @@ class ConfirmTwoFramesTest(unittest.TestCase):
         self.assertTrue(task._confirm_dialog("测试"))
         self.assertEqual(["确认"], task.clicks)
         self.assertEqual(1, len(task.clicks))
+
+
+class DiamondWordIsFineTest(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.object(event_module, "monotonic", _Clock())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_diamond_reward_in_the_dialog_is_confirmed(self):
+        plain = [_box("获得钻石x1000"), _box("确认"), _box("取消", x=700)]
+        task = _task([plain, plain])
+        self.assertTrue(task._confirm_dialog("测试"))
+        self.assertEqual(["确认"], task.clicks)
 
 
 if __name__ == "__main__":

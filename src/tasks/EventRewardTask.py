@@ -9,9 +9,11 @@ thing: press whatever is lit, 「即刻刷新」 first, then 全部领取 / 全�
 兑换N次 / 旋转 / 掷骰子, then the per-row hand icons.  A button counts only
 when its own text is the label, so a task line mentioning it is never pressed.
 
-HARD RULE (Leo 2026-10-03 15:28): any 钻石/付费 text on a page (buttons,
-currency bar) means the whole page is skipped and nothing on it is pressed.
-Unknown pages are skipped too, with a diagnostic picture.
+Leo 2026-11-07: an event page never costs 钻石 (「活動不會讓你花鑽石」), so the
+pages no longer look for 钻石 at all: the 11-05 wheel has a 钻石 prize slice
+and was skipped whole.  Only 「付费」 still skips a page (the 10-03
+「满月付费钻石兑换所」 carried it in its title; a prize never says 付费).
+Unknown pages are skipped, with a diagnostic picture.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from src.utils import image_io
 from src.utils.chinese import to_simplified
 from src.utils.image_utils import template_match_response
 from src.utils.ocr_utils import normalize_ocr_text
+from src.utils.press_confirm import wait_for
 
 NO_KNOWN_BUTTON = "页面上没有认得的按钮"
 
@@ -51,12 +54,31 @@ PANEL_ROI = (545, 250, 1100, 585)
 CURRENCY_ROI = (1440, 20, 460, 80)
 TOKEN_ROI = (1700, 35, 110, 45)
 
-DIAMOND_WORDS = ("钻石", "鑽石", "付费", "付費")
+# Leo 2026-11-07: only 付费 skips an event page (see the module notes).
+PAID_WORDS = ("付费", "付費")
+# 累积参与N次: how many spins so far (a spin that changed neither this nor
+# the token count did not happen).
+SPUN_PATTERN = re.compile(r"参与(\d+)次")
+# The wheel turns about 5 s after a spin press (live 4K 11-07) and the
+# reward box comes after it; 3 s of settling pressed the next spin into the
+# animation.  Wait until the panel stands still (two calm looks in a row),
+# at most the 10 s stuck limit.  A still page moves ≤0.11 (blinking lights,
+# 4K 11-07); a wheel turning 0.5° in half a second already moves about 1.
+SPIN_STILL_MAX_DIFF = 1.0
+SPIN_STILL_LOOKS = 2
+SPIN_WAIT_SECONDS = 10.0
+SPIN_LOOK_SECONDS = 0.5
 # Leo 2026-10-08: every event page is the same thing: press whatever is lit,
 # 「即刻刷新」 first, then claim / unlock / exchange / spin / roll.
 EXCHANGE_WORD = "兑换"
-LIT_BUTTON_ORDER = ("即刻刷新", "全部领取", "全部解锁", EXCHANGE_WORD, "旋转10次", "旋转1次", "掷骰子")
-# These ask 「确认」 before acting (the 钻石 check runs on that box too).
+# The wheel's spin buttons, read by their own text so a new colour scheme
+# changes nothing: 「旋转10次／旋转1次」 (简中) and 「轉10次／轉1次」 (繁中, the
+# 11-05 wheel).  The biggest count is pressed first (a player saw the tool
+# spin one at a time, 11-07).
+SPIN_WORD = "转"
+SPIN_PATTERN = re.compile(r"^(?:旋)?转(\d+)次")
+LIT_BUTTON_ORDER = ("即刻刷新", "全部领取", "全部解锁", EXCHANGE_WORD, SPIN_WORD, "掷骰子")
+# These ask 「确认」 before acting (the 付费 check runs on that box too).
 CONFIRM_BUTTONS = ("即刻刷新", "全部解锁")
 # A button's own text may carry a little more (e.g. 「旋转1次1次免费」).
 BUTTON_TEXT_SLACK = 4
@@ -82,18 +104,11 @@ HAND_TEMPLATE = TEMPLATE_DIR / "event" / "reward_hand.png"
 HAND_MATCH = 0.8
 HAND_ROI = (1450, 255, 170, 575)
 
-# The paid-diamond gem (from 满月付费钻石兑换所's currency bar). Scores 1.0
-# there and ≤0.80 on every free event page (tasks, 兑换所, wheel, dice).
-DIAMOND_TEMPLATE = TEMPLATE_DIR / "event" / "diamond.png"
-DIAMOND_MATCH = 0.9
 DIALOG_ROI = (640, 380, 640, 300)
 
 MAX_PAGE_ACTIONS = 25
 # A card's page is read this long for its type before it counts as unknown.
 PAGE_LOAD_SECONDS = 4.0
-
-_diamond_template = None
-
 
 def page_white(frame) -> float:
     """How bright white text is on this screen (filters and HDR change it)."""
@@ -134,6 +149,32 @@ def parse_token_count(text: str) -> int | None:
     return int(digits) if digits else None
 
 
+def _box_text(box) -> str:
+    return normalize_ocr_text(to_simplified(getattr(box, "name", "")))
+
+
+def spin_buttons(boxes: list) -> list[tuple[int, object]]:
+    """(count, box) for each wheel spin button, the biggest count first.
+
+    Only a box whose own text is the label counts (a little more is fine,
+    e.g. 「旋转1次1次免费」); a task row 「转盘旋转1次」 does not."""
+    found = []
+    for box in boxes:
+        name = _box_text(box)
+        match = SPIN_PATTERN.match(name)
+        if match and len(name) <= len(match.group(0)) + BUTTON_TEXT_SLACK:
+            found.append((int(match.group(1)), box))
+    return sorted(found, key=lambda item: item[0], reverse=True)
+
+
+def spun_count(boxes: list) -> int | None:
+    for box in boxes:
+        match = SPUN_PATTERN.search(_box_text(box))
+        if match:
+            return int(match.group(1))
+    return None
+
+
 # The card list counts as not moved when its small grey picture changes this
 # little (mean of 0..255) between two scrolls.
 LIST_STILL_MAX_DIFF = 3.0
@@ -153,6 +194,22 @@ def list_view(frame):
     return cv2.resize(grey, (48, 128), interpolation=cv2.INTER_AREA).astype(np.int16)
 
 
+def panel_view(frame):
+    """A small grey picture of the event panel (to see the wheel stop)."""
+    if frame is None:
+        return None
+    reference = cv2.resize(frame[:, :, :3], (1920, 1080), interpolation=cv2.INTER_AREA)
+    x, y, w, h = PANEL_ROI
+    grey = cv2.cvtColor(reference[y : y + h, x : x + w], cv2.COLOR_BGR2GRAY)
+    return cv2.resize(grey, (110, 58), interpolation=cv2.INTER_AREA).astype(np.int16)
+
+
+def views_close(first, second, max_diff: float) -> bool:
+    if first is None or second is None or first.shape != second.shape:
+        return False
+    return float(np.abs(first - second).mean()) <= max_diff
+
+
 def views_match(first, second) -> bool:
     if first is None or second is None or first.shape != second.shape:
         return False
@@ -162,28 +219,6 @@ def views_match(first, second) -> bool:
 def find_badges(frame) -> list[int]:
     """Reference y of each red ◆! badge in the card list, top to bottom."""
     return find_red_badges(frame, BADGE_STRIP)
-
-
-def diamond_template_ready() -> bool:
-    global _diamond_template
-    if _diamond_template is None:
-        _diamond_template = image_io.read(DIAMOND_TEMPLATE)
-    return _diamond_template is not None
-
-
-def diamond_icon(frame, rois) -> bool:
-    """True when the paid-diamond gem shows inside any reference ROI.
-
-    Fails closed (audit #77): without the gem template or a frame the gem
-    cannot be ruled out, so it counts as shown and nothing is pressed."""
-    if frame is None or not diamond_template_ready():
-        return True
-    reference = cv2.resize(frame[:, :, :3], (1920, 1080), interpolation=cv2.INTER_AREA)
-    for x, y, w, h in rois:
-        result = template_match_response(reference[y : y + h, x : x + w], _diamond_template)
-        if result is not None and result.size and float(result.max()) >= DIAMOND_MATCH:
-            return True
-    return False
 
 
 # Two reads of one 确认 button land within a few reference pixels.
@@ -205,7 +240,7 @@ class EventRewardTask(_ClaimTaskBase):
         self.name = "领取活动奖励"
         self.description = (
             "打开活动页，依序进入有红点的活动，哪里亮了按哪里（即刻刷新优先）。"
-            "有钻石或付费字样的页面一律不碰。"
+            "有付费字样的页面不碰。"
         )
         self.icon = FluentIcon.SHOPPING_CART
 
@@ -217,7 +252,7 @@ class EventRewardTask(_ClaimTaskBase):
         skipped: dict[str, str] = {}  # card -> why its badge was left
         claimed = 0
         # Leo 10-04: a second pass from the top, since a claim can badge
-        # another card; skipped pages (diamonds, unknown) do not count.
+        # another card; skipped pages (付费, unknown) do not count.
         for sweep in (1, 2):
             if sweep == 2 and not self._reopen_event_page():
                 return self._claim_fail("重新打开活动页")
@@ -365,9 +400,9 @@ class EventRewardTask(_ClaimTaskBase):
 
         The page is read until its type shows (up to PAGE_LOAD_SECONDS): one
         look right after the card click could come before the panel drew.
-        The 钻石 check runs on every look and once more on a later frame
+        The 付费 check runs on every look and once more on a later frame
         before anything is pressed, so a currency bar drawn after the panel
-        buttons still stops the page (HARD RULE).
+        buttons still stops the page.
         """
         label = caption or "活动"
         self.sleep(0.6)
@@ -376,7 +411,7 @@ class EventRewardTask(_ClaimTaskBase):
         while True:
             frame = self.capture_frame()
             panel = self._reference_boxes(frame, PANEL_ROI, "活动内容")
-            if self._page_has_diamonds(frame, panel, caption, label):
+            if self._page_is_paid(frame, panel, caption, label):
                 return False
             known = bool(self._page_buttons(frame, panel, set()) or self._hand_points(frame))
             if known or monotonic() >= end_at:
@@ -390,32 +425,24 @@ class EventRewardTask(_ClaimTaskBase):
         self.sleep(0.4)
         frame = self.capture_frame()
         panel = self._reference_boxes(frame, PANEL_ROI, "活动内容")
-        if self._page_has_diamonds(frame, panel, caption, label):
+        if self._page_is_paid(frame, panel, caption, label):
             return False
         return self._press_what_is_lit(label)
 
-    def _page_has_diamonds(self, frame, panel, caption: str, label: str) -> bool:
+    def _page_is_paid(self, frame, panel, caption: str, label: str) -> bool:
         currency = self._reference_boxes(frame, CURRENCY_ROI, "活动货币")
         text = caption + " " + self._boxes_text(panel) + " " + self._boxes_text(currency)
         self.info_set("活动页 OCR", text[:160] or "-")
-        if any(word in text for word in DIAMOND_WORDS):
-            self.log_info(f"活动「{label}」：页面有钻石／付费字样，整页跳过。")
-            self._page_skip_why = "有钻石，不碰"
-            return True
-        if not diamond_template_ready():
-            self.log_warning(f"活动「{label}」：缺少钻石图案模板，认不出有没有钻石，整页不碰。")
-            return True
-        if diamond_icon(frame, (PANEL_ROI, CURRENCY_ROI)):
-            self.log_info(f"活动「{label}」：页面有钻石图案，整页跳过。")
-            self._page_skip_why = "有钻石，不碰"
+        if any(word in text for word in PAID_WORDS):
+            self.log_info(f"活动「{label}」：页面有付费字样，整页跳过。")
+            self._page_skip_why = "付费页面，不碰"
             return True
         return False
 
-    def _diamonds_now(self, frame, panel, label: str) -> bool:
-        """钻石 re-check on the frame about to be pressed: the page check ran once
-        before the loop, but a later press (next spin, next 兑换) can show a
-        paid cost that was not there at first."""
-        return self._page_has_diamonds(frame, panel, "", label)
+    def _paid_now(self, frame, panel, label: str) -> bool:
+        """付费 re-check on the frame about to be pressed (a later press can
+        bring up text that was not there at first)."""
+        return self._page_is_paid(frame, panel, "", label)
 
     def _settle(self, label: str, frame) -> None:
         self._settle_after_claim(label, EVENT_TITLE_KEYWORDS, self._frame_brightness(frame))
@@ -442,6 +469,10 @@ class EventRewardTask(_ClaimTaskBase):
                 for count, box in self._exchange_buttons(panel):
                     found.append((f"兑换{count}次", box, self._exchange_lit(frame, box)))
                 continue
+            if word == SPIN_WORD:
+                for count, box in spin_buttons(panel):
+                    found.append((f"转{count}次", box, button_lit(frame, self._to_frame(frame, box))))
+                continue
             box = self._button(panel, word)
             if box is not None:
                 found.append((word, box, button_lit(frame, self._to_frame(frame, box))))
@@ -461,24 +492,30 @@ class EventRewardTask(_ClaimTaskBase):
 
     def _press_what_is_lit(self, label: str) -> bool:  # 会补点：循环里还亮着就再按
         """Leo 2026-10-08: on a badged page press whatever is lit (哪裡亮了點哪裡),
-        即刻刷新 first.  False when the page was skipped for 钻石."""
+        即刻刷新 first.  False when the page was skipped for 付费."""
         skip: set[str] = set()
         for _ in range(MAX_PAGE_ACTIONS):
             frame = self.capture_frame()
             panel = self._reference_boxes(frame, PANEL_ROI, f"{label}按钮")
-            if self._diamonds_now(frame, panel, label):
+            if self._paid_now(frame, panel, label):
                 return False
             lit = [(word, box) for word, box, on in self._page_buttons(frame, panel, skip) if on]
             if lit:
                 word, box = lit[0]
                 self.log_info(f"活动「{label}」：{word}。")
+                spin = word.startswith(SPIN_WORD)
+                before = (self._tokens(frame), spun_count(panel)) if spin else None
                 self._click_reference_box(box, after_sleep=1.2)  # 不用确认：循环里还亮着就再按
                 if word in CONFIRM_BUTTONS or word.startswith(EXCHANGE_WORD):
                     if not self._confirm_dialog(label) and word.startswith(EXCHANGE_WORD):
                         # No confirm box: the tokens ran out (Leo 10-05).
                         skip.add(word)
                         continue
+                if spin:
+                    self._wait_spin_stop(label)
                 self._settle(label, frame)
+                if spin and self._spin_did_nothing(before, label, word):
+                    skip.add(word)
                 continue
             points = self._hand_points(frame)
             if not points:
@@ -487,6 +524,41 @@ class EventRewardTask(_ClaimTaskBase):
             self._click_reference(*points[0], after_sleep=1.0)  # 不用确认：循环里手还在就再按
             self._settle(label, frame)
         return True
+
+    def _wait_spin_stop(self, label: str) -> None:
+        """Wait for the wheel to stop before the reward box is looked for."""
+        state = {"last": panel_view(self.capture_frame()), "calm": 0}
+
+        def stopped() -> bool:
+            view = panel_view(self.capture_frame())
+            last = state["last"]
+            if last is not None and view is not None:
+                self.info_set("转盘画面变化", f"{float(np.abs(last - view).mean()):.1f}")
+            calm = views_close(last, view, SPIN_STILL_MAX_DIFF)
+            state["calm"] = state["calm"] + 1 if calm else 0
+            state["last"] = view
+            return state["calm"] >= SPIN_STILL_LOOKS
+
+        self.sleep(SPIN_LOOK_SECONDS)
+        if not wait_for(stopped, SPIN_WAIT_SECONDS, sleep=self.sleep, poll=SPIN_LOOK_SECONDS):
+            self.log_info(f"活动「{label}」：转盘 {SPIN_WAIT_SECONDS:.0f} 秒还在动，先往下看奖励。")
+
+    def _spin_did_nothing(self, before: tuple, label: str, word: str) -> bool:
+        """True when a spin changed neither the token count nor 累积参与N次.
+
+        A spin button can stay white with too few tokens left; pressing it
+        again would only repeat.  Unreadable counts never stop a spin (the
+        page's press limit still ends the loop)."""
+        frame = self.capture_frame()
+        after = (
+            self._tokens(frame),
+            spun_count(self._reference_boxes(frame, PANEL_ROI, f"{label}次数")),
+        )
+        pairs = [(a, b) for a, b in zip(before, after) if a is not None and b is not None]
+        if pairs and all(a == b for a, b in pairs):
+            self.log_info(f"活动「{label}」：{word}按了没转（代币和次数都没变），不再按它。")
+            return True
+        return False
 
     def _hand_points(self, frame) -> list[tuple[int, int]]:
         template = getattr(self, "_hand_template", None)
@@ -527,7 +599,7 @@ class EventRewardTask(_ClaimTaskBase):
         """Press 确认 on the 兑换／即刻刷新 dialog; False when none appeared.
 
         确认 is pressed only when two frames in a row show it at the same
-        place with no 钻石 word or gem (audit #77: one frame was enough, so a
+        place with no 付费 word (audit #77: one frame was enough, so a
         dialog still drawing its cost could be confirmed)."""
         end_at = monotonic() + 4.0
         previous = None
@@ -537,11 +609,11 @@ class EventRewardTask(_ClaimTaskBase):
             frame = self.capture_frame()
             boxes = self._reference_boxes(frame, DIALOG_ROI, f"{label}确认")
             text = self._boxes_text(boxes)
-            if any(word in text for word in DIAMOND_WORDS) or diamond_icon(frame, (DIALOG_ROI,)):
-                self.log_info(f"活动「{label}」：确认框有钻石图案或字样，或认不出有没有钻石，取消。")
+            if any(word in text for word in PAID_WORDS):
+                self.log_info(f"活动「{label}」：确认框有付费字样，取消。")
                 cancel = self._box_with(boxes, ("取消",))
                 if cancel is not None:
-                    self._click_reference_box(cancel, after_sleep=0.8)  # 不用确认：有钻石的确认框只按读到的取消，不碰别处；没关掉留给回主页
+                    self._click_reference_box(cancel, after_sleep=0.8)  # 不用确认：有付费的确认框只按读到的取消，不碰别处；没关掉留给回主页
                 return False
             confirm = self._box_with(boxes, ("确认",))
             if confirm is not None and previous is not None and _same_place(previous, confirm):
