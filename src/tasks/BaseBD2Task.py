@@ -761,13 +761,21 @@ class BaseBD2Task(BaseTask):
         if now - cooldown.get(name, -1e9) < ocr_reread.REREAD_COOLDOWN_SECONDS:
             return boxes
         height, width = frame.shape[:2]
+        shorter = None  # a sure read shorter than the first one: last resort
         for attempt in ocr_reread.reread_images(frame):
             retry = dict(kwargs, frame=attempt.image, target_height=0, screenshot=False)
             found = ocr_reread.trusted(super().ocr(**retry))
-            if found:
+            if found and not ocr_reread.keeps_first_read(boxes, found):
+                shorter = shorter or (found, attempt)
+            elif found:
                 cooldown.pop(name, None)
                 logger.info(f"OCR {name}：第一次没读到，加边放大 {attempt.scale:g} 倍后读到")
                 return ocr_reread.map_back(found, attempt, width, height)
+        if shorter is not None:
+            cooldown.pop(name, None)
+            found, attempt = shorter
+            logger.info(f"OCR {name}：加边放大 {attempt.scale:g} 倍读到了，但比第一次读到的少")
+            return ocr_reread.map_back(found, attempt, width, height)
         cooldown[name] = now
         return boxes
 

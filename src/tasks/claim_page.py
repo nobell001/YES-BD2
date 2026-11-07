@@ -178,7 +178,9 @@ class ClaimPageMixin(TaskVisionMixin):
 
     # -- OCR primitives -------------------------------------------------
 
-    def _roi_boxes(self, frame, roi: tuple[int, int, int, int] | None, name: str) -> list:
+    def _roi_boxes(
+        self, frame, roi: tuple[int, int, int, int] | None, name: str, enlarge: float = 1.0
+    ) -> list:
         """OCR a 1920x1080-reference ROI (or the whole frame) at any 16:9 size.
 
         Crops are read at 1080p-equivalent scale, the scale the ROIs were
@@ -194,7 +196,7 @@ class ClaimPageMixin(TaskVisionMixin):
             (x + w) / REFERENCE_WIDTH,
             (y + h) / REFERENCE_HEIGHT,
         )
-        scale = min(1.0, REFERENCE_HEIGHT / max(1, frame.shape[0]))
+        scale = min(1.0, REFERENCE_HEIGHT / max(1, frame.shape[0])) * enlarge
         return vision.ocr_boxes(
             frame,
             name,

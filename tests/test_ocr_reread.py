@@ -127,6 +127,43 @@ class OcrOverrideTest(unittest.TestCase):
         self.assertEqual(len(self.calls), 2)
         self.assertEqual([box.name for box in boxes], ["购买"])
 
+    def _read(self, text, confidence):
+        box = _box(100, 40, 60, 30, text)
+        box.confidence = confidence
+        return [box]
+
+    def test_a_reread_that_lost_the_digit_does_not_replace_it(self):
+        # 活动每日战斗 button, Leo's 1080p 繁中 frame 2026-11-07.
+        crop = np.zeros((70, 330, 3), np.uint8)
+        reads = [
+            self._read("战斗。5", 0.792),
+            self._read("战斗：5", 0.793),
+            self._read("战斗。", 0.86),
+            self._read("战斗。5", 0.802),
+        ]
+        with self._ocr(reads):
+            boxes = self.task.ocr(frame=crop, name="自动战斗开始")
+        self.assertEqual([box.name for box in boxes], ["战斗。5"])
+        self.assertEqual(len(self.calls), 4)
+
+    def test_a_reread_that_lost_words_does_not_replace_them(self):
+        crop = np.zeros((70, 330, 3), np.uint8)
+        reads = [
+            self._read("今日剩余次数", 0.75),
+            self._read("今日", 0.95),
+            self._read("今日剩余次数", 0.9),
+        ]
+        with self._ocr(reads):
+            boxes = self.task.ocr(frame=crop, name="标题")
+        self.assertEqual([box.name for box in boxes], ["今日剩余次数"])
+
+    def test_a_sure_read_without_the_digit_is_the_last_resort(self):
+        crop = np.zeros((70, 330, 3), np.uint8)
+        reads = [self._read("战斗。5", 0.792), [], self._read("战斗。", 0.86), []]
+        with self._ocr(reads):
+            boxes = self.task.ocr(frame=crop, name="自动战斗开始")
+        self.assertEqual([box.name for box in boxes], ["战斗。"])
+
     def test_stray_marks_are_kept_when_the_rereads_find_nothing(self):
         stray = _box(1, 2, 3, 4, "-")
         with self._ocr([[stray]]):

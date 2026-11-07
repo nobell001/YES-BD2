@@ -317,12 +317,12 @@ class QuickBattleTest(unittest.TestCase):
         self.assertEqual(5, task._battles_done)
         self.assertIn("战斗5", task.clicks)
 
-    def test_cost_above_free_ap_is_cancelled(self):
-        # MAX read 8 and lowering (set twice) failed to bring it under the free 5.
-        task = self._task([8, 8, 8])
-        self.assertEqual("failed", task._run_quick_battle())
-        self.assertNotIn("战斗5", task.clicks)
-        self.assertEqual(0, task._battles_done)
+    def test_cost_read_above_free_ap_is_set_by_presses_and_played(self):
+        # Leo 2026-11-07: the switch is on, a read never stops the battles.
+        task = self._task([8] * 8)
+        self.assertEqual("done", task._run_quick_battle())
+        self.assertIn("战斗5", task.clicks)
+        self.assertEqual(5, task._battles_done)
 
     def test_switch_not_on_is_cancelled(self):
         task = self._task([5], switch_on=False)
@@ -441,6 +441,7 @@ class FailReasonTest(unittest.TestCase):
         task._wait_for_dialog = lambda: True
         task._ensure_free_ap_switch_on = lambda *a: True
         task._settled_cost = lambda read: 5
+        task.config["仅使用免费活动AP"] = False
         self.assertFalse(task.run_claim())
         self.assertIn("场数对不上（读到 5，要打 2，免费AP 2），所以没开打", task.info["状态"])
 

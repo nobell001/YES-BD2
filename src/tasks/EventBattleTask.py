@@ -1138,11 +1138,36 @@ class EventBattleTask(_ClaimTaskBase):
         self.log_info("活动每日战斗：未出现自动战斗次数窗口。")
         return False
 
+    def _button_cost(self, roi, name: str) -> tuple[int | None, str]:
+        """The start button's count and the text read; 3x when the digit was lost."""
+        frame = self.capture_frame()
+        text = self._boxes_text(self._roi_boxes(frame, roi, name))
+        cost = parse_battle_cost(text)
+        if cost is None:
+            text = self._boxes_text(self._roi_boxes(frame, roi, name, enlarge=3.0)) or text
+            cost = parse_battle_cost(text)
+        return cost, text
+
     def _dialog_cost(self) -> int | None:
-        boxes = self._roi_boxes(self.capture_frame(), DIALOG_START_ROI, "自动战斗开始")
-        cost = parse_battle_cost(self._boxes_text(boxes))
-        self.info_set("自动战斗场数", cost if cost is not None else "-")
+        cost, text = self._button_cost(DIALOG_START_ROI, "自动战斗开始")
+        self.info_set("自动战斗场数", cost if cost is not None else f"- (OCR {text or '-'})")
         return cost
+
+    def _count_by_presses(self, cost, wanted: int, free, min_point, plus_point, read):
+        """A count not read or not as expected never stops the battles.
+
+        Only called with the 仅使用免费活动AP switch seen on (Leo 2026-11-07
+        「都按得下 MAX 也按得下僅免費了，一樣要按」).  Set by MIN and +, at most
+        the top bar's free AP, so a switch read wrongly still spends no more
+        than that.  The read is only logged.
+        """
+        target = wanted if free is None else min(wanted, free)
+        if target <= 0 or (cost is not None and cost <= target):
+            return cost
+        read_after = self._count_from_min(min_point, plus_point, target, read)
+        if read_after != target:
+            self.log_info(f"活动每日战斗：场数读到 {read_after}，免费AP开关开着，按 {target} 场打。")
+        return target
 
     def _settled_cost(self, read, timeout: float = 3.0) -> int | None:
         """The start button's count once two reads agree.
@@ -1176,12 +1201,17 @@ class EventBattleTask(_ClaimTaskBase):
             return 0
         if cost is not None and cost > wanted:
             cost = self._count_from_min(DIALOG_MIN_POINT, DIALOG_PLUS_POINT, wanted, self._dialog_cost)
+        if free_only:
+            cost = self._count_by_presses(
+                cost, wanted, free, DIALOG_MIN_POINT, DIALOG_PLUS_POINT, self._dialog_cost
+            )
         # Second guard independent of the switch colour: never exceed the free
         # AP read from the top bar when only free AP may be used.
         over_free = free_only and free is not None and cost is not None and cost > free
         if cost is None or cost <= 0 or cost > wanted or over_free:
             shown = free if free is not None else "没读到"
             self.log_info(f"活动每日战斗：场数校验失败（{cost}/{wanted}，免费AP {shown}）。")
+            self._save_flow_diagnostic(f"{self.claim_log_name}_dialog_count_failed")
             self._failed(f"场数对不上（读到 {cost}，要打 {wanted}，免费AP {shown}），所以没开打")
             return None
         if free is None:
@@ -1597,9 +1627,8 @@ class EventBattleTask(_ClaimTaskBase):
         return False
 
     def _quick_cost(self) -> int | None:
-        boxes = self._roi_boxes(self.capture_frame(), QUICK_DIALOG_START_ROI, "快速战斗开始")
-        cost = parse_battle_cost(self._boxes_text(boxes))
-        self.info_set("快速战斗场数", cost if cost is not None else "-")
+        cost, text = self._button_cost(QUICK_DIALOG_START_ROI, "快速战斗开始")
+        self.info_set("快速战斗场数", cost if cost is not None else f"- (OCR {text or '-'})")
         return cost
 
     def _set_quick_count(self, wanted: int, state: dict) -> int | None:
@@ -1620,6 +1649,10 @@ class EventBattleTask(_ClaimTaskBase):
         if cost is not None and cost > wanted:
             cost = self._count_from_min(
                 QUICK_DIALOG_MIN_POINT, QUICK_DIALOG_PLUS_POINT, wanted, self._quick_cost
+            )
+        if free_only:
+            cost = self._count_by_presses(
+                cost, wanted, free, QUICK_DIALOG_MIN_POINT, QUICK_DIALOG_PLUS_POINT, self._quick_cost
             )
         over_free = free_only and free is not None and cost is not None and cost > free
         if cost is None or cost <= 0 or cost > wanted or over_free:

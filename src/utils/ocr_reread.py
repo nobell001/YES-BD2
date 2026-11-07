@@ -114,6 +114,26 @@ def trusted(boxes) -> list:
     return kept
 
 
+def _text(boxes) -> str:
+    return "".join("".join(str(getattr(box, "name", "") or "").split()) for box in boxes)
+
+
+def keeps_first_read(first, found) -> bool:
+    """False when ``found`` lost digits or text the first read had.
+
+    The 活动每日战斗 button: 「战斗。5」 at 0.79 is under the bar, the 2x read
+    「战斗。」 at 0.86 passes, and the count was gone (Leo 2026-11-07).  Every
+    box goes through this read, so a sure but shorter read is no better read
+    anywhere: the next look is tried, and it stays the last resort.
+    A lone character in the first read is a stray mark, not text to keep
+    (the 跑商 title read as 「4」 at 0.77).
+    """
+    words = _text(box for box in first if len(_text([box])) > 1)
+    text = _text(found)
+    digits = sum(ch.isdigit() for ch in words)
+    return len(text) >= len(words) and sum(ch.isdigit() for ch in text) >= digits
+
+
 def map_back(boxes, reread: RereadImage, width: int, height: int) -> list:
     """Boxes found on a reread image, moved back onto the original box."""
     mapped = []
