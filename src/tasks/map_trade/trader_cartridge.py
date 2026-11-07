@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from difflib import SequenceMatcher
 from time import monotonic
 
@@ -21,6 +22,7 @@ from src.tasks.map_trade.models import (
 )
 from src.tasks.map_trade.trader_constants import (
     SHOP_CARTRIDGE_CANDIDATE_SCORE,
+    SHOP_CARTRIDGE_BARE_CATEGORY_PATTERN,
     SHOP_CARTRIDGE_CATEGORY_PATTERN,
     SHOP_CARTRIDGE_CATEGORY_PREFIX,
     SHOP_CARTRIDGE_CONFIRM_SCORE,
@@ -54,6 +56,7 @@ from src.tasks.map_trade.trader_constants import (
 )
 from src.tasks.map_trade.vision import normalize_text
 from src.utils.calibration import FHD_1080
+from src.utils import game_language
 
 # 点击商店卡带后等待其变为选中态的窗口与轮询间隔。
 SHOP_CARTRIDGE_SELECT_CONFIRM_TIMEOUT = 4.0
@@ -63,6 +66,57 @@ SHOP_SCAN_REUSE_SECONDS = 1.5
 # The selected-state check matches only the clicked template, at that spot.
 SHOP_SAME_SPOT_TOLERANCE = 8
 SHOP_SAME_SPOT_SCORE_DROP = 0.05
+# The 繁中 label (故事遊戲卡帶 1) is wide enough that OCR reads the number as a
+# box of its own on some rows (clone 2026-10-23: 剧情游戏卡带 | 1, 剧情游戏卡带 | 8);
+# a lone number this close on the label's line is joined back (1080 reference).
+SHOP_ROW_NUMBER_MAX_DY = 12
+SHOP_ROW_NUMBER_MAX_DX = 200
+
+
+def shop_cartridge_templates_for_client(reference) -> tuple[str, ...]:
+    """Only the crop of the client 主页 was last read in (Leo 10-24: the
+    player's language is set; never both).  Every task starts from 主页, so
+    the client is known by the time a shop is open."""
+    templates = reference.match_templates or reference.cartridge_templates[:1]
+    if game_language.client_is_traditional() and len(templates) > 1:
+        return templates[1:2]
+    return templates[:1]
+
+
+def join_split_row_numbers(
+    texts: list[ShopCartridgeOcrText], scale_x: float, scale_y: float
+) -> list[ShopCartridgeOcrText]:
+    """A category label without its number, joined with the number box to its right."""
+    used: set[int] = set()
+    joined: list[ShopCartridgeOcrText] = []
+    for index, value in enumerate(texts):
+        text = normalize_text(value.text)
+        if SHOP_CARTRIDGE_CATEGORY_PATTERN.search(text):
+            continue
+        if not SHOP_CARTRIDGE_BARE_CATEGORY_PATTERN.search(text):
+            continue
+        numbers = [
+            (other_index, other)
+            for other_index, other in enumerate(texts)
+            if other_index not in used
+            and re.fullmatch(r"\d+", normalize_text(other.text))
+            and abs(other.center[1] - value.center[1]) <= SHOP_ROW_NUMBER_MAX_DY * scale_y
+            and 0 < other.center[0] - value.center[0] <= SHOP_ROW_NUMBER_MAX_DX * scale_x
+        ]
+        if not numbers:
+            continue
+        number_index, number = min(numbers, key=lambda item: item[1].center[0])
+        used.update((index, number_index))
+        joined.append(
+            ShopCartridgeOcrText(
+                text=f"{value.text}{number.text}",
+                # A lone digit reads with low confidence; the cartridge
+                # template still has to agree with the number.
+                confidence=value.confidence,
+                center=value.center,
+            )
+        )
+    return [value for index, value in enumerate(texts) if index not in used] + joined
 
 
 class ShopCartridgeNavigationMixin:
@@ -273,11 +327,14 @@ class ShopCartridgeNavigationMixin:
             self.task.sleep(interval)
         return False
 
-    def _cartridge_spec(self, shop_id: str) -> TemplateSpec:
+    def _cartridge_spec(self, shop_id: str, template: str = "") -> TemplateSpec:
         reference = SHOP_PURCHASE_REFERENCES[shop_id]
+        primary = reference.cartridge_templates[0]
+        file_name = template or primary
         return TemplateSpec(
-            name=reference.label,
-            file_name=reference.cartridge_templates[0],
+            # The name keys the template cache: one entry per crop.
+            name=reference.label if file_name == primary else f"{reference.label} ({file_name})",
+            file_name=file_name,
             threshold=SHOP_CARTRIDGE_CONFIRM_SCORE,
             relative_roi=SHOP_CARTRIDGE_RECOGNITION_REGION,
             scale_ratios=SHOP_CARTRIDGE_SCALE_RATIOS,
@@ -334,21 +391,31 @@ class ShopCartridgeNavigationMixin:
                     center=(x + box_width / 2, y + box_height / 2),
                 )
             )
+        texts = join_split_row_numbers(texts, scale_x, scale_y)
 
         rows: list[ShopCartridgeOcrRow] = []
         for category in texts:
-            match = SHOP_CARTRIDGE_CATEGORY_PATTERN.search(
-                normalize_text(category.text)
-            )
-            if match is None:
+            label = normalize_text(category.text)
+            match = SHOP_CARTRIDGE_CATEGORY_PATTERN.search(label)
+            if match is not None:
+                shop_ids = [
+                    f"{SHOP_CARTRIDGE_CATEGORY_PREFIX[match.group(1)]}{int(match.group(2))}"
+                ]
+            else:
+                # The number alone is often not read at all (繁中 故事遊戲卡帶 1,
+                # 10-24 clone): the cartridge name below it says which one.
+                bare = SHOP_CARTRIDGE_BARE_CATEGORY_PATTERN.fullmatch(label)
+                if bare is None:
+                    continue
+                prefix = SHOP_CARTRIDGE_CATEGORY_PREFIX[bare.group(1)]
+                shop_ids = [
+                    shop_id
+                    for shop_id in SHOP_PURCHASE_REFERENCES
+                    if shop_id[0] == prefix and shop_id[1:].isdigit()
+                ]
+            shop_ids = [shop_id for shop_id in shop_ids if shop_id in SHOP_PURCHASE_REFERENCES]
+            if not shop_ids:
                 continue
-            shop_id = (
-                f"{SHOP_CARTRIDGE_CATEGORY_PREFIX[match.group(1)]}"
-                f"{int(match.group(2))}"
-            )
-            if shop_id not in SHOP_PURCHASE_REFERENCES:
-                continue
-            expected_name = self._shop_cartridge_chapter_name(shop_id)
             chapter_candidates = [
                 value
                 for value in texts
@@ -361,27 +428,33 @@ class ShopCartridgeNavigationMixin:
                 )
                 is None
             ]
-            chapter = max(
-                chapter_candidates,
-                key=lambda value: (
-                    self._shop_cartridge_text_similarity(value.text, expected_name),
-                    value.confidence,
-                ),
-                default=None,
-            )
+            best = None
+            for shop_id in shop_ids:
+                expected_name = self._shop_cartridge_chapter_name(shop_id)
+                chapter = max(
+                    chapter_candidates,
+                    key=lambda value: (
+                        self._shop_cartridge_text_similarity(value.text, expected_name),
+                        value.confidence,
+                    ),
+                    default=None,
+                )
+                similarity = (
+                    self._shop_cartridge_text_similarity(chapter.text, expected_name)
+                    if chapter is not None
+                    else 0.0
+                )
+                if best is None or similarity > best[2]:
+                    best = (shop_id, chapter, similarity)
+            shop_id, chapter, similarity = best
+            if match is None and similarity < SHOP_CARTRIDGE_NAME_MIN_SIMILARITY:
+                continue
             rows.append(
                 ShopCartridgeOcrRow(
                     shop_id=shop_id,
                     category=category,
                     chapter=chapter,
-                    name_similarity=(
-                        self._shop_cartridge_text_similarity(
-                            chapter.text,
-                            expected_name,
-                        )
-                        if chapter is not None
-                        else 0.0
-                    ),
+                    name_similarity=similarity,
                 )
             )
         return tuple(sorted(rows, key=lambda value: value.category.center[1]))
@@ -393,18 +466,19 @@ class ShopCartridgeNavigationMixin:
         height, width = frame.shape[:2]
         peak_radius = max(5, round(20 * min(width / FHD_1080.width, height / FHD_1080.height)))
         candidates: list[ShopCartridgeTemplateCandidate] = []
-        for shop_id in SHOP_PURCHASE_REFERENCES:
-            matches = self.vision.match_all(
-                frame,
-                self._cartridge_spec(shop_id),
-                minimum_score=SHOP_CARTRIDGE_CANDIDATE_SCORE,
-                peak_radius=peak_radius,
-                max_results=30,
-            )
-            candidates.extend(
-                ShopCartridgeTemplateCandidate(shop_id, result)
-                for result in matches
-            )
+        for shop_id, reference in SHOP_PURCHASE_REFERENCES.items():
+            for template in shop_cartridge_templates_for_client(reference):
+                matches = self.vision.match_all(
+                    frame,
+                    self._cartridge_spec(shop_id, template),
+                    minimum_score=SHOP_CARTRIDGE_CANDIDATE_SCORE,
+                    peak_radius=peak_radius,
+                    max_results=30,
+                )
+                candidates.extend(
+                    ShopCartridgeTemplateCandidate(shop_id, result, template)
+                    for result in matches
+                )
         return tuple(candidates)
 
     def _shop_cartridge_competition(
@@ -482,7 +556,7 @@ class ShopCartridgeNavigationMixin:
         return (
             self._cartridge_match_passes(
                 detection.best.result,
-                self._cartridge_spec(detection.best.shop_id),
+                self._cartridge_spec(detection.best.shop_id, detection.best.template),
             )
             and detection.margin >= SHOP_CARTRIDGE_MIN_MARGIN
             and ocr is not None
@@ -550,13 +624,21 @@ class ShopCartridgeNavigationMixin:
             # running it again cost ~2.5 s per cartridge (Leo 2026-10-05).
             detection = recent[2].get(shop_id)
             if detection is not None:
-                return recent[1], self._cartridge_spec(shop_id), detection.best.result
+                return (
+                    recent[1],
+                    self._cartridge_spec(shop_id, detection.best.template),
+                    detection.best.result,
+                )
         end_at = monotonic() + max(0.0, timeout)
         while monotonic() <= end_at:
             frame = self.vision.capture()
             detection = self._confirmed_shop_cartridge_detections(frame).get(shop_id)
             if detection is not None:
-                return frame, self._cartridge_spec(shop_id), detection.best.result
+                return (
+                    frame,
+                    self._cartridge_spec(shop_id, detection.best.template),
+                    detection.best.result,
+                )
             self.task.sleep(interval)
         return None
 

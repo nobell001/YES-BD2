@@ -3,7 +3,6 @@ from typing import Callable
 
 import numpy as np
 
-from src.utils import game_language
 from src.utils.calibration import FHD_1080
 from src.utils.image_utils import relative_roi_frame, to_gray
 from src.utils.ocr_utils import normalize_ocr_text
@@ -94,7 +93,6 @@ def home_gacha_ocr_with_fallback(
 
 
 def home_gacha_ocr_matches(text: object) -> bool:
-    game_language.note_text(text)
     normalized_text = normalize_ocr_text(text)
     return any(
         normalize_ocr_text(keyword) in normalized_text
@@ -104,7 +102,6 @@ def home_gacha_ocr_matches(text: object) -> bool:
 
 def home_left_column_hits(text: object) -> int:
     """Count left-column keyword groups present in the same-frame OCR text."""
-    game_language.note_text(text)
     normalized_text = normalize_ocr_text(text)
     hits = 0
     for aliases in HOME_LEFT_COLUMN_KEYWORD_GROUPS:

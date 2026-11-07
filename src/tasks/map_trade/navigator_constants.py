@@ -713,7 +713,10 @@ SANDBOX_NAVIGATION_OPEN_TEMPLATES = (
     SANDBOX_NAVIGATION_PIN_TEMPLATE,
     SANDBOX_NAVIGATION_RUN_TEMPLATE,
 )
-SANDBOX_NAVIGATION_PAGE_KEYWORDS = ("在战场中查看", "探索", "世界地图")
+# Each footer word with the 繁中 client's own word for the same button: 繁中
+# 「在場域中查看 任務·0 世界地圖」 (2K clone 2026-11-03, the table turns 場域 into
+# 战场) left the area map unconfirmed and 第14章 was skipped.
+SANDBOX_NAVIGATION_PAGE_KEYWORDS = (("在战场中查看",), ("探索", "任务"), ("世界地图",))
 # The area map's title starts with the map's kind: 「战斗 …」 or 「安全 …」.
 AREA_MAP_HEADER_TAGS = ("战斗", "安全")
 # A battle area's title ends 「出现暗属性怪物」 and the like.  An FPS overlay in

@@ -51,5 +51,12 @@ if __name__ == "__main__":
 class EventBannerKeywordsTest(unittest.TestCase):
     def test_keywords_are_fixed_in_code(self):
         # Leo 2026-10-04: the banner words are not a setting any more.
-        for word in ("战斗解锁", "普通战斗", "挑战战斗", "追踪者解锁"):
+        for word in ("战斗解锁", "普通战斗", "挑战战斗", "追踪者"):
             self.assertIn(word, BANNER_KEYWORDS)
+
+    def test_tw_client_banners_match(self):
+        from src.utils import game_text
+
+        for raw in ("一般戰鬥解鎖", "魔獸追蹤者解鎖"):
+            text = game_text.to_tool_text(raw, traditional_client=True)
+            self.assertTrue(any(word in text for word in BANNER_KEYWORDS), raw)

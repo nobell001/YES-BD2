@@ -25,6 +25,7 @@ from src.utils import (
     frame_recorder,
     game_language,
     game_size,
+    game_text,
     image_io,
     keep_awake,
     known_popups,
@@ -438,8 +439,7 @@ class BaseBD2Task(BaseTask):
                 if constructed and (wanted or getattr(type(self), "start_from_home", False)):
                     game_size.fix_or_warn(self)
                     # A task the player started itself looks at the game's
-                    # settings first, as 一键日常 does (差異化點子 5): a reminder,
-                    # and a game set to 繁中 does not start.
+                    # settings first, as 一键日常 does (差異化點子 5): a reminder.
                     if keep and self._setup_stops():
                         scope.ended = problem_report.SETUP
                         return False
@@ -502,6 +502,14 @@ class BaseBD2Task(BaseTask):
         from src.tasks import setup_check
 
         return bool(setup_check.accounts_stop(self))
+    def fix_texts(self, detected_boxes):
+        """Every OCR result as the 简中 client's words, also on the 繁中 client
+        (Leo 2026-10-09); ok-script matches ``match=`` only after this."""
+        # The raw text says which client it is; ok-script's own fix may
+        # already simplify it (a 繁中 tool interface).
+        game_text.note_boxes(detected_boxes)
+        super().fix_texts(detected_boxes)
+        game_text.fix_boxes(detected_boxes)
 
     def _setup_stops(self) -> bool:
         from src.tasks import setup_check

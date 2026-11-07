@@ -319,7 +319,9 @@ def sort_category(label: str) -> str:
     """
     core = sort_label_core(label)
     core = core.split("从", 1)[0]
-    for noise in ("按", "阶段", "排序"):
+    # 依 is 按 on the 繁中 client (依强化阶段排序, 10-25); one character is too
+    # short for the word table, so it is dropped here like 按.
+    for noise in ("按", "依", "阶段", "排序"):
         core = core.replace(noise, "")
     return core
 

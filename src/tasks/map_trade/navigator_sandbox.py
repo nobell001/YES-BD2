@@ -182,6 +182,16 @@ from src.utils.press_confirm import press_and_confirm, wait_for
 from src.utils.wait_limits import STUCK_SECONDS, MotionWatch, StillTimer
 
 
+def _title_words(target: CollectionMapTarget) -> tuple[str, ...]:
+    """Every name ``target`` goes by on screen, normalized: the 繁中 client
+    names 泳池派对场 just 泳池派對 (4K 2026-11-06, 活动卡1 stuck leaving it)."""
+    return tuple(word for word in (normalize_text(title) for title in target.titles) if word)
+
+
+def _named(words: tuple[str, ...], text: str | None) -> bool:
+    return bool(text) and any(word in text for word in words)
+
+
 # Field status text after a map click: '自动移动中：魔法阵' (bottom centre) and
 # '已完成自动移动' (top centre); 1920x1080 fractions.
 AUTO_MOVE_TEXT_RELATIVE_ROI = (560 / 1920, 80 / 1080, 1360 / 1920, 980 / 1080)
@@ -3193,7 +3203,7 @@ class SandboxNavigationMixin:
         """The open area map's ``header`` is ``target``'s map: its whole name,
         else the shared position reading when ``target`` is one of the card's
         maps (walks between labelled exits, 2026-11-05)."""
-        if normalize_text(target.title) in header:
+        if _named(_title_words(target), header):
             return True
         if not any(
             item.key == target.key and item.title == target.title for item in card.targets
@@ -3678,8 +3688,7 @@ class SandboxNavigationMixin:
         """
         if not self.ensure_small_minimap():
             return NavigationResult(False, ScreenState.SANDBOX, "小地图放大状态未能切回")
-        wanted = normalize_text(target.title)
-        here = normalize_text(current.title)
+        here = _title_words(current)
         edge = (card.card_id, current.key, target.key)
         header = self._open_field_map()
         for attempt in range(WALK_EXIT_ATTEMPTS):
@@ -3738,7 +3747,7 @@ class SandboxNavigationMixin:
             False, ScreenState.SANDBOX, f"走到后地图不符：{header or '-'}（目标{target.title}）"
         )
 
-    def _click_walk_exit(self, edge, target: CollectionMapTarget, here: str) -> bool:
+    def _click_walk_exit(self, edge, target: CollectionMapTarget, here: tuple[str, ...]) -> bool:
         """Click the open area map's exit to ``target`` (calibrated spots or its
         OCR label) until the map closes; True once it did."""
 
@@ -3776,15 +3785,15 @@ class SandboxNavigationMixin:
         for point in points:
             self._status("导航状态", f"区域地图点击{target.title}出口 {point}")
             self.vision.click_client(point, frame.shape, after_sleep=WALK_CLICK_SETTLE_SECONDS)
-            if here not in self._field_map_header() or self._confirm_exit_walk_question(here):
+            if not _named(here, self._field_map_header()) or self._confirm_exit_walk_question(here):
                 return True
             if picker and self._click_exit_picker(target) and (  # 不用确认：每个出口点都试一次
-                here not in self._field_map_header() or self._confirm_exit_walk_question(here)
+                not _named(here, self._field_map_header()) or self._confirm_exit_walk_question(here)
             ):
                 return True
         return False
 
-    def _confirm_exit_walk_question(self, here: str) -> bool:
+    def _confirm_exit_walk_question(self, here: tuple[str, ...]) -> bool:
         """Press 确认 on the 自动移动 dialog an area-map exit click opened;
         True once the walk started.
 
@@ -3802,7 +3811,7 @@ class SandboxNavigationMixin:
             self._cancel_auto_move_dialog()
             return False
         for look in range(MAP_SELF_CLOSE_LOOKS):
-            if here not in self._field_map_header():
+            if not _named(here, self._field_map_header()):
                 return True
             if look + 1 < MAP_SELF_CLOSE_LOOKS:
                 self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL * 2)
@@ -3860,7 +3869,7 @@ class SandboxNavigationMixin:
         if not self._travel_via_nav_menu(npc):
             return None
         header = self._open_field_map()
-        if header is None or normalize_text(current.title) not in header:
+        if header is None or not _named(_title_words(current), header):
             if header is not None:
                 self._close_field_map()
             return None
@@ -3878,12 +3887,12 @@ class SandboxNavigationMixin:
         except Exception as exc:
             self._status("区域地图出口 OCR错误", str(exc))
             return []
-        wanted = normalize_text(target.title)
+        wanted = _title_words(target)
         scale = frame.shape[0] / 1080
         points = []
         for box in boxes:
             text = normalize_text(self.vision.simplify(str(getattr(box, "name", ""))))
-            if not text or wanted not in text:
+            if not text or not _named(wanted, text):
                 continue
             center = self._ocr_box_center(box)
             if center is None:

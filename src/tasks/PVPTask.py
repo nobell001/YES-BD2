@@ -190,7 +190,9 @@ PVP_RESULT_WAIT_CAP_FACTOR = 2.0
 # is up but misread: its ✕ is pressed before looking for 离开.
 PVP_RESULT_PARTIAL_MATCHES = 2
 PVP_RESULT_CLOSE_AFTER_SECONDS = 1.5
-PVP_BATTLE_ONGOING_PATTERN = r"正在进行"
+# 繁中 writes 目前於1次之中進行1次 (no 正在): 2K clone 2026-11-03 the start
+# went unseen and waited out the fallback.
+PVP_BATTLE_ONGOING_PATTERN = r"正在进行|之中进行"
 # Only the cocktail/AP shortage counts; a stray 不足 anywhere on screen
 # while the battle starts must not end the run (review 2026-09-26).
 PVP_AP_SHORTAGE_PATTERN = r"鸡尾酒.{0,8}不足|AP.{0,4}不足"

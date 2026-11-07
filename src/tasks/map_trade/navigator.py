@@ -330,8 +330,8 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
                 footer_text = ""
             normalized_footer = normalize_text(footer_text)
             keyword_hits = sum(
-                normalize_text(keyword) in normalized_footer
-                for keyword in SANDBOX_NAVIGATION_PAGE_KEYWORDS
+                any(normalize_text(word) in normalized_footer for word in words)
+                for words in SANDBOX_NAVIGATION_PAGE_KEYWORDS
             )
             evidence.append(f"箱庭大地图关键词={keyword_hits}/3")
             near_miss.note(

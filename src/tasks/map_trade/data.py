@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from src.utils.calibration import FHD_1080
 
@@ -74,6 +75,10 @@ class ShopPurchaseReference:
     label: str
     cartridge_templates: tuple[str, ...]
     unfavorited_points: tuple[tuple[int, tuple[float, float]], ...]
+    # Every crop the list can be matched against: the 简中 one first, then the
+    # 繁中 client's (its name text differs).  The client's own set is used
+    # (trader_cartridge.shop_cartridge_templates_for_client).
+    match_templates: tuple[str, ...] = ()
 
     @property
     def unfavorited_slots(self) -> frozenset[int]:
@@ -150,6 +155,24 @@ def _shop_cartridge_templates(shop_id: str) -> tuple[str, ...]:
     return (normal,)
 
 
+# The crops hold the cartridge's name, and the 繁中 client's names differ: on
+# 10-24 角色游戏卡 2/3 scored about 0.69 (under the candidate floor) and
+# 剧情游戏卡 7 0.779 with a 0.015 margin.  Every cartridge has a 繁中 crop
+# beside the 简中 one as ``<name>_zh_tw.png``, cut at the same framing.
+SHOP_TW_TEMPLATE_IDS = frozenset(SHOP_CARTRIDGE_LABELS)
+
+
+_TEMPLATE_DIR = Path(__file__).resolve().parents[3] / "recognition-assets" / "template-assets"
+
+
+def _shop_match_templates(shop_id: str) -> tuple[str, ...]:
+    normal = _shop_cartridge_templates(shop_id)[0]
+    tw = normal.replace(".png", "_zh_tw.png")
+    if shop_id in SHOP_TW_TEMPLATE_IDS and (_TEMPLATE_DIR / tw).is_file():
+        return normal, tw
+    return (normal,)
+
+
 # This is the self-contained local purchase reference. Each cartridge points to
 # its local tab template and to the exact gray-star slots/relative coordinates that
 # must remain unfavorited. It deliberately does not depend on OCR product names or
@@ -159,6 +182,7 @@ SHOP_PURCHASE_REFERENCES: dict[str, ShopPurchaseReference] = {
         shop_id=shop_id,
         label=SHOP_CARTRIDGE_LABELS[shop_id],
         cartridge_templates=_shop_cartridge_templates(shop_id),
+        match_templates=_shop_match_templates(shop_id),
         unfavorited_points=tuple(
             (slot, SHOP_FAVORITE_POINTS[slot])
             for slot in sorted(SHOP_UNFAVORITED_POINTS[shop_id])
@@ -251,4 +275,6 @@ ITEM_ALIASES: dict[str, tuple[str, ...]] = {
     "地狱火紫菜包饭": ("地狱火海苔饭卷", "Fire of Hell Kimbab"),
     "巧克力鸡尾酒": ("Chocolat Cocktail",),
     "鱼子酱蛋包饭": ("Caviar Omelette",),
+    # The 繁中 client names it 糖 (one character: the word table leaves it).
+    "白糖": ("糖",),
 }

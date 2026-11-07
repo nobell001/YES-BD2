@@ -378,6 +378,16 @@ class ChoiceLayoutTest(unittest.TestCase):
         found = stacked_choices([b for b in lines if choice_line(b)])
         self.assertEqual([b.name for b in found], ["不。", "是的。"])
 
+    def test_two_character_centred_answers_are_choices(self):
+        # 10-25 回归偶像 on the 繁中 client: 「冬天」「夏天」, no punctuation; they
+        # count as buttons because the costume's bank has them (v0.3.2 rule).
+        from src.tasks.AffinityTalkTask import choice_line, stacked_choices
+
+        known = answers.short_answers(answers.find_costume("回歸偶像", "尤里"))
+        lines = [box("冬天", 932, 472, 56, 30), box("夏天", 932, 576, 56, 30), box("Q", 1500, 300, 20, 20)]
+        found = stacked_choices([b for b in lines if choice_line(b, known)])
+        self.assertEqual([b.name for b in found], ["冬天", "夏天"])
+
     def test_lone_glyph_from_the_art_is_not_a_choice(self):
         from src.tasks.AffinityTalkTask import choice_line
 

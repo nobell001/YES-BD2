@@ -102,6 +102,8 @@ def screen_parts(env: dict) -> list[str]:
         parts.append(t("HDR 开") if env["hdr"] else t("HDR 关"))
     if env.get("ui_language"):
         parts.append(env["ui_language"])
+    if env.get("game_language"):
+        parts.append(tf("游戏：{name}", name=t(env["game_language"])))
     if "clone" in env:
         parts.append(t("用了桌面分身") if env["clone"] else t("没用分身"))
     if env.get("fps_tools"):
@@ -284,6 +286,8 @@ def _paint(pen: _Pen, record: dict, frame, before=()) -> float:
     other = []
     if env.get("ui_language"):
         other.append(tf("工具语言：{name}", name=env["ui_language"]))
+    if env.get("game_language"):
+        other.append(tf("游戏语言：{name}", name=t(env["game_language"])))
     if "clone" in env:
         other.append(t("用了桌面分身") if env["clone"] else t("没用分身"))
     if other:

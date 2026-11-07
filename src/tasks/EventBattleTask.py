@@ -192,8 +192,9 @@ MODES = (NORMAL_MODE, CHALLENGE_MODE)
 HUB_KEYWORDS = MODES
 # Leo 2026-10-01: once 魔兽 opens the banner reads 魔兽追踪者解锁 instead of
 # 普通战斗解锁; both open the event.  Fixed in the code, not a setting (Leo
-# 2026-10-04).
-BANNER_KEYWORDS = ("战斗解锁", "普通战斗", "挑战战斗", "追踪者解锁")
+# 2026-10-04).  追踪者 alone (Leo 2026-10-27 「只要認到追蹤者就可以了」): the
+# 繁中 banner 魔獸追蹤者解鎖 simplifies to it.
+BANNER_KEYWORDS = ("战斗解锁", "普通战斗", "挑战战斗", "追踪者")
 AUTO_TOGGLE_TEXT = "自动战斗"
 QUICK_BATTLE_TEXT = "快速战斗"
 DIALOG_KEYWORDS = ("将按照指定次数", "自动进行战斗", "MAX")

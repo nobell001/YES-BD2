@@ -5,6 +5,7 @@ game, and it stays off unless the player turns it on.
 """
 
 import tempfile
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -60,6 +61,173 @@ class RunningLineTest(unittest.TestCase):
         self.assertEqual(status.tone, game_status.PAUSE)
         self.assertEqual(status.title, "已暂停 · 每日跑图")
         self.assertEqual(status.buttons[0], ("pause", "继续", "F9"))
+
+    def test_plain_task_shows_only_its_step(self):
+        # Leo 2026-11-07: 推主线's bar, no repeated words, no scores or points.
+        task = SimpleNamespace(
+            name="推主线", status_bar_plain=True, start_time=0,
+            info={"状态": "战斗中", "Log": "推主线：跳过对话（跳过图示 0.98）→ F2"},
+        )
+        keys = {hotkeys.PAUSE: "F9", hotkeys.STOP: "F10"}
+        with mock.patch.object(hotkeys, "keys", return_value=keys):
+            status = game_status.running_status(None, task, None, False, False, 1100.0)
+            paused = game_status.running_status(None, task, None, True, False, 1100.0)
+        # Leo 2026-11-07 「a就好」: one capsule, the task then what it does now.
+        self.assertTrue(status.compact)
+        self.assertEqual(status.title, "推主线")
+        self.assertEqual(status.detail, "战斗中")
+        self.assertNotIn("0.98", status.title + status.detail)
+        # Leo 2026-11-07 「膠囊右邊多一個置頂的圖案」
+        self.assertEqual(status.buttons, (("pause", "暂停", "F9"), ("stop", "停止", "F10"), ("pin", "置顶", "")))
+        self.assertEqual(paused.tone, game_status.PAUSE)
+        self.assertEqual(paused.detail, "已暂停 · 战斗中")
+        self.assertEqual(paused.buttons[0], ("pause", "继续", "F9"))
+
+    def test_capsule_buttons_sit_inside_the_window(self):
+        from PySide6.QtCore import QRect
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.instance() or QApplication([])
+        bar = game_status.StatusBar()
+        bar.set_status(
+            game_status.Status(
+                game_status.RUN, "推主线", "自动寻路", "03:12",
+                buttons=(("pause", "暂停", "F9"), ("stop", "停止", "F10")), compact=True,
+            )
+        )
+        area = QRect(0, 0, 1920, 1080)
+        bar.place(area, game_status.font_px(area))
+        bar.grab()  # paints, which lays out the buttons the mouse can press
+        self.assertEqual([action for action, _rect in bar._button_rects], ["pause", "stop"])
+        inside = bar.rect()
+        for _action, rect in bar._button_rects:
+            self.assertTrue(inside.contains(rect.toRect()), rect)
+        self.assertLess(bar.height(), 100)  # one line, not the old card
+
+    def _capsule(self):
+        from PySide6.QtCore import QRect
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.instance() or QApplication([])
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        patch = mock.patch.object(game_status_bar, "SETTINGS_FILE", Path(folder.name) / "bar.json")
+        patch.start()
+        self.addCleanup(patch.stop)
+        bar = game_status.StatusBar()
+        bar.set_status(
+            game_status.Status(
+                game_status.RUN, "推主线", "自动寻路", "03:12",
+                buttons=(("pause", "暂停", "F9"), ("stop", "停止", "F10")) + game_status.PIN_BUTTON, compact=True,
+            )
+        )
+        area = QRect(0, 0, 1920, 1080)
+        bar.place(area, game_status.font_px(area))
+        bar.grab()
+        return bar, area
+
+    def test_capsule_keeps_one_length(self):
+        # Leo 2026-11-07 「膠囊不要一直改變長度」
+        bar, area = self._capsule()
+        widths = set()
+        for step in ("开始", "战斗中", "等你做完这一步", "商店或花费页面，已暂停", ""):
+            bar.set_status(game_status.Status(
+                game_status.RUN, "推主线", step, "03:12",
+                buttons=(("pause", "暂停", "F9"), ("stop", "停止", "F10")) + game_status.PIN_BUTTON, compact=True,
+            ))
+            bar.place(area, game_status.font_px(area))
+            widths.add(bar.width())
+        self.assertEqual(len(widths), 1, widths)
+
+    def test_waiting_for_the_player_flashes_in_its_own_colour(self):
+        # Leo 2026-11-07 「要玩家手動時膠囊要稍微閃一下 且字體用不同顏色」
+        task = SimpleNamespace(name="推主线", status_bar_plain=True, start_time=0, info={"状态": "等你做完这一步"})
+        keys = {hotkeys.PAUSE: "F9", hotkeys.STOP: "F10"}
+        with mock.patch.object(hotkeys, "keys", return_value=keys):
+            status = game_status.running_status(None, task, None, False, False, 1100.0)
+        self.assertEqual(status.tone, game_status.WAIT)
+        bar, _area = self._capsule()
+        self.assertEqual(bar.flash_level(), 0.0)
+        bar.set_status(status)
+        self.assertIsNotNone(bar._flash_at)
+        bar._flash_at -= game_status.FLASH_MS / 6000  # half way into the first pulse
+        self.assertGreater(bar.flash_level(), 0.5)
+        bar.grab()  # paints the glow
+        bar._flash_at -= game_status.FLASH_MS / 1000
+        self.assertEqual(bar.flash_level(), 0.0)
+
+    def test_a_lost_battle_flashes_like_a_manual_step(self):
+        # Leo 2026-11-07 「戰鬥失敗的話也要在膠囊提醒」
+        task = SimpleNamespace(
+            name="推剧情", status_bar_plain=True, start_time=0, waiting_for_player=True,
+            info={"状态": "战斗失败"},
+        )
+        keys = {hotkeys.PAUSE: "F9", hotkeys.STOP: "F10"}
+        with mock.patch.object(hotkeys, "keys", return_value=keys):
+            status = game_status.running_status(None, task, None, False, False, 1100.0)
+        self.assertEqual(status.tone, game_status.WAIT)
+        self.assertEqual(status.detail, "战斗失败")
+        bar, _area = self._capsule()
+        bar.set_status(status)
+        self.assertIsNotNone(bar._flash_at)
+
+    def test_quick_skip_steps_are_not_shown(self):
+        # Leo 2026-11-07 「跳過對話 跳過對話確認 膠囊不用顯示出來」
+        task = SimpleNamespace(name="推主线", status_bar_plain=True, start_time=0, info={"状态": "自动移动中"})
+        keys = {hotkeys.PAUSE: "F9", hotkeys.STOP: "F10"}
+        with mock.patch.object(hotkeys, "keys", return_value=keys):
+            first = game_status.running_status(None, task, None, False, False, 1100.0)
+            task.info["状态"] = "跳过对话"
+            skip = game_status.running_status(None, task, None, False, False, 1101.0)
+            task.info["状态"] = "跳过对话确认"
+            confirm = game_status.running_status(None, task, None, False, False, 1102.0)
+            # 「不要跳等鼠標停下」
+            task.info["状态"] = "等鼠标停下"
+            mouse = game_status.running_status(None, task, None, False, False, 1103.0)
+        self.assertEqual(mouse.detail, "自动移动中")
+        self.assertEqual(first.detail, "自动移动中")
+        self.assertEqual(skip.detail, "自动移动中")
+        self.assertEqual(confirm.detail, "自动移动中")
+
+    def test_capsule_has_the_pin_button(self):
+        bar, _area = self._capsule()
+        self.assertEqual([action for action, _rect in bar._button_rects], ["pause", "stop", "pin"])
+        for _action, rect in bar._button_rects:
+            self.assertTrue(bar.rect().contains(rect.toRect()), rect)
+
+    def test_dragged_off_the_game_it_stays_on_it_unless_pinned(self):
+        # Leo 2026-11-07 「膠囊要可以拖動」; without 置顶 it is kept on the game.
+        from PySide6.QtCore import QPoint
+
+        bar, area = self._capsule()
+        self.assertTrue(bar.pinned)  # Leo 2026-11-07 「預設膠囊置頂」
+        bar.pinned = False
+        bar.offset = QPoint(5000, 40)
+        bar.place(area, game_status.font_px(area))
+        card_right = bar.geometry().right() - game_status.SHADOW
+        self.assertLessEqual(card_right, area.right() + 1)
+        self.assertEqual(bar.y(), bar._home.y() + 40)
+        # 置顶 「也可以蓋住瀏覽器」: it may sit anywhere.
+        bar.pinned = True
+        bar.offset = QPoint(5000, 40)
+        bar.place(area, game_status.font_px(area))
+        self.assertEqual(bar.x(), bar._home.x() + 5000)
+
+    def test_unpinning_flies_it_back_onto_the_game(self):
+        # 「取消置頂 就做個小動畫提示膠囊回遊戲了」
+        from PySide6.QtCore import QPoint
+
+        bar, area = self._capsule()
+        bar.pinned = True
+        bar.offset = QPoint(3000, 0)
+        bar.place(area, game_status.font_px(area))
+        with mock.patch.object(bar, "isVisible", return_value=True):
+            bar.set_pinned(False)
+        self.assertIsNotNone(bar._slide)
+        end = bar._slide.endValue()
+        self.assertLessEqual(end.x() + bar.width() - game_status.SHADOW, area.right() + 1)
+        self.assertFalse(game_status_bar.pinned())
+        self.assertEqual(game_status_bar.offset(), (bar.offset.x(), bar.offset.y()))
 
     def test_stopping(self):
         status = game_status.running_status(_report(), None, _Task(), False, True, 1100.0)
@@ -149,6 +317,47 @@ class LooksThroughBarTest(unittest.TestCase):
         gui = self._gui(self.OTHER)
         with mock.patch.dict("sys.modules", {"win32gui": gui}):
             self.assertEqual(game_status_bar.window_at((960, 80)), self.OTHER)
+
+
+class CoveredGameTest(unittest.TestCase):
+    """推主线 keeps its bar while the player uses another window, unless that
+    window lies over the bar's spot (Leo 2026-11-07 「就算被蓋住也能繼續運行」)."""
+
+    GAME, BROWSER = 0x60, 0x70
+
+    def _gui(self, under):
+        gui = mock.MagicMock()
+        gui.IsWindow.return_value = True
+        gui.IsIconic.return_value = False
+        gui.GetForegroundWindow.return_value = self.BROWSER
+        gui.GetAncestor.side_effect = lambda hwnd, _flag: hwnd
+        gui.GetClientRect.return_value = (0, 0, 1920, 1080)
+        gui.ClientToScreen.side_effect = lambda _hwnd, point: point
+        gui.WindowFromPoint.side_effect = under
+        gui.GetWindowText.return_value = "browser"
+        return gui
+
+    def _area(self, gui, covered_ok):
+        with (
+            mock.patch.dict("sys.modules", {"win32gui": gui}),
+            mock.patch.object(game_status, "game_handles", return_value={self.GAME}),
+            mock.patch.object(game_status, "native_to_qt", side_effect=lambda rect: rect),
+        ):
+            return game_status.game_area_why(self.GAME, covered_ok=covered_ok)
+
+    def test_browser_on_the_other_screen_keeps_the_bar(self):
+        area, _why = self._area(self._gui(lambda _point: self.GAME), covered_ok=True)
+        self.assertIsNotNone(area)
+
+    def test_window_over_the_bar_spot_hides_it(self):
+        area, why = self._area(self._gui(lambda point: self.BROWSER if point[0] > 900 else self.GAME), True)
+        self.assertIsNone(area)
+        self.assertIn("covers", why)
+
+    def test_other_tasks_still_need_the_game_in_front(self):
+        area, why = self._area(self._gui(lambda _point: self.GAME), covered_ok=False)
+        self.assertIsNone(area)
+        self.assertIn("in front", why)
 
 
 class PlaceTest(unittest.TestCase):

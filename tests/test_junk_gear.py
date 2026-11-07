@@ -175,6 +175,52 @@ class JunkTaskParsingTest(unittest.TestCase):
         )
 
 
+class TraditionalBagLabelsTest(unittest.TestCase):
+    """The 繁中 bag (4K clone 10-25): 依…排序, …由高至低…, and the 强化设置
+    dialog, read through the word table as the 简中 client's words."""
+
+    def _read(self, raw):
+        from src.utils import game_text
+
+        return game_text.to_tool_text(raw, True)
+
+    def test_traditional_sort_labels_read_as_the_tools_sorts(self):
+        from types import SimpleNamespace as Box
+
+        from src.tasks.JunkGearTask import (
+            NEWEST_FIRST_TEXT,
+            TIME_SORT_TEXT,
+            active_sort_label,
+            same_sort,
+            sort_category,
+        )
+
+        menu = [Box(name=self._read(raw)) for raw in ("依星級排序", "依最新獲得排序↓", "依強化階段排序")]
+        active = active_sort_label(menu)
+        self.assertIn(TIME_SORT_TEXT, active)
+        self.assertIn(NEWEST_FIRST_TEXT, active)
+        self.assertIn(TIME_SORT_TEXT, self._read("依獲得時間排序"))
+        saved = self._read("強化由高至低排序↓")
+        self.assertEqual("强化", sort_category(saved))
+        self.assertEqual("强化", sort_category(self._read("依強化階段排序")))
+        self.assertTrue(same_sort(saved, "强化从高到低排序"))
+
+    def test_traditional_enhance_dialog_reads_as_the_tools_dialog(self):
+        import re
+
+        from src.tasks.enhance_dialog import AUTO_LAYOUT_TEXT, TARGET_ROW_LABEL
+
+        text = self._read(
+            "強化設定 依選擇順序強化共4個裝備。 各目標強化值 5 "
+            "為達到目標強化值，所需的強化次數會根據機率期望值自動固定。"
+        )
+        self.assertIn("强化设置", text)
+        self.assertEqual("4", re.search(r"总计(\d+)件装备", text).group(1))
+        self.assertIn(TARGET_ROW_LABEL, text)
+        self.assertIn(AUTO_LAYOUT_TEXT, text)
+        self.assertIn("装备制作", self._read("製作裝備"))
+
+
 class JunkSafetyTest(unittest.TestCase):
     """Guards added after the 2026-09-26 stability review."""
 

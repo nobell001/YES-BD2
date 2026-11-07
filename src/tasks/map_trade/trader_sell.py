@@ -913,7 +913,9 @@ class SellFlowMixin:
         return any(
             name
             and (
-                name in normalized
+                # A one-character name (繁中 糖 for 白糖) only as the whole box,
+                # never inside another name (红糖, 棉花糖).
+                (name in normalized if len(name) > 1 else name == normalized)
                 or (
                     len(normalized) >= SALE_NAME_FRAGMENT_MIN_CHARS
                     and normalized in name

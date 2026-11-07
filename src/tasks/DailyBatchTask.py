@@ -480,16 +480,17 @@ class ChildBatchTask(BaseTask):
     def _setup_stops(self) -> bool:
         """One look at the game's settings before the first item (差異化點子 5).
 
-        A reminder only (Leo 2026-10-09 「5提醒就好了」); a game set to 繁中
-        cannot be read at all, so then nothing starts.  Nor when the account
-        list cannot be read: whose records these are is unknown.
+        A reminder only (Leo 2026-10-09 「5提醒就好了」); the tool reads the
+        繁中 game too since 繁中 support, so only a look() notice stops it.
+        Nor does anything start when the account list cannot be read: whose
+        records these are is unknown.
         """
         notice = setup_check.accounts_stop(self)
         reason = "账号清单读不出来"
         if not notice:
             self.info_set("状态", f"{self.batch_label}：开跑前看一眼游戏设定。")
             notice = setup_check.look(self)
-            reason = "游戏语言要改成简体中文"
+            reason = "开跑前检查没过"
         if not notice:
             return False
         run_report.set_notice(notice)

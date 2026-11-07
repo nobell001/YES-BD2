@@ -625,7 +625,7 @@ class ShopAndCatalogTest(unittest.TestCase):
 
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         result = MatchResult(0.9, (220, 230), (78, 57), pixel_score=0.95)
-        detection = SimpleNamespace(best=SimpleNamespace(result=result))
+        detection = SimpleNamespace(best=SimpleNamespace(result=result, template=""))
         clock = {"now": 0.0}
         clicks = []
 
@@ -663,7 +663,7 @@ class ShopAndCatalogTest(unittest.TestCase):
     def test_selected_check_uses_the_clicked_spot_and_reuses_the_page_scan(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         result = MatchResult(0.97, (220, 230), (78, 57), pixel_score=0.95)
-        detection = SimpleNamespace(best=SimpleNamespace(result=result))
+        detection = SimpleNamespace(best=SimpleNamespace(result=result, template=""))
         scans = []
         trader = object.__new__(Trader)
         trader.task = SimpleNamespace(
@@ -682,7 +682,7 @@ class ShopAndCatalogTest(unittest.TestCase):
                 MatchResult(0.96, (222, 229), (78, 57), pixel_score=0.95),
             ),
         )
-        trader._cartridge_spec = lambda _shop_id: SimpleNamespace()
+        trader._cartridge_spec = lambda _shop_id, _template="": SimpleNamespace()
 
         self.assertTrue(trader._cartridge_visible("S3", frame))
         self.assertTrue(trader._select_purchase_cartridge("S3"))
@@ -949,3 +949,131 @@ class ShopAndCatalogTest(unittest.TestCase):
                     STORY_COLLECTION_MAPS[card.number],
                     tuple(target.title for target in card.targets),
                 )
+
+
+class TraditionalShopCartridgeTest(unittest.TestCase):
+    """The 繁中 client's shop list (10-24 clone): its cartridge names differ, so
+    every shop also has a 繁中 crop, and a label read without its number is
+    told apart by the cartridge name under it."""
+
+    def _trader(self, match_all, boxes):
+        task = SimpleNamespace(
+            info_set=lambda *_args, **_kwargs: None,
+            log_warning=lambda *_args, **_kwargs: None,
+        )
+        trader = object.__new__(Trader)
+        trader.task = task
+        trader.vision = SimpleNamespace(
+            match_all=match_all,
+            ocr_boxes=lambda _frame, _name, **_kwargs: boxes,
+            threshold_for=lambda _spec: 0.72,
+        )
+        return trader
+
+    def test_every_shop_has_its_simplified_crop_first_and_a_traditional_one(self):
+        templates = ROOT / "recognition-assets" / "template-assets"
+        for shop_id, reference in SHOP_PURCHASE_REFERENCES.items():
+            with self.subTest(shop_id=shop_id):
+                normal, traditional = reference.match_templates
+                self.assertEqual(reference.cartridge_templates[0], normal)
+                self.assertTrue(traditional.endswith("_zh_tw.png"), traditional)
+                self.assertTrue((templates / traditional).is_file(), traditional)
+                with Image.open(templates / normal) as a, Image.open(templates / traditional) as b:
+                    self.assertEqual(a.size, b.size)
+
+    def test_each_crop_has_its_own_cache_name(self):
+        trader = object.__new__(Trader)
+        normal, traditional = SHOP_PURCHASE_REFERENCES["R4"].match_templates
+        self.assertEqual(SHOP_CARTRIDGE_LABELS["R4"], trader._cartridge_spec("R4").name)
+        self.assertNotEqual(
+            trader._cartridge_spec("R4", normal).name,
+            trader._cartridge_spec("R4", traditional).name,
+        )
+        self.assertEqual(traditional, trader._cartridge_spec("R4", traditional).file_name)
+
+    def setUp(self):
+        from src.utils import game_language
+
+        game_language.reset()
+        self.addCleanup(game_language.reset)
+
+    def _client(self, traditional):
+        from src.utils import game_language
+
+        game_language.reset()
+        game_language.note_text(
+            "我的小屋 格魯TALK 街機遊戲" if traditional else "我的小屋 格鲁TALK 街机游戏"
+        )
+
+    def test_only_the_clients_own_crops_are_compared(self):
+        # Leo 10-24: the player's language is set, never both sets.
+        compared = []
+
+        def match_all(_frame, spec, **_kwargs):
+            compared.append(spec.file_name)
+            return ()
+
+        trader = self._trader(match_all, [])
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        for traditional in (False, True):
+            with self.subTest(traditional=traditional):
+                self._client(traditional)
+                compared.clear()
+                trader._shop_cartridge_template_candidates(frame)
+                self.assertEqual(len(SHOP_PURCHASE_REFERENCES), len(compared))
+                self.assertEqual(
+                    traditional, all(name.endswith("_zh_tw.png") for name in compared)
+                )
+                self.assertEqual(
+                    traditional, any(name.endswith("_zh_tw.png") for name in compared)
+                )
+
+    def test_before_home_is_read_the_simplified_crops_are_used(self):
+        compared = []
+        trader = self._trader(lambda _f, spec, **_k: compared.append(spec.file_name) or (), [])
+        trader._shop_cartridge_template_candidates(np.zeros((1080, 1920, 3), dtype=np.uint8))
+        self.assertFalse(any(name.endswith("_zh_tw.png") for name in compared))
+
+    def test_the_traditional_crop_wins_and_is_kept_for_the_selected_check(self):
+        # 10-24 clone: 大逃脱's 简中 crop scored about 0.69 on the 繁中 list.
+        self._client(True)
+        traditional = SHOP_PURCHASE_REFERENCES["R4"].match_templates[1]
+
+        def match_all(_frame, spec, **_kwargs):
+            score = {traditional: 0.996, "shop/cartridges/character_cartridge_06_zh_tw.png": 0.709}
+            value = score.get(spec.file_name)
+            return () if value is None else (MatchResult(value, (218, 284), (104, 76), pixel_score=0.95),)
+
+        boxes = [
+            SimpleNamespace(name="角色游戏卡带4", confidence=0.95, x=318, y=300, width=150, height=23),
+            SimpleNamespace(name="大逃脱", confidence=0.99, x=318, y=328, width=70, height=24),
+        ]
+        trader = self._trader(match_all, boxes)
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+        confirmed = trader._confirmed_shop_cartridge_detections(frame)
+
+        self.assertEqual({"R4"}, confirmed.keys())
+        self.assertEqual(traditional, confirmed["R4"].best.template)
+        trader._recent_shop_scan = (__import__("time").monotonic(), frame, confirmed)
+        _frame, spec, _result = trader._wait_for_cartridge_match("R4")
+        self.assertEqual(traditional, spec.file_name)
+
+    def test_a_label_without_its_number_is_named_by_the_cartridge_under_it(self):
+        # 繁中 故事遊戲卡帶 1: OCR reads the label but not the thin 1.
+        boxes = [
+            SimpleNamespace(name="剧情游戏卡带", confidence=0.95, x=318, y=145, width=150, height=23),
+            SimpleNamespace(name="血骑士", confidence=0.99, x=318, y=172, width=70, height=24),
+        ]
+        trader = self._trader(lambda *_args, **_kwargs: (), boxes)
+        rows = trader._shop_cartridge_ocr_rows(np.zeros((1080, 1920, 3), dtype=np.uint8))
+        self.assertEqual(["S1"], [row.shop_id for row in rows])
+        self.assertEqual(1.0, rows[0].name_similarity)
+
+    def test_a_bare_label_over_an_unknown_name_is_no_row(self):
+        boxes = [
+            SimpleNamespace(name="角色游戏卡带", confidence=0.95, x=318, y=145, width=150, height=23),
+            SimpleNamespace(name="今天天气", confidence=0.99, x=318, y=172, width=70, height=24),
+        ]
+        trader = self._trader(lambda *_args, **_kwargs: (), boxes)
+        self.assertEqual((), trader._shop_cartridge_ocr_rows(np.zeros((1080, 1920, 3), dtype=np.uint8)))

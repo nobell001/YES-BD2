@@ -43,7 +43,10 @@ SHOP_CARTRIDGE_OCR_MIN_CONFIDENCE = 0.85
 SHOP_CARTRIDGE_NAME_MIN_SIMILARITY = 0.70
 SHOP_CARTRIDGE_ROW_CLUSTER_RADIUS = 28
 SHOP_CARTRIDGE_OCR_ROW_LINK_RADIUS = 42
-SHOP_CARTRIDGE_CATEGORY_PATTERN = re.compile(r"(剧情|角色|活动)游戏卡\s*(\d+)")
+# 繁中 client: 故事遊戲卡帶 1, read as 剧情游戏卡带1 (2026-10-23 clone).
+SHOP_CARTRIDGE_CATEGORY_PATTERN = re.compile(r"(剧情|角色|活动)游戏卡带?\s*(\d+)")
+# A label read without its number.
+SHOP_CARTRIDGE_BARE_CATEGORY_PATTERN = re.compile(r"(剧情|角色|活动)游戏卡带?$")
 SHOP_CARTRIDGE_CATEGORY_PREFIX = {"剧情": "S", "角色": "R", "活动": "E"}
 SHOP_FIRST_PAGE_MAX_UP_SCROLLS = 40
 # 出售会话起点定位：OCR 估算顶部行号后向上快滚，多滚 3 格保险（滚过头的列表
@@ -265,6 +268,8 @@ COOK_SUBMENU_TEMPLATE = TemplateSpec(
 class ShopCartridgeTemplateCandidate:
     shop_id: str
     result: MatchResult
+    # The crop that matched (简中 or 繁中); empty is the shop's 简中 crop.
+    template: str = ""
 
 
 @dataclass(frozen=True)

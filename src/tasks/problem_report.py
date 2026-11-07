@@ -84,7 +84,7 @@ FAILED = "failed"
 ABORTED = "aborted"
 STOPPED = "stopped"
 ERROR = "error"
-# The 开跑前检查 found the game set to 繁中: nothing was pressed (setup_check).
+# The 开跑前检查 stopped the run before anything was pressed (setup_check).
 SETUP = "setup"
 PROBLEM_ENDS = (FAILED, ABORTED, STOPPED, ERROR)
 
@@ -335,6 +335,14 @@ def environment(executor) -> dict:
         mode = language_mode()
         if mode and mode != "auto":
             info["ui_language"] = LANGUAGE_LABELS.get(mode, mode)
+    except Exception:
+        pass
+    # The game client, so whoever reads the report knows it ran on 繁中.
+    try:
+        from src.utils import game_language
+
+        if game_language.client_is_traditional():
+            info["game_language"] = game_language.TRADITIONAL_LABEL
     except Exception:
         pass
     return info

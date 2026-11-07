@@ -491,7 +491,8 @@ EVENT_CARD_NAMES = {
 }
 EVENT_COLLECTION_TARGETS = {
     1: (
-        CollectionMapTarget(_MAIN, "泳池派对场"),
+        # 繁中 names the map 泳池派對 (spelled like a costume, kept as is): 泳池派对 too.
+        CollectionMapTarget(_MAIN, "泳池派对场", aliases=("泳池派对",)),
         CollectionMapTarget(_BATTLE_1, "派对会场角落"),
     ),
     2: (

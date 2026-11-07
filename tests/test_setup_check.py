@@ -1,5 +1,6 @@
-"""The 开跑前检查 (差異化點子 5): a reminder before a run the player started;
-a game set to 繁中 does not start (Leo 2026-10-09 「5提醒就好了」)."""
+"""The 开跑前检查 (差異化點子 5): a reminder before a run the player started
+(Leo 2026-10-09 「5提醒就好了」).  A game set to 繁中 runs since the tool reads
+it (2026-10-09); the look only notes it for the report."""
 
 import tempfile
 import unittest
@@ -13,10 +14,12 @@ from src.tasks import problem_report, run_history, run_report, setup_check
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.DailyBatchTask import DailyBatchChild, DailyBatchTask
 from src.tasks.map_trade.vision import Vision
-from src.utils import accounts, colour_check
+from src.utils import accounts, colour_check, game_language, game_text
 
 TRADITIONAL_LEFT = "我的小屋 格魯TALK 街機遊戲"
 SIMPLIFIED_LEFT = "我的小屋 格鲁TALK 街机游戏"
+# What a look that stops a run would return (none does today).
+NOTICE = "开跑前检查没过"
 
 
 class _Task:
@@ -46,9 +49,10 @@ def _reads(*left_texts, gacha=""):
 
     def ocr_text(_vision, _frame, name, **_kwargs):
         calls.append(name)
-        if name.endswith("左列"):
-            return lefts.pop(0) if lefts else ""
-        return gacha
+        raw = (lefts.pop(0) if lefts else "") if name.endswith("左列") else gacha
+        # As BaseBD2Task.fix_texts: note the raw text, hand on 简中 words.
+        game_language.note_text(raw)
+        return game_text.to_tool_text(raw)
 
     return mock.patch.object(Vision, "ocr_text", ocr_text), calls
 
@@ -67,6 +71,8 @@ class LookTest(unittest.TestCase):
         self.addCleanup(setup_check.reset)
         colour_check.forget_capture()
         self.addCleanup(colour_check.forget_capture)
+        game_language.reset()
+        self.addCleanup(game_language.reset)
         previous = colour_check.last_check()
         self.addCleanup(lambda: colour_check.remember(previous))
         # The test frames are black; home counts as not dimmed unless a test says so.
@@ -74,14 +80,14 @@ class LookTest(unittest.TestCase):
         bright.start()
         self.addCleanup(bright.stop)
 
-    def test_traditional_home_on_two_frames_stops_with_a_reminder(self):
+    def test_traditional_home_on_two_frames_is_noted_and_runs(self):
         task = _Task()
         reads, _calls = _reads(TRADITIONAL_LEFT, TRADITIONAL_LEFT)
         with reads, _colours(2.0):
-            notice = setup_check.look(task)
-        self.assertEqual(setup_check.LANGUAGE_NOTICE, notice)
-        self.assertEqual([(setup_check.LANGUAGE_MESSAGE, True)], task.warnings)
-        self.assertEqual(setup_check.LANGUAGE_NOTICE, task.info[run_history.NOT_STARTED_KEY])
+            self.assertEqual("", setup_check.look(task))
+        self.assertEqual([], task.warnings)
+        self.assertEqual(game_language.TRADITIONAL_LABEL, task.info[game_language.INFO_KEY])
+        self.assertNotIn(run_history.NOT_STARTED_KEY, task.info)
 
     def test_one_traditional_frame_is_not_enough(self):
         task = _Task()
@@ -89,7 +95,7 @@ class LookTest(unittest.TestCase):
         with reads, _colours(None):
             self.assertEqual("", setup_check.look(task))
         self.assertEqual([], task.warnings)
-        self.assertNotIn(run_history.NOT_STARTED_KEY, task.info)
+        self.assertNotIn(game_language.INFO_KEY, task.info)
 
     def test_simplified_home_goes_on_without_reading_the_gacha_label(self):
         task = _Task()
@@ -101,9 +107,10 @@ class LookTest(unittest.TestCase):
 
     def test_traditional_gacha_label_with_part_of_the_left_column(self):
         task = _Task()
-        reads, _calls = _reads("格魯", "格魯", gacha="抽抽樂")
+        reads, _calls = _reads("我的小屋", "我的小屋", gacha="抽抽樂 經營")
         with reads, _colours(None):
-            self.assertEqual(setup_check.LANGUAGE_NOTICE, setup_check.look(task))
+            self.assertEqual("", setup_check.look(task))
+        self.assertEqual(game_language.TRADITIONAL_LABEL, task.info[game_language.INFO_KEY])
 
     def test_a_page_that_is_not_home_is_no_reminder(self):
         task = _Task()
@@ -246,15 +253,15 @@ class BatchTest(unittest.TestCase):
         )
         return task
 
-    def test_traditional_game_ends_the_batch_before_its_first_item(self):
+    def test_a_stopping_notice_ends_the_batch_before_its_first_item(self):
         calls = []
         task = self._batch(calls)
-        with mock.patch.object(setup_check, "look", lambda _task: setup_check.LANGUAGE_NOTICE):
+        with mock.patch.object(setup_check, "look", lambda _task: NOTICE):
             self.assertFalse(DailyBatchTask.run(task))
         self.assertEqual([], calls)
         report = run_report.load(task.batch_label)
         self.assertEqual(run_report.ENDED_SETUP, report["ended"])
-        self.assertEqual(setup_check.LANGUAGE_NOTICE, report["notice"])
+        self.assertEqual(NOTICE, report["notice"])
         self.assertEqual([run_report.WAIT], [row["state"] for row in report["rows"]])
         # Never counted as a finished run (the run history's success rule).
         self.assertIn("中止", task.info["状态"])
@@ -312,9 +319,9 @@ class SingleTaskTest(unittest.TestCase):
         task.info = {}
         return task
 
-    def test_traditional_game_does_not_start_a_task_run_alone(self):
+    def test_a_stopping_notice_does_not_start_a_task_run_alone(self):
         task = self._task()
-        with mock.patch.object(setup_check, "look", lambda _task: setup_check.LANGUAGE_NOTICE):
+        with mock.patch.object(setup_check, "look", lambda _task: NOTICE):
             self.assertFalse(task.run())
         self.assertEqual((0, 0), (task.ran, task.went_home))
 

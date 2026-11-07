@@ -67,6 +67,44 @@ def set_enabled(on: bool) -> None:
         logger.warning(f"game status bar: setting not saved ({exc})")
 
 
+PIN_KEY = "pinned"
+OFFSET_KEY = "offset"
+
+
+def pinned() -> bool:
+    """The capsule's 置顶 (Leo 2026-11-07 「置頂後就也可以蓋住瀏覽器」): on, it
+    stays on screen over every window, not only while the game is in sight."""
+    return bool(_read().get(PIN_KEY, True))  # Leo 2026-11-07 「預設膠囊置頂」
+
+
+def offset() -> tuple[int, int]:
+    """Where the player dragged the capsule, from its own spot over the game
+    (Qt units; Leo 2026-11-07 「膠囊要可以拖動」)."""
+    value = _read().get(OFFSET_KEY)
+    try:
+        return int(value[0]), int(value[1])
+    except (TypeError, ValueError, IndexError):
+        return 0, 0
+
+
+def _save(**values) -> None:
+    saved = _read()
+    saved.update(values)
+    try:
+        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SETTINGS_FILE.write_text(json.dumps(saved), encoding="utf-8")
+    except OSError as exc:
+        logger.warning(f"game status bar: setting not saved ({exc})")
+
+
+def set_pinned(on: bool) -> None:
+    _save(**{PIN_KEY: bool(on)})
+
+
+def set_offset(dx: int, dy: int) -> None:
+    _save(**{OFFSET_KEY: [int(dx), int(dy)]})
+
+
 def register(hwnd: int) -> None:
     if hwnd:
         _handles.add(int(hwnd))

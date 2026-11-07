@@ -96,7 +96,9 @@ config = {
     "ocr": {
         "default": {
             "lib": "onnxocr",
-            "auto_simplify": True,
+            # No auto_simplify: ok-script reads it from ocr, not ocr.default,
+            # so it never ran, and it must not: game_language needs the raw
+            # 繁中 text.  src/utils/game_text.py does the 繁→简 step itself.
             "params": {
                 "use_openvino": True,
                 # ok-script turns the NPU on when it is left out.  On an
@@ -195,6 +197,7 @@ config = {
         ["src.tasks.FiendHuntTask", "FiendHuntTask"],
         ["src.tasks.FiendHuntTask", "FiendHuntRecordTask"],
         ["src.tasks.TalosTask", "TalosTask"],
+        ["src.tasks.MainStoryTask", "MainStoryTask"],
         ["src.tasks.SquareGoddessTask", "SquareGoddessTask"],
         ["src.tasks.MapTradeTask", "MapTradeTask"],
         ["src.tasks.BargainLoopTask", "BargainLoopTask"],

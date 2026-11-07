@@ -38,6 +38,40 @@ class BankTest(unittest.TestCase):
         self.assertEqual(answers.pick_answer(misread, rou).index, 1)
         self.assertEqual(answers.pick_answer(["稱讚魯身體很柔軟", "模仿魯的動作"], rou).index, 1)
 
+    def test_same_answers_in_two_questions_follow_the_question_on_screen(self):
+        # 暗黑圣女: 有/没有 in two questions with opposite values.
+        saint = next(c for c in answers.bank() if c.costume == answers.normalize("暗黑圣女"))
+        prank = "店长曾经捉弄过朋友吗？"
+        prayer = "店长，你有没有过那种虔诚祈祷之后，愿望真的实现了的经历？"
+        self.assertEqual(0, answers.pick_answer(["有。", "没有。"], saint, prank).index)
+        self.assertEqual(1, answers.pick_answer(["有。", "没有。"], saint, prayer).index)
+        self.assertEqual(0, answers.pick_answer(["没有", "有"], saint, "店長有過那種誠心祈禱後，願望成真的經驗嗎？").index)
+
+    def test_every_traditional_answer_picks_the_best_one(self):
+        """Each bank question as the 繁中 client shows it, both orders."""
+        import json
+
+        from src.utils import game_text
+
+        data = json.loads(answers.BANK_FILE.read_text(encoding="utf-8"))
+        wrong = []
+        for entry in data["costumes"]:
+            costume = answers.find_costume(
+                game_text.to_tool_text(entry.get("costume_zh_tw"), True),
+                game_text.to_tool_text(entry.get("character_zh_tw"), True),
+            )
+            self.assertIsNotNone(costume, entry.get("costume_zh_tw"))
+            self.assertEqual(str(entry["id"]), costume.id)
+            for question in entry["questions"]:
+                values = [answer["exp"] for answer in question["answers"]]
+                reads = [game_text.to_tool_text(a["text"].get("tw"), True) for a in question["answers"]]
+                screen = game_text.to_tool_text(question["prompt"].get("tw"), True)
+                for order in ((0, 1), (1, 0)):
+                    pick = answers.pick_answer([reads[i] for i in order], costume, screen)
+                    if values[order[pick.index]] != max(values):
+                        wrong.append((entry["id"], question["id"], order))
+        self.assertEqual([], wrong)
+
     def test_unknown_question_takes_the_first(self):
         rou = answers.find_costume("白色猫咪", "鲁")
         pick = answers.pick_answer(["完全不同的话", "另外一句话"], rou)

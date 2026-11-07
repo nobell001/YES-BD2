@@ -36,6 +36,7 @@ class Shell(QObject):
         from src.ui.shell.report_page import ReportPage
         from src.ui.shell.settings import SettingsPage
         from src.ui.shell.sidebar import Sidebar
+        from src.ui.shell.story_page import StoryPage
         from src.ui.shell.talos_page import TalosPage
         from src.ui.shell.task_page import TaskPage
         from src.ui.shell.trade import TradePage
@@ -49,6 +50,7 @@ class Shell(QObject):
             ),
             "trade": TradePage(),
             "map": MapPage(),
+            "story": StoryPage(),
             "talos": TalosPage(),
             "fiend": FiendPage(),
             "settings": SettingsPage(window),

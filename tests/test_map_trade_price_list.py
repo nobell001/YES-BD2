@@ -137,6 +137,16 @@ class KnownGoodsTest(unittest.TestCase):
             for name in names:
                 self.assertEqual(good, owned_name_owner(name, goods, exact_only), name)
 
+    def test_traditional_one_character_sugar(self):
+        from src.tasks.map_trade.trader_sell import SellFlowMixin
+
+        names = ("白糖", "糖")
+        # 繁中 shows 白糖 as 糖; a one-character name only as the whole box.
+        self.assertTrue(SellFlowMixin._sale_name_matches("糖", names))
+        self.assertTrue(SellFlowMixin._sale_name_matches("白糖", names))
+        self.assertFalse(SellFlowMixin._sale_name_matches("红糖", ("糖",)))
+        self.assertFalse(SellFlowMixin._sale_name_matches("棉花糖", ("糖",)))
+
     def test_a_short_fragment_of_a_long_name_does_not_count(self):
         from src.tasks.map_trade.trader_sell import owned_name_owner
 

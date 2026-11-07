@@ -2,9 +2,9 @@
 reminder when one is off (差異化點子 5).  Leo 2026-10-09: 「5提醒就好了」, a
 reminder only, no page with steps and pictures.
 
-- 游戏语言: home's labels read 繁中.  Every word the tool reads is the 简中
-  client's, so it would recognise nothing: the run does not start, nothing is
-  pressed, and the reminder says to switch the game to 简体中文.
+- 游戏语言: home's labels read 繁中.  Until 2026-10-09 the run did not start
+  then; the 繁中 client is supported now (game_text turns what OCR reads into
+  the 简中 client's words), so the look only notes it for the report.
 - 画面颜色: HDR or a colour filter changed the picture (colour_check).  The
   run goes on; the reminder says what to turn off.
 - 游戏画面大小 is game_size.fix_or_warn's, just before this.
@@ -13,8 +13,7 @@ reminder only, no page with steps and pictures.
   一键日常 (认不准就不按; the tool does not guess account 1).
 
 Only a clear reading counts: a screen that is not home, or OCR that reads
-nothing, is no reminder (the run's own checks still decide, and a failed run
-still gets game_language's hint).
+nothing, is no reminder (the run's own checks still decide).
 """
 
 from __future__ import annotations
@@ -32,18 +31,12 @@ from src.utils.home_confirmation import (
     HOME_DIMMED_P95_THRESHOLD_DEFAULT,
     HOME_LEFT_COLUMN_REQUIRED_HITS,
     home_left_column_brightness,
+    home_gacha_ocr_matches,
     home_left_column_hits,
 )
 
 logger = Logger.get_logger(__name__)
 
-# The popup and the log line, read on their own.
-LANGUAGE_MESSAGE = (
-    "游戏语言是繁体中文，工具只认得简体中文，这次没有开始跑。"
-    "请到游戏设置把语言改成简体中文，再按开始。"
-)
-# Under 「没有开始跑」 on the results page.
-LANGUAGE_NOTICE = "游戏语言是繁体中文，工具只认得简体中文。到游戏设置改成简体中文，再按开始。"
 COLOUR_MESSAGE = (
     "画面颜色和游戏原本的差很多，可能开着 HDR 或显卡的颜色滤镜，有些判断可能不准。"
     "建议关掉后再跑，这次照常执行。"
@@ -79,34 +72,30 @@ def started_alone(task) -> bool:
     return executor is not None and getattr(executor, "current_task", None) is task
 
 
-def _traditional_home(text: str) -> bool:
-    """Two of home's own 繁中 labels: 繁中 text alone may be a player's
-    (a guild description on the guild page, live 2K 10-10)."""
-    return (
-        game_language.traditional_home_labels(text) >= HOME_LEFT_COLUMN_REQUIRED_HITS
-        and game_language.looks_traditional(text)
-    )
-
-
 def _home_traditional(task, frame) -> bool:
-    """True only when home's own labels read 繁中 (never a player's text)."""
+    """True only when home is on screen and its labels read 繁中.
+
+    game_text turns 繁中 OCR into 简中 words and notes the raw text with
+    game_language on the way, so home is recognised either way and the
+    client comes from game_language (never from a player's name alone: two
+    different 繁中-only characters in one read).
+    """
     from src.tasks.map_trade.vision import Vision
 
     vision = Vision(task)
     left = vision.ocr_text(
         frame, "开跑前检查 左列", relative_roi=HOME_LEFT_COLUMN_OCR_RELATIVE_ROI
     )
-    if _traditional_home(left):
-        return True
-    if home_left_column_hits(left) >= HOME_LEFT_COLUMN_REQUIRED_HITS:
-        return False  # the 简中 home
-    gacha = vision.ocr_text(
-        frame,
-        "开跑前检查 抽抽乐",
-        relative_roi=HOME_GACHA_OCR_RELATIVE_ROI,
-        ocr_scale=GACHA_OCR_SCALE,
-    )
-    return _traditional_home(f"{left} {gacha}")
+    if home_left_column_hits(left) < HOME_LEFT_COLUMN_REQUIRED_HITS:
+        gacha = vision.ocr_text(
+            frame,
+            "开跑前检查 抽抽乐",
+            relative_roi=HOME_GACHA_OCR_RELATIVE_ROI,
+            ocr_scale=GACHA_OCR_SCALE,
+        )
+        if not home_gacha_ocr_matches(gacha):
+            return False  # not home
+    return game_language.client_is_traditional()
 
 
 def _remind(task, text: str, notify: bool = True) -> None:
@@ -174,8 +163,8 @@ def accounts_stop(task) -> str:
 def look(task, now: float | None = None) -> str:
     """Look at the game before the run; the reminder that stops it, else "".
 
-    繁中 must read the same on two frames (认不准就不按: a wrong stop would
-    keep a player from running at all).  A look that fails is no reminder.
+    Nothing stops a run now: 繁中 is noted for the report (two frames, so a
+    misread never labels a 简中 game), and the colours get a reminder.
     """
     now = time.monotonic() if now is None else now
     try:
@@ -185,12 +174,10 @@ def look(task, now: float | None = None) -> str:
         if _home_traditional(task, frame):
             second = task.next_frame()
             if second is not None and _home_traditional(task, second):
-                _remind(task, LANGUAGE_MESSAGE)
                 try:
-                    task.info_set(NOT_STARTED_KEY, LANGUAGE_NOTICE)
+                    task.info_set(game_language.INFO_KEY, game_language.TRADITIONAL_LABEL)
                 except Exception:
                     pass
-                return LANGUAGE_NOTICE
         _check_colours(task, frame, now)
     except (TaskDisabledException, FinishedException):
         raise

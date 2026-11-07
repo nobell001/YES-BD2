@@ -26,12 +26,13 @@ turning it off mid-run hides it at once).
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from ok import Logger
-from PySide6.QtCore import QObject, QPoint, QRect, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEasingCurve, QObject, QPoint, QPropertyAnimation, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -40,6 +41,7 @@ from PySide6.QtGui import (
     QLinearGradient,
     QPainter,
     QPainterPath,
+    QPen,
     QRadialGradient,
 )
 from PySide6.QtWidgets import QWidget
@@ -60,7 +62,13 @@ WIDTH_RATIO = 0.36
 SHADOW = 14  # room around the card for its shadow
 
 RUN, PAUSE, STOP, DONE, FAIL = "run", "pause", "stop", "done", "fail"
+# 推主线 waiting for the player's own hands (Leo 2026-11-07 「要玩家手動時膠囊
+# 要稍微閃一下 且字體用不同顏色」).
+WAIT = "wait"
+WAIT_SAYS = "等你做完这一步"
+FLASH_MS = 1800  # three soft pulses when the wait starts
 DOT = {
+    WAIT: "#F2C25A",
     RUN: "#9D92E8",
     PAUSE: "#E5B454",
     STOP: "#E5B454",
@@ -85,6 +93,9 @@ class Status:
     # While paused on a task that lets the player pick its stage (塔洛斯教材):
     # (stage shown, how many, that one cleared).  None everywhere else.
     picker: tuple[int, int, bool] | None = None
+    # One slim capsule (Leo 2026-11-07 picked mockup A for 推主线): the dot,
+    # the task, what it does now (``detail``), the clock, the two buttons.
+    compact: bool = False
 
 
 # ---------------------------------------------------------------- what to say
@@ -104,7 +115,7 @@ def stage_text(task) -> str:
 
 
 def log_text(task) -> str:
-    if task is None:
+    if task is None or getattr(task, "status_bar_plain", False):
         return ""
     text = str(task_info_snapshot(task).get("Log") or "").strip()
     return "" if text == "-" else text
@@ -146,6 +157,17 @@ def running_status(
         started = getattr(task, "start_time", 0) or None
         count, progress = "", None
     clock = fmt_clock(now - started) if started else ""
+    if getattr(child, "status_bar_plain", False):
+        # Leo 2026-11-07 「不要重複資訊 不要顯示參數」, mockup A: one line.
+        if stopping:
+            return Status(STOP, name, t("正在停止"), clock, icon=icon, compact=True)
+        step = shown_step(child, stage_text(child))
+        if paused:
+            return Status(PAUSE, name, _join(t("已暂停"), step), clock, icon=icon,
+                          buttons=buttons(True) + PIN_BUTTON, compact=True)
+        waiting = bool(getattr(child, "waiting_for_player", False)) or step == t(WAIT_SAYS) or step == WAIT_SAYS
+        return Status(WAIT if waiting else RUN, name or t("正在准备"), step, clock, icon=icon,
+                      buttons=buttons(False) + PIN_BUTTON, compact=True)
     if stopping:
         return Status(STOP, _join(t("正在停止"), name), t("正在收尾，请稍等"), clock, count, progress, icon)
     if paused:
@@ -165,6 +187,9 @@ def running_status(
 
 
 PREV, NEXT = "stage_prev", "stage_next"
+STEP_SLOT_CHARS = 11  # the longest step 推主线 says: 「商店或花费页面，已暂停」
+# The capsule's 置顶 (Leo 2026-11-07 「膠囊右邊多一個置頂的圖案」).
+PIN = "pin"
 
 
 def with_picker(status: Status, picker) -> Status:
@@ -198,6 +223,23 @@ def step_stage(picker, action: str) -> None:
     shown = int(getattr(picker, "chosen", None) or current)
     shown = shown % count + 1 if action == NEXT else (shown - 2) % count + 1
     picker.pick(shown)
+
+
+PIN_BUTTON = ((PIN, "置顶", ""),)
+# Steps too quick to be worth a word on the capsule (Leo 2026-11-07 「跳過對話
+# 跳過對話確認 膠囊不用顯示出來」, 「不要跳等鼠標停下」): it keeps saying the
+# step before them.
+QUIET_STEPS = ("跳过对话", "跳过对话确认", "等鼠标停下")
+_last_step: dict[int, str] = {}
+
+
+def shown_step(task, step: str) -> str:
+    if step in QUIET_STEPS or step in tuple(t(word) for word in QUIET_STEPS):
+        return _last_step.get(id(task), "")
+    if len(_last_step) > 8:
+        _last_step.clear()
+    _last_step[id(task)] = step
+    return step
 
 
 def buttons(paused: bool, current: dict[str, str] | None = None) -> tuple[tuple[str, str, str], ...]:
@@ -292,6 +334,19 @@ class StatusBar(QWidget):
         self.status: Status | None = None
         self.px = 15
         self.native_ok: bool | None = None  # None: not tried yet
+        # 置顶 and the drag (Leo 2026-11-07 「膠囊要可以拖動」, 「取消置頂 就做個
+        # 小動畫提示膠囊回遊戲了」): the capsule sits ``offset`` away from its
+        # own spot over the game; while 置顶 it may sit anywhere, without it
+        # it is kept on the game.
+        self.pinned = game_status_bar.pinned()
+        self.offset = QPoint(*game_status_bar.offset())
+        self._home = QPoint()  # its own spot over the game, last placed
+        self._area = QRect()
+        self._drag: tuple[QPoint, QPoint] | None = None
+        self._flash_at: float | None = None
+        self._flash_timer = QTimer(self)
+        self._flash_timer.timeout.connect(guarded("game status bar flash", self._flash_step))
+        self._slide: QPropertyAnimation | None = None
 
     # The window has to exist before Windows can be told about it; it is
     # made (not shown) here, so a refusal hides nothing that was on screen.
@@ -304,8 +359,33 @@ class StatusBar(QWidget):
 
     def set_status(self, status: Status) -> None:
         if status != self.status:
+            began_wait = status.tone == WAIT and (self.status is None or self.status.tone != WAIT)
             self.status = status
+            if began_wait:
+                self.flash()
             self.update()
+
+    def flash(self) -> None:
+        """A few soft amber pulses round the capsule: the player's turn."""
+        self._flash_at = time.monotonic()
+        if not self._flash_timer.isActive():
+            self._flash_timer.start(30)
+
+    def _flash_step(self) -> None:
+        if self._flash_at is None or (time.monotonic() - self._flash_at) * 1000 > FLASH_MS:
+            self._flash_at = None
+            self._flash_timer.stop()
+        self.update()
+
+    def flash_level(self) -> float:
+        """0..1 glow now (0 when not flashing)."""
+        if self._flash_at is None:
+            return 0.0
+        elapsed = (time.monotonic() - self._flash_at) * 1000
+        if elapsed > FLASH_MS:
+            return 0.0
+        phase = elapsed / FLASH_MS * 3  # three pulses
+        return math.sin(math.pi * (phase % 1.0)) * (1 - 0.35 * elapsed / FLASH_MS)
 
     # ------------------------------------------------------------ buttons
 
@@ -344,6 +424,8 @@ class StatusBar(QWidget):
         game_status_bar.set_buttons(
             int(self.winId()), [rect for _action, rect in rects], [action for action, _rect in rects]
         )
+        if self._drag is not None:
+            return  # the player is moving it: it keeps the mouse
         if not rects:
             self._set_live(False, None)
             return
@@ -356,11 +438,35 @@ class StatusBar(QWidget):
             ),
             None,
         )
-        self._set_live(under is not None, under)
+        # The capsule takes the mouse anywhere on it, so it can be dragged.
+        grip = self._native_card() if self.status is not None and self.status.compact else None
+        on_card = grip is not None and grip[0] <= point[0] < grip[2] and grip[1] <= point[1] < grip[3]
+        self._set_live(under is not None or on_card, under)
+
+    def _native_card(self) -> tuple[int, int, int, int] | None:
+        import win32gui
+
+        if not self.width():
+            return None
+        left, top, right, _bottom = win32gui.GetWindowRect(int(self.winId()))
+        ratio = (right - left) / self.width()
+        card = self.card_rect()
+        return (
+            round(left + card.left() * ratio),
+            round(top + card.top() * ratio),
+            round(left + card.right() * ratio),
+            round(top + card.bottom() * ratio),
+        )
+
+    def card_rect(self) -> QRectF:
+        return QRectF(self.rect()).adjusted(SHADOW, SHADOW - 3, -SHADOW, -SHADOW - 3)
 
     def _set_live(self, live: bool, hover: str | None) -> None:
         if live:
             rects = [rect for _action, rect in self._native_button_rects()]
+            grip = self._native_card() if self.status is not None and self.status.compact else None
+            if grip is not None:
+                rects.append(grip)
             live = game_status_bar.set_live(int(self.winId()), rects)
         elif self._live:
             game_status_bar.set_live(int(self.winId()), [])
@@ -386,13 +492,81 @@ class StatusBar(QWidget):
                 logger.info(f"game status bar: player pressed {action}")
                 if self._on_press is not None:
                     self._on_press(action)
-                break
+                return
+        if self.status is not None and self.status.compact and event.button() == Qt.LeftButton:
+            if self._slide is not None:
+                self._slide.stop()
+                self._slide = None
+            self._drag = (event.globalPosition().toPoint(), self.pos())
+
+    def mouseMoveEvent(self, event):
+        if self._drag is None:
+            return
+        start, origin = self._drag
+        self.move(origin + event.globalPosition().toPoint() - start)
+
+    def mouseReleaseEvent(self, event):
+        if self._drag is None:
+            return
+        self._drag = None
+        self.offset = self.pos() - self._home
+        if not self.pinned:
+            self._keep_on_game(animate=True)
+        game_status_bar.set_offset(self.offset.x(), self.offset.y())
+        logger.info(f"game status bar: player moved it by {self.offset.x()}, {self.offset.y()}")
+
+    def _on_game(self, offset: QPoint) -> QPoint:
+        """``offset`` pulled in so the whole capsule stays on the game."""
+        if self._area.isEmpty():
+            return offset
+        area = self._area
+        left = self._home.x() + offset.x() + SHADOW
+        top = self._home.y() + offset.y() + SHADOW
+        width, height = self.width() - 2 * SHADOW, self.height() - 2 * SHADOW
+        left = max(area.left(), min(left, area.right() - width))
+        top = max(area.top(), min(top, area.bottom() - height))
+        return QPoint(left - SHADOW - self._home.x(), top - SHADOW - self._home.y())
+
+    def _keep_on_game(self, animate: bool) -> None:
+        self.offset = self._on_game(self.offset)
+        target = self._home + self.offset
+        if animate and self.isVisible() and target != self.pos():
+            self.slide_to(target)
+        elif self._slide is None:
+            self.move(target)
+
+    def slide_to(self, target: QPoint) -> None:
+        """The little flight back onto the game (「做個小動畫提示膠囊回遊戲了」)."""
+        if self._slide is not None:
+            self._slide.stop()
+        slide = QPropertyAnimation(self, b"pos", self)
+        slide.setDuration(420)
+        slide.setStartValue(self.pos())
+        slide.setEndValue(target)
+        slide.setEasingCurve(QEasingCurve.OutBack)
+        slide.finished.connect(lambda: setattr(self, "_slide", None))
+        self._slide = slide
+        slide.start()
+
+    def set_pinned(self, on: bool) -> None:
+        if on == self.pinned:
+            return
+        self.pinned = on
+        game_status_bar.set_pinned(on)
+        logger.info(f"game status bar: 置顶 {'on' if on else 'off'}")
+        if not on:
+            self._keep_on_game(animate=True)
+            game_status_bar.set_offset(self.offset.x(), self.offset.y())
+        self.update()
 
     def place(self, area: QRect, px: int) -> None:
         """Top middle of ``area`` (the game's inside, in Qt's units).  The
         window is the card plus room for its soft shadow (see-through, and
         the mouse goes through it)."""
         self.px = px
+        if self.status is not None and self.status.compact:
+            self._place_compact(area, px)
+            return
         small = max(12, px - 2)
         card_h = round(self.PAD * 2 + px * 1.5 + small * 1.5 + 12 + small * 1.5 + 8)
         card_w = round(max(px * 24, min(px * 44, area.width() * WIDTH_RATIO)))
@@ -407,12 +581,205 @@ class StatusBar(QWidget):
     def card(self) -> QRectF:
         return QRectF(self.rect()).adjusted(SHADOW, SHADOW - 3, -SHADOW, -SHADOW - 3)
 
+    # ------------------------------------------------------------ the capsule
+
+    def _compact_fonts(self, px: int) -> tuple[QFont, QFont, QFont, QFont]:
+        base = theme.body_font(QFont(self.font()))
+        name = theme.strong(QFont(base))
+        name.setPixelSize(px)
+        step = QFont(base)
+        step.setPixelSize(px)
+        clock = theme.strong(QFont(base), digits=True)
+        clock.setPixelSize(max(12, px - 1))
+        key = QFont(base)
+        key.setPixelSize(max(11, px - 2))
+        return name, step, clock, key
+
+    def _compact_layout(self, px: int) -> dict:
+        """Every part's width and the gaps, from the status and the font size,
+        so ``place`` and ``paintEvent`` agree."""
+        status = self.status
+        name_f, step_f, clock_f, key_f = self._compact_fonts(px)
+        unit = px / 14
+        height = round(px * 2.86)
+        button_h = round(height - 10 * unit)
+        icon = max(10, round(px * 1.0))
+        keys = [key for _action, _word, key in status.buttons]
+        buttons = [
+            round(8 * unit + icon + 6 * unit + QFontMetrics(key_f).horizontalAdvance(key) + 10 * unit)
+            if key
+            else round(9 * unit + icon + 9 * unit)
+            for key in keys
+        ]
+        parts = {
+            "unit": unit,
+            "height": height,
+            "button_h": button_h,
+            "icon": icon,
+            "dot": max(6, round(8 * unit)),
+            "gap": round(12 * unit),
+            "left": round(16 * unit),
+            "right": round(5 * unit),
+            "name": QFontMetrics(name_f).horizontalAdvance(status.title) + 1,
+            # A fixed slot for the step and the clock, so the capsule keeps one
+            # length (Leo 2026-11-07 「膠囊不要一直改變長度」); a longer step is cut.
+            "step": QFontMetrics(step_f).horizontalAdvance("国" * STEP_SLOT_CHARS) + 1,
+            "clock": QFontMetrics(clock_f).horizontalAdvance("00:00:00" if len(status.clock) > 5 else "00:00") + 1,
+            "buttons": buttons,
+            "fonts": (name_f, step_f, clock_f, key_f),
+        }
+        gap = parts["gap"]
+        width = parts["left"] + parts["dot"] + gap + parts["name"]
+        if parts["step"]:
+            width += gap + parts["step"]
+        if parts["clock"]:
+            width += gap + parts["clock"]
+        if buttons:
+            width += gap + sum(buttons) + round(4 * unit) * (len(buttons) - 1)
+        parts["width"] = width + parts["right"]
+        return parts
+
+    def _place_compact(self, area: QRect, px: int) -> None:
+        parts = self._compact_layout(px)
+        card_w = min(parts["width"], area.width() - 2 * SHADOW)
+        left = area.x() + (area.width() - card_w) // 2 - SHADOW
+        top = area.y() + round(area.height() * TOP_RATIO) - SHADOW
+        self._home = QPoint(left, top)
+        self._area = QRect(area)
+        size = (card_w + 2 * SHADOW, parts["height"] + 2 * SHADOW)
+        if self._drag is not None or self._slide is not None:
+            if (self.width(), self.height()) != size:
+                self.resize(*size)
+            return  # the player is moving it, or it is flying back
+        if self.width() and (self.width(), self.height()) != size:
+            self.resize(*size)
+        offset = self.offset if self.pinned else self._on_game(self.offset)
+        rect = QRect(left + offset.x(), top + offset.y(), *size)
+        if self.geometry() != rect:
+            self.setGeometry(rect)
+            self.update()
+
+    def _paint_compact(self, painter: QPainter) -> None:
+        """Mockup A (Leo 2026-11-07 「a就好」): a dark capsule, no outline."""
+        status = self.status
+        parts = self._compact_layout(self.px)
+        name_f, step_f, clock_f, key_f = parts["fonts"]
+        unit, gap = parts["unit"], parts["gap"]
+        card = QRectF(self.rect()).adjusted(SHADOW, SHADOW - 3, -SHADOW, -SHADOW - 3)
+        radius = card.height() / 2
+        tone = QColor(DOT.get(status.tone, DOT[RUN]) if status.tone != RUN else "#4CC98C")
+
+        painter.setPen(Qt.NoPen)
+        for step in range(SHADOW, 0, -2):
+            fade = 1 - step / SHADOW
+            painter.setBrush(QColor(0, 0, 0, round(40 * fade * fade)))
+            grow = step * 0.7
+            painter.drawRoundedRect(card.adjusted(-grow, -grow * 0.4 + 4, grow, grow + 4), radius + grow, radius + grow)
+        path = QPainterPath()
+        path.addRoundedRect(card, radius, radius)
+        painter.fillPath(path, QColor(16, 15, 24, 205))
+        glow = self.flash_level()
+        if glow > 0:
+            amber = QColor(DOT[WAIT])
+            for grow, alpha in ((7 * unit, 60), (4 * unit, 110), (1.5 * unit, 200)):
+                ring = QColor(amber)
+                ring.setAlpha(round(alpha * glow))
+                painter.setPen(QPen(ring, 2.2 * unit))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRoundedRect(card.adjusted(-grow, -grow, grow, grow), radius + grow, radius + grow)
+            painter.setPen(Qt.NoPen)
+            wash = QColor(amber)
+            wash.setAlpha(round(34 * glow))
+            painter.fillPath(path, wash)
+        painter.save()
+        painter.setClipPath(path)
+        shine = QLinearGradient(card.topLeft(), card.topRight())
+        shine.setColorAt(0.0, QColor(255, 255, 255, 0))
+        shine.setColorAt(0.5, QColor(255, 255, 255, 22))
+        shine.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.fillRect(QRectF(card.left(), card.top(), card.width(), 1), shine)
+        painter.restore()
+
+        x = card.left() + parts["left"]
+        mid = card.center().y()
+        dot = parts["dot"]
+        halo = QColor(tone)
+        halo.setAlpha(46)
+        painter.setBrush(halo)
+        painter.drawEllipse(QRectF(x - 4 * unit, mid - dot / 2 - 4 * unit, dot + 8 * unit, dot + 8 * unit))
+        painter.setBrush(tone)
+        painter.drawEllipse(QRectF(x, mid - dot / 2, dot, dot))
+        x += dot + gap
+        line = QRectF(0, card.top(), 0, card.height())
+        right_room = card.right() - parts["right"]
+        tail = (gap + parts["clock"] if parts["clock"] else 0) + (
+            gap + sum(parts["buttons"]) + round(4 * unit) * (len(parts["buttons"]) - 1) if parts["buttons"] else 0
+        )
+        text_end = right_room - tail
+        name_w = min(parts["name"], max(0.0, text_end - x))
+        self._text(painter, name_f, QColor(255, 255, 255, 245), status.title, QRectF(x, line.top(), name_w, line.height()))
+        x += name_w
+        if parts["step"]:
+            x += gap
+            step_w = max(0.0, text_end - x)
+            colour = QColor(tone) if status.tone in (PAUSE, WAIT) else QColor(255, 255, 255, 184)
+            self._text(painter, step_f, colour, status.detail, QRectF(x, line.top(), step_w, line.height()))
+            x = text_end
+        if parts["clock"]:
+            x += gap
+            self._text(painter, clock_f, QColor(255, 255, 255, 153), status.clock,
+                       QRectF(x, line.top(), parts["clock"], line.height()))
+            x += parts["clock"]
+        self._button_rects = []
+        if not parts["buttons"]:
+            return
+        x += gap
+        icon = parts["icon"]
+        paused = status.tone == PAUSE
+        for (action, _word, key), width in zip(status.buttons, parts["buttons"]):
+            pill = QRectF(x, mid - parts["button_h"] / 2, width, parts["button_h"])
+            hover = self._hover == action
+            stop = action == hotkeys.STOP
+            if action == PIN:
+                fill = QColor("#7467C4") if self.pinned else QColor(255, 255, 255, 52 if hover else 26)
+                if self.pinned and hover:
+                    fill = QColor("#8A80D8")
+                ink = QColor(255, 255, 255, 255 if (hover or self.pinned) else 200)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(fill)
+                painter.drawRoundedRect(pill, pill.height() / 2, pill.height() / 2)
+                icons.paint(painter, QRectF(pill.center().x() - icon / 2, mid - icon / 2, icon, icon), "pin", ink, 2.2)
+                self._button_rects.append((action, pill))
+                x = pill.right() + round(4 * unit)
+                continue
+            if stop:
+                fill = QColor(255, 92, 92, 92 if hover else 46)
+                ink = QColor(255, 179, 179, 255 if hover else 230)
+                key_ink = QColor(255, 179, 179, 220 if hover else 200)
+            else:
+                fill = QColor(255, 255, 255, 52 if hover else 26)
+                ink = QColor(255, 255, 255, 250 if hover else 225)
+                key_ink = QColor(255, 255, 255, 190 if hover else 158)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(fill)
+            painter.drawRoundedRect(pill, pill.height() / 2, pill.height() / 2)
+            name = "square" if stop else ("play" if paused else "pause")
+            icon_left = pill.left() + 8 * unit
+            icons.paint(painter, QRectF(icon_left, mid - icon / 2, icon, icon), name, ink, 2.4)
+            key_left = icon_left + icon + 6 * unit
+            self._text(painter, key_f, key_ink, key, QRectF(key_left, pill.top(), pill.right() - key_left, pill.height()))
+            self._button_rects.append((action, pill))
+            x = pill.right() + round(4 * unit)
+
     def paintEvent(self, _event):
         status = self.status
         if status is None:
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+        if status.compact:
+            self._paint_compact(painter)
+            return
         card = self.card()
         corner = min(16.0, card.height() / 4)
         tone = QColor(DOT.get(status.tone, DOT[RUN]))
@@ -678,8 +1045,34 @@ def game_area(hwnd: int) -> QRect | None:
     return game_area_why(hwnd)[0]
 
 
-def game_area_why(hwnd: int) -> tuple[QRect | None, str]:
-    """``game_area`` and, when None, why (for the log)."""
+def bar_spot_visible(hwnd: int) -> bool:
+    """The strip of the game where the bar sits is not under another window.
+
+    推主线 runs while the player uses other windows (Leo 2026-11-07 「就算被
+    蓋住也能繼續運行」, 「我剛有測試在副螢幕 用瀏覽器」): with the game
+    unfocused but in sight (a browser on the other screen) the bar stays, so
+    its 暂停/停止 are at hand; with a window over that strip it goes, so it is
+    never drawn over the player's browser.
+    """
+    import win32gui
+
+    left, top, right, bottom = win32gui.GetClientRect(hwnd)
+    x0, y0 = win32gui.ClientToScreen(hwnd, (left, top))
+    width, height = right - left, bottom - top
+    y = y0 + round(height * TOP_RATIO) + max(4, round(height * 0.02))
+    handles = game_handles() | {int(hwnd)}
+    for share in (0.38, 0.5, 0.62):
+        under = game_status_bar.window_at((x0 + round(width * share), y))
+        root = win32gui.GetAncestor(under, 2) or under if under else 0
+        if under not in handles and root not in handles:
+            return False
+    return True
+
+
+def game_area_why(hwnd: int, covered_ok: bool = False, pinned: bool = False) -> tuple[QRect | None, str]:
+    """``game_area`` and, when None, why (for the log).  ``covered_ok``: the
+    game need not be the window in front, only in sight where the bar sits;
+    ``pinned`` (置顶): not even that."""
     import win32gui
 
     if not hwnd or not win32gui.IsWindow(hwnd):
@@ -687,10 +1080,17 @@ def game_area_why(hwnd: int) -> tuple[QRect | None, str]:
     if win32gui.IsIconic(hwnd):
         return None, "the game is minimised"
     front = win32gui.GetForegroundWindow()
-    if game_status_bar.is_bar(front) or game_status_bar.is_bar(win32gui.GetAncestor(front, 2)):
+    if not front:
+        front = hwnd if covered_ok else 0  # no window in front for a moment (switching)
+    if front and (game_status_bar.is_bar(front) or game_status_bar.is_bar(win32gui.GetAncestor(front, 2))):
         front = hwnd  # the bar itself in front (it never should be): still over the game
-    if win32gui.GetAncestor(front, 2) not in game_handles() and front not in game_handles():
+    in_front = bool(front) and (win32gui.GetAncestor(front, 2) in game_handles() or front in game_handles())
+    if not in_front and covered_ok and not pinned and not bar_spot_visible(hwnd):
+        return None, "another window covers the bar's spot on the game"
+    if not in_front and not covered_ok:
         # another window (the tool too) is in front
+        if not front:
+            return None, "no window in front"
         try:
             title = win32gui.GetWindowText(front) or win32gui.GetClassName(front)
         except Exception:
@@ -736,6 +1136,7 @@ class Watch(QObject):
         self._end: Status | None = None
         self._end_at = 0.0
         self._state: str | None = None  # what the log last said about the bar
+        self._last_area: QRect | None = None
         self._timer = QTimer(self)
         self._timer.timeout.connect(guarded("game status bar", self.tick))
         self._timer.start(CHECK_MS)
@@ -743,14 +1144,21 @@ class Watch(QObject):
     def tick(self) -> None:
         now = time.time()
         status = self._status(now)
-        if status is None or not game_status_bar.enabled():
+        # A task that is a state the player plays along with (推主线) shows
+        # the bar whatever 设置 says: its 停止 is how the player ends it.
+        forced = bool(getattr(data.current_task() if data.busy() else None, "status_bar_always", False))
+        if status is None or not (forced or game_status_bar.enabled()):
             self._hide("no run" if status is None else "turned off in 设置")
             return
         window = getattr(getattr(data.og(), "device_manager", None), "hwnd_window", None)
-        area, why = game_area_why(int(getattr(window, "hwnd", 0) or 0))
+        pinned = forced and game_status_bar.pinned()
+        area, why = game_area_why(int(getattr(window, "hwnd", 0) or 0), covered_ok=forced, pinned=pinned)
+        if area is None and pinned and self._last_area is not None and "minimised" in why:
+            area = self._last_area  # 置顶: stays where it was while the game is minimised
         if area is None:
             self._hide(why)
             return
+        self._last_area = area
         if self.bar is None:
             self.bar = StatusBar(guarded("game status bar press", self._on_press))
         if not self.bar.prepare():
@@ -762,6 +1170,11 @@ class Watch(QObject):
         self._note("shown")
 
     def _on_press(self, action: str) -> None:
+        if action == PIN:
+            if self.bar is not None:
+                self.bar.set_pinned(not self.bar.pinned)
+            self.tick()
+            return
         if action in (PREV, NEXT):
             if self._picker is not None:
                 step_stage(self._picker, action)

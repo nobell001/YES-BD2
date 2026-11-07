@@ -42,7 +42,8 @@ def start(task, window=None, run_mode: str | None = None, by_player: bool | None
     logger.info(f"start pressed: {getattr(task, 'name', task)} (mode {run_mode or '-'})")
     if task.enabled and task.paused:
         task.unpause()
-        bring_game_to_front()
+        if not getattr(task, "stays_behind", False):
+            bring_game_to_front()
         _notify_started()
         return True
     if data.busy():
@@ -105,7 +106,8 @@ def start(task, window=None, run_mode: str | None = None, by_player: bool | None
         logger.error(f"start {task.name} failed", exc)
         _warn(window, data.tr("开始失败：{error}").format(error=exc))
         return False
-    bring_game_to_front()
+    if not getattr(task, "stays_behind", False):
+        bring_game_to_front()
     _notify_started()
     return True
 
@@ -208,6 +210,11 @@ def toggle_pause(task) -> None:
 
 
 def stop(task) -> None:
+    # Who pressed it: a run that just stopped left no trace (2026-11-07 11:37).
+    import traceback
+
+    caller = "/".join(frame.name for frame in traceback.extract_stack(limit=5)[:-1])
+    logger.info(f"stop pressed: {getattr(task, 'name', task)} (from {caller})")
     if _cancel_login_wait(task):
         return
     if task is None:
