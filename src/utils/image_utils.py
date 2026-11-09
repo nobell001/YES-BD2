@@ -592,6 +592,34 @@ def best_pixel_valid_match(
     return matches[0] if matches else None
 
 
+# A masked match (TM_CCORR_NORMED, no mean removal) scores high on any patch
+# about as bright as the icon, even a blank one: 4K live daily 2026-11-08,
+# the empty F slot over white stairs scored 0.958 as the follower "!", and
+# 56 masked icons scanned over 370 saved frames passed on plain colour
+# patches (contrast under 0.1 of the icon's).  A candidate whose picture
+# inside the mask has under this share of the template's own contrast holds
+# nothing of the icon.  Real icons measured 0.5+ (glare, HDR); dimmed under a
+# popup about 0.12-0.2, so the line stays under that.
+MASKED_MIN_CONTRAST_RATIO = 0.1
+
+
+def masked_contrast_ratio(
+    region: np.ndarray,
+    template: np.ndarray,
+    mask: np.ndarray | None,
+) -> float:
+    """Spread of ``region`` inside ``mask`` over the template's spread there."""
+    if region.shape != template.shape:
+        return 0.0
+    active = mask > 0 if mask is not None else np.ones(region.shape, dtype=bool)
+    if not np.any(active):
+        return 0.0
+    template_spread = float(template[active].astype(np.float32).std())
+    if template_spread <= 1e-6:
+        return 1.0
+    return float(region[active].astype(np.float32).std()) / template_spread
+
+
 def independent_pixel_valid_matches(
     response: np.ndarray,
     search: np.ndarray,
@@ -650,7 +678,11 @@ def independent_pixel_valid_matches(
             if zncc_threshold is not None
             else -1.0
         )
-        if candidate_pixel_score >= pixel_threshold and (
+        blank = (
+            mask is not None
+            and masked_contrast_ratio(region, template, mask) < MASKED_MIN_CONTRAST_RATIO
+        )
+        if not blank and candidate_pixel_score >= pixel_threshold and (
             zncc_threshold is None or candidate_zncc_score >= zncc_threshold
         ):
             matches.append(

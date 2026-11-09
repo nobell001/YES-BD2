@@ -3703,3 +3703,30 @@ msgstr "How Mirror Wars, Last Night and Tower of Redemption walk to the battle s
 
 msgid "点了画面没动，改用 WASD 才走到。移动方式可能设错了，请到「设置 → 移动方式」改成 WASD"
 msgstr "Clicking didn't move the screen, so it walked there with WASD. Your movement setting may be wrong: set Settings → Movement to WASD"
+
+msgid "在桌面分身里跑时，跑完关掉桌面分身（分身里的游戏和工具一起关）；在自己桌面跑时不做。什么时候关照上面的选择。"
+msgstr "When the run is in the desktop clone, closes the clone after it (the game and the tool in it close too); does nothing for runs on your own desktop. When to close follows the choice above."
+
+msgid "跑完了，照设定关闭桌面分身"
+msgstr "Run finished; closing the desktop clone as set"
+
+msgid "做完"
+msgstr "When done"
+
+msgid "关闭游戏"
+msgstr "Close game"
+
+msgid "在桌面重开"
+msgstr "Reopen on desktop"
+
+msgid "关闭游戏：分身和游戏一起关。在桌面重开：关掉分身后在你的桌面打开游戏。"
+msgstr "Close game: the clone and the game close. Reopen on desktop: after the clone closes, the game opens on your desktop."
+
+msgid "在桌面分身跑完后关掉分身"
+msgstr "Close the desktop clone after its run"
+
+msgid "关掉分身时"
+msgstr "When the clone closes"
+
+msgid "不关"
+msgstr "Keep open"

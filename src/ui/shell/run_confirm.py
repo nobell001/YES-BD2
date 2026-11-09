@@ -29,6 +29,7 @@ from src.ui.shell.widgets import (
     grid_container,
     hbox,
     mix,
+    t,
     tf,
     vbox,
 )
@@ -192,6 +193,8 @@ class RunConfirm(Floating):
         open_guide: Callable[[], None] | None = None,
         close_game: bool | None = None,
         close_when: str | None = None,
+        close_clone: bool | None = None,
+        close_clone_how: str | None = None,
     ):
         super().__init__(parent)
         self._open_guide = open_guide
@@ -299,17 +302,57 @@ class RunConfirm(Floating):
         # Leo 2026-10-21 「藏在...誰看的到 改放這裡」: 关闭游戏 next to 开始.
         self.close_game = None
         self.close_when = None
+        self.close_clone = None
         if close_game is not None:
             self.close_game = CheckBox("做完关闭游戏", close_game)
-            buttons.addWidget(self.close_game, 0, Qt.AlignVCenter)
+            in_clone_choice = clone and close_clone is not None
+            if not in_clone_choice:
+                buttons.addWidget(self.close_game, 0, Qt.AlignVCenter)
+            else:
+                # Leo 2026-11-08 「選項是 完成後關閉遊戲 或是完成後在桌面重開」: a
+                # 桌面分身 run ends the clone as its X does, 关闭游戏 (the clone
+                # closes with the game) or 在桌面重开 (the game opens again on
+                # the player's own desktop).  The plain box would leave an
+                # empty clone, so it is not shown here.
+                self.close_game.setVisible(False)
+                from src.tasks.DailyBatchTask import (
+                    CLOSE_CLONE_HOW_OPTIONS,
+                    CLOSE_CLONE_JUST,
+                    CLOSE_CLONE_KEEP,
+                )
+
+                # One sliding switch, every choice in sight (Leo 2026-11-08
+                # 「用好看直覺的切換開關」).
+                self.close_clone_keep = CLOSE_CLONE_KEEP
+                current = (close_clone_how or CLOSE_CLONE_JUST) if close_clone else CLOSE_CLONE_KEEP
+                done_label = Text("做完", "muted")
+                buttons.addWidget(done_label, 0, Qt.AlignVCenter)
+                self.close_clone = Segmented(
+                    (CLOSE_CLONE_KEEP, *CLOSE_CLONE_HOW_OPTIONS), current, accent=True
+                )
+                self.close_clone.setToolTip(
+                    t("关闭游戏：分身和游戏一起关。在桌面重开：关掉分身后在你的桌面打开游戏。")
+                )
+                buttons.addWidget(self.close_clone, 0, Qt.AlignVCenter)
             # A player asked to close even after a failure (Leo 2026-11-02
-            # 「讓他選擇」); shown only while the box is ticked.
+            # 「讓他選擇」); shown only while a close box is ticked.
             from src.tasks.DailyBatchTask import CLOSE_WHEN_CLEAN, CLOSE_WHEN_OPTIONS
 
             self.close_when_options = CLOSE_WHEN_OPTIONS
             self.close_when = OptionSwitch(*CLOSE_WHEN_OPTIONS, close_when or CLOSE_WHEN_CLEAN)
-            self.close_when.setVisible(close_game)
-            self.close_game.toggled.connect(self.close_when.setVisible)
+            if self.close_clone is not None:
+
+                def show_when(_value=None) -> None:
+                    self.close_when.setVisible(self.close_clone.value() != self.close_clone_keep)
+
+                self.close_clone.changed.connect(show_when)
+            else:
+
+                def show_when(_on=None) -> None:
+                    self.close_when.setVisible(self.close_game.isChecked())
+
+                self.close_game.toggled.connect(show_when)
+            show_when()
             buttons.addWidget(self.close_when, 0, Qt.AlignVCenter)
         buttons.addStretch(1)
         buttons.addWidget(Button("取消", "secondary", on_click=self.reject))
@@ -402,7 +445,12 @@ def ask(
             if child.weekly and data.day_text(finished) != "今天":
                 when = data.day_text(finished) or when
             done_text[child.key] = when
-    from src.tasks.DailyBatchTask import CLOSE_GAME_KEY, CLOSE_GAME_WHEN_KEY
+    from src.tasks.DailyBatchTask import (
+        CLOSE_CLONE_HOW_KEY,
+        CLOSE_CLONE_KEY,
+        CLOSE_GAME_KEY,
+        CLOSE_GAME_WHEN_KEY,
+    )
 
     config = getattr(batch, "config", None) or {}
     close_game = bool(config[CLOSE_GAME_KEY]) if CLOSE_GAME_KEY in config else None
@@ -415,6 +463,8 @@ def ask(
         open_guide,
         close_game,
         config.get(CLOSE_GAME_WHEN_KEY),
+        bool(config.get(CLOSE_CLONE_KEY, False)) if CLOSE_GAME_KEY in config else None,
+        config.get(CLOSE_CLONE_HOW_KEY),
     )
     if dialog.close_game is not None:
         # Kept as soon as it is clicked, like 打开就自动跑日常 on 首页.
@@ -422,6 +472,14 @@ def ask(
         dialog.close_when.changed.connect(
             lambda value: config.__setitem__(CLOSE_GAME_WHEN_KEY, value)
         )
+    if dialog.close_clone is not None:
+
+        def keep_clone_choice(value: str) -> None:
+            config[CLOSE_CLONE_KEY] = value != dialog.close_clone_keep
+            if value != dialog.close_clone_keep:
+                config[CLOSE_CLONE_HOW_KEY] = value
+
+        dialog.close_clone.changed.connect(keep_clone_choice)
     if not dialog.exec():
         return None
     return dialog.mode, dict(dialog.ticks)

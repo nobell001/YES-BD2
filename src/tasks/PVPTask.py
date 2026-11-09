@@ -184,6 +184,16 @@ PVP_BATTLE_STUCK_SECONDS = STUCK_SECONDS
 # once the screen has stood still this long, look for one every this often
 # instead of waiting out the stuck limit (player report 2026-11-01 23:00).
 PVP_SERVER_ERROR_STILL_SECONDS = 2.0
+# Season settlement before a battle (繁中 4K, Leo 2026-11-08 Sunday): a press
+# on the pre-battle screen opens nothing; the game floats 「賽季結算時無法確認。」
+# at the top middle for a moment, and the season box at the top left reads
+# 「結束」.  Either one, seen only when the press opened nothing, means the
+# season is settling: 镜中之战 is skipped, not failed.  Reference 1920×1080.
+PVP_SEASON_SETTLING_TOAST_ROI = (480, 100, 960, 300)
+PVP_SEASON_SETTLING_TOAST_WORDS = ("赛季结算",)
+PVP_SEASON_ENDED_ROI = (225, 20, 200, 45)
+PVP_SEASON_ENDED_WORDS = ("结束",)
+PVP_SEASON_SETTLING_NOTE = "镜中之战赛季结算中，无法进行镜中之战"
 PVP_SERVER_ERROR_LOOK_EVERY = 2.0
 PVP_RESULT_WAIT_CAP_FACTOR = 2.0
 # After a timed-out wait, this many result labels read mean the result popup
@@ -498,6 +508,8 @@ class PVPTask(BaseBD2Task):
                 # Confirm it the same way as after a battle.
                 self._ensure_pvp_hub_after_leave()
                 return self._return_home_from_pvp_hub()
+            if start_state == "season_settling":
+                return self._leave_season_settling()
             if start_state in ("ap_depleted", "ap_shortage"):
                 # Close the popup before any further stage click or return.
                 if not self._close_ap_shortage_popup():
@@ -1209,6 +1221,7 @@ class PVPTask(BaseBD2Task):
                 switched = True
 
         self.info_set("当前阶段", "打开自动战斗")
+        self._season_settling_seen = False
         menu_timeout = capped(self.config.get("PVP 菜单等待秒数", STUCK_SECONDS))
         found_auto = False
         text = ""
@@ -1302,15 +1315,20 @@ class PVPTask(BaseBD2Task):
                 timeout=PVP_AUTO_BATTLE_MENU_VERIFY_SECONDS,
                 name="PVP 自动战斗菜单",
                 roi=menu_roi,
+                stop_when=self._season_settling_toast,
             )
             if found_menu:
                 break
+            if getattr(self, "_season_settling_seen", False):
+                return "season_settling"
             if attempt < PVP_CLICK_VERIFY_ATTEMPTS:
                 self.log_info(
                     f"镜中之战：第{attempt}/{PVP_CLICK_VERIFY_ATTEMPTS}次点击"
                     "自动战斗后未确认菜单，重试。"
                 )
         self.info_set("PVP 自动战斗 OCR", menu_text or "-")
+        if not found_menu and self._season_ended_shown():
+            return "season_settling"
         if not found_menu:
             self.log_info("镜中之战：多次点击后自动战斗菜单仍未出现。")
             self._save_flow_diagnostic("pvp_auto_battle_failed")
@@ -1410,6 +1428,7 @@ class PVPTask(BaseBD2Task):
             seen["state"] = self._battle_start_state(multiplier)
             return seen["state"]
 
+        self._season_settling_seen = False
         outcome = self.press_and_confirm(
             "镜中之战「战斗开始」",
             lambda: self._click_screen_reference(
@@ -1422,6 +1441,8 @@ class PVPTask(BaseBD2Task):
         )
         if outcome:
             return seen["state"]
+        if getattr(self, "_season_settling_seen", False) or self._season_ended_shown():
+            return "season_settling"
         if self._start_dialog_gone():
             self.log_warning(
                 "镜中之战：点击开始后未识别到战斗开始或 AP 不足信号，"
@@ -1456,6 +1477,8 @@ class PVPTask(BaseBD2Task):
             if multiplier > 1:
                 return "ap_shortage"
             return "ap_depleted"
+        if self._season_settling_toast(frame):
+            return "season_settling"
         return None
 
     def _start_dialog_unchanged(self, multiplier: int) -> bool:
@@ -2221,6 +2244,48 @@ class PVPTask(BaseBD2Task):
             return False
         return self._return_home_from_pvp_hub()
 
+    def _season_settling_toast(self, frame) -> bool:
+        """「賽季結算時無法確認。」 floating at the top middle (one look)."""
+        if frame is None:
+            return False
+        text = self._ocr_text(
+            frame, name="PVP 赛季结算提示", roi=PVP_SEASON_SETTLING_TOAST_ROI
+        )
+        if not self._matches_any(text, list(PVP_SEASON_SETTLING_TOAST_WORDS)):  # 有备案：没读到就看左上角「结束」，都没有照常认作没开打
+            return False
+        self.info_set("PVP 赛季结算提示 OCR", text)
+        self._season_settling_seen = True
+        return True
+
+    def _season_ended_shown(self) -> bool:
+        """The press opened nothing: the toast may have faded, so look for
+        it once more, then for 「結束」 in the season box at the top left."""
+        frame = self.capture_frame()
+        if frame is None:
+            return False
+        if self._season_settling_toast(frame):
+            return True
+        text = self._ocr_text(frame, name="PVP 赛季状态", roi=PVP_SEASON_ENDED_ROI)
+        if not self._matches_any(text, list(PVP_SEASON_ENDED_WORDS)):
+            return False
+        self.info_set("PVP 赛季状态 OCR", text)
+        return True
+
+    def _leave_season_settling(self) -> bool:
+        """Season settling: nothing was spent.  Close any dialog, step back to
+        the hub and go home; 一键日常 lists 镜中之战 as 跳过."""
+        note = PVP_SEASON_SETTLING_NOTE
+        self.info_set("状态", f"{note}。")
+        self.log_info(f"镜中之战：{note}，跳过，回主页。")
+        run_report.add_current_note(note)
+        self.done_already(note)
+        self._close_auto_battle_dialogs()
+        self._click_reference(*PVP_STAGE_BACK_REFERENCE_POINT, after_sleep=1.0)  # 不用确认：下面等箱庭，没回到箱庭就按 H 回主页
+        self._ensure_pvp_hub_after_leave()
+        if self._return_home_from_pvp_hub():
+            return True
+        return self.home_after_done("镜中之战")
+
     def _close_server_error(self, frame=None):
         """Close a server notice (「当前并非赛季。，error:100019」) with its
         确认, the only button on it.  Returns the notice, or None when none is
@@ -2852,7 +2917,9 @@ class PVPTask(BaseBD2Task):
         interval: float = 0.5,
         normalize_multiplier: bool = False,
         extra_wait_patterns: list[tuple[str, tuple[int, int, int, int], str]] | None = None,
+        stop_when=None,
     ) -> tuple[bool, str]:
+        """``stop_when(frame)`` true ends the wait early, not found."""
         end_at = monotonic() + max(0.0, timeout)
         last_text = ""
         looked = False  # 至少看一次：时间已到也先看一眼再说没看到
@@ -2866,6 +2933,8 @@ class PVPTask(BaseBD2Task):
             self.info_set(f"{name} OCR", text or "-")
             if self._matches_any(text, patterns):
                 return True, text
+            if stop_when is not None and frame is not None and stop_when(frame):
+                return False, last_text
 
             for pattern, extra_roi, info_key in extra_wait_patterns or []:
                 extra_text = self._ocr_text(frame, name=info_key, roi=extra_roi)

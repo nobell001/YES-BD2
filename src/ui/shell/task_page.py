@@ -45,6 +45,9 @@ BATCH_OPTION_LABELS = {
     "完成日常后关闭游戏": "做完关闭游戏",
     # Leo 2026-11-02 「讓他選擇」: close only with no failure, or always.
     "关闭游戏时机": "什么时候关",
+    # Leo 2026-11-08: a run in the 桌面分身 can end the clone too.
+    "完成日常后关闭分身": "在桌面分身跑完后关掉分身",
+    "关闭分身方式": "关掉分身时",
     "完成日常后自动关机": "全部做完后自动关机",
     # No 「允许一键运行」 (player 2026-11-05, Leo 「直接移除他」): turned off,
     # every press of 一键完成日常 ended at once with nothing run.

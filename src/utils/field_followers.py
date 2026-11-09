@@ -21,9 +21,12 @@ The crowd shows up once a game day, in whichever cartridge comes first (Leo,
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import lru_cache
+from pathlib import Path
 from time import monotonic
 from typing import Callable
 
+import cv2
 import numpy as np
 
 from src.utils.game_day import DAILY_REFRESH_HOUR, GAME_TZ
@@ -80,6 +83,48 @@ def dismiss_once_per_run(navigator) -> None:
         dismiss()
 
 
+TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "recognition-assets" / "template-assets"
+# The middle of the matched box (where the "!" sits) compared with the same
+# part of the template.  4K live run 2026-11-08: standing by the goddess the
+# F slot was empty and showed white stairs; the masked template scored 0.958
+# on them (the bubble is mostly white) and a stone crack passed as the bar,
+# so the square and 跑商 pressed it 4 times and F twice.  Real "!" 0.73-0.76
+# (1080p/2K/4K, HDR), talk "…" and circle hand about 0.3, the stairs 0.04.
+GLYPH_SHAPE_MIN_ZNCC = 0.5
+
+
+@lru_cache(maxsize=1)
+def _template_gray() -> np.ndarray | None:
+    from src.utils import image_io
+
+    raw = image_io.read(TEMPLATE_DIR / FIELD_TALK_ICON_TEMPLATE.file_name, cv2.IMREAD_COLOR)
+    if raw is None:
+        return None
+    return cv2.cvtColor(raw, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+
+def glyph_shape_score(box: np.ndarray) -> float:
+    """How much the middle of ``box`` (BGR) looks like the template's "!"
+    (zero-mean correlation, -1..1); -1 when it cannot be measured."""
+
+    template = _template_gray()
+    if template is None or box is None or box.size == 0 or box.ndim != 3:
+        return -1.0
+    height, width = box.shape[:2]
+    if height < 8 or width < 8:
+        return -1.0
+    gray = cv2.cvtColor(box[:, :, :3], cv2.COLOR_BGR2GRAY).astype(np.float32)
+    scaled = cv2.resize(template, (width, height), interpolation=cv2.INTER_AREA)
+    rows = slice(int(height * 0.15), int(height * 0.85))
+    cols = slice(int(width * 0.3), int(width * 0.7))
+    a = gray[rows, cols] - gray[rows, cols].mean()
+    b = scaled[rows, cols] - scaled[rows, cols].mean()
+    denominator = float(np.sqrt((a * a).sum() * (b * b).sum()))
+    if denominator <= 1e-6:
+        return -1.0
+    return float((a * b).sum() / denominator)
+
+
 def is_exclamation_glyph(box: np.ndarray) -> bool:
     """True when the bubble in ``box`` (the matched template area, BGR) holds
     the "!" and not another F-button glyph.
@@ -104,7 +149,11 @@ def is_exclamation_glyph(box: np.ndarray) -> bool:
         return False
     glyph_width = xs.max() - xs.min() + 1
     glyph_height = ys.max() - ys.min() + 1
-    return glyph_height >= height * 0.25 and glyph_width / glyph_height <= 0.6
+    if not (glyph_height >= height * 0.25 and glyph_width / glyph_height <= 0.6):
+        return False
+    # A dark crack in bright ground is also a narrow upright bar: the middle
+    # must look like the "!" itself.
+    return glyph_shape_score(box) >= GLYPH_SHAPE_MIN_ZNCC
 
 
 @dataclass(frozen=True)

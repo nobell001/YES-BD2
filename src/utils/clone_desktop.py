@@ -27,6 +27,12 @@ DATA_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "bd2-auto" /
 VIEWER = DATA_DIR / "CloneDesktop.exe"
 # Written by the viewer: "started", "running PID" or "failed WHY".
 LAUNCH_RESULT = DATA_DIR / "launch-result.txt"
+# The tool in the clone asks the viewer outside to end the clone (做完关闭分身,
+# Leo 2026-11-08): the viewer does what its own X does, 「直接關掉」 ("end") or
+# 「搬回桌面」 ("move": sign out, then open the game on the player's desktop).
+END_REQUEST = DATA_DIR / "end-request.txt"
+END_JUST_CLOSE = "end"
+END_MOVE_TO_DESKTOP = "move"
 # Written by setup.ps1 at the first setup, deleted by 还原.
 SETUP_STATE = DATA_DIR / "setup-state.json"
 # One task handed from a start button outside to the tool started in the clone.
@@ -462,6 +468,73 @@ def end_clone(timeout: float = LOGOFF_WAIT_SECONDS) -> bool:
     return False
 
 
+# The viewer looks every 2 s; a little over two looks plus the sign-out start.
+END_REQUEST_WAIT_SECONDS = 10.0
+
+
+def _viewer_processes() -> list:
+    try:
+        import psutil
+
+        return [
+            process
+            for process in psutil.process_iter(["name"])
+            if (process.info.get("name") or "").lower() == "clonedesktop.exe"
+        ]
+    except Exception:
+        return []
+
+
+def end_from_inside(how: str = END_JUST_CLOSE, wait: float = END_REQUEST_WAIT_SECONDS) -> bool:
+    """From the tool in the clone: end the 桌面分身, the game and this tool with it.
+
+    First way: leave END_REQUEST (``how``: END_JUST_CLOSE or END_MOVE_TO_DESKTOP)
+    for the viewer outside, which does what its X does (this process ends
+    there).  Only the viewer can open the game on the player's desktop.  Second way, when the viewer
+    did not take it (an older viewer, or it is busy): close the viewer, else
+    it would sign in to a new clone, and sign this session out.  False when
+    neither worked; the clone is then left open and nothing else is touched.
+    """
+    if not in_clone():
+        return False
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        END_REQUEST.write_text(how, encoding="utf-8")
+        asked = True
+    except OSError:
+        asked = False
+    deadline = time.monotonic() + wait  # 自己等：分身窗口在外面拿走要求，不是游戏画面
+    while asked and time.monotonic() < deadline:
+        if not END_REQUEST.exists():
+            # Taken: the viewer is signing the clone out, this process with it.
+            time.sleep(LOGOFF_WAIT_SECONDS)
+            return True
+        time.sleep(0.5)
+    for process in _viewer_processes():
+        try:
+            process.terminate()
+            process.wait(5)
+        except Exception:
+            pass
+    if _viewer_processes():
+        # Signing out with the viewer still open only opens a new, empty clone.
+        try:
+            END_REQUEST.unlink()
+        except OSError:
+            pass
+        return False
+    try:
+        subprocess.run(
+            ["logoff"],
+            capture_output=True,
+            timeout=LOGOFF_WAIT_SECONDS,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
 def run_setup(undo: bool = False) -> None:
     """Open a console window running setup.ps1; it asks for Administrator itself."""
     command = [
@@ -550,10 +623,11 @@ def open_viewer(launch_tool: bool = True) -> bool:
     elevated opens the viewer through one Windows confirmation and the viewer
     starts the tool elevated.  False when the user said no to it.
     """
-    try:
-        LAUNCH_RESULT.unlink()
-    except OSError:
-        pass
+    for stale in (LAUNCH_RESULT, END_REQUEST):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
     update_viewer()
     write_startup_list()
     args = []

@@ -55,6 +55,21 @@ CLOSE_GAME_WHEN_KEY = "关闭游戏时机"
 CLOSE_WHEN_CLEAN = "全部成功才关"
 CLOSE_WHEN_ALWAYS = "跑失败也关"
 CLOSE_WHEN_OPTIONS = (CLOSE_WHEN_CLEAN, CLOSE_WHEN_ALWAYS)
+# Leo 2026-11-08 「桌面分身完成日常后自动关闭桌面分身」: a run in the 桌面分身
+# ends the clone (game and tool with it) when done; same 什么时候关 choice.
+# Off by default; does nothing for a run on the player's own desktop.
+CLOSE_CLONE_KEY = "完成日常后关闭分身"
+# Leo 2026-11-08 「像玩家直接關閉視窗那樣 關遊戲 或是 在桌面程式端重開」: the
+# same two ways the clone window's X offers.
+CLOSE_CLONE_HOW_KEY = "关闭分身方式"
+# Shown first on the 桌面分身 window's switch: the clone is left open.
+CLOSE_CLONE_KEEP = "不关"
+CLOSE_CLONE_JUST = "关闭游戏"
+CLOSE_CLONE_MOVE = "在桌面重开"
+CLOSE_CLONE_HOW_OPTIONS = (CLOSE_CLONE_JUST, CLOSE_CLONE_MOVE)
+CLOSE_CLONE_NOTE = "跑完了，照设定关闭桌面分身"
+# The 结算 report and the 跑完通知 go out first.
+CLOSE_CLONE_DELAY_SECONDS = 5.0
 # 跑完通知 (设置 page) shown once to players from before it (Leo 2026-10-22
 # 「用戶引導甚麼的 都要做好」); new installs are not asked.
 RUN_NOTIFY_NOTICE_KEY = "_跑完通知新设定提示"
@@ -234,6 +249,8 @@ class ChildBatchTask(BaseTask):
                 "失败后继续": True,
                 CLOSE_GAME_KEY: False,
                 CLOSE_GAME_WHEN_KEY: CLOSE_WHEN_CLEAN,
+                CLOSE_CLONE_KEY: False,
+                CLOSE_CLONE_HOW_KEY: CLOSE_CLONE_JUST,
                 "完成日常后自动关机": False,
                 CLOSE_GAME_NOTICE_KEY: False,
                 NEW_DAILIES_NOTICE_KEY: False,
@@ -252,6 +269,14 @@ class ChildBatchTask(BaseTask):
                     "成功回到主页就继续执行后面的子任务；回不到主页才停止。"
                 ),
                 CLOSE_GAME_KEY: "一键完成日常跑完后关闭游戏。",
+                CLOSE_CLONE_KEY: (
+                    "在桌面分身里跑时，跑完关掉桌面分身（分身里的游戏和工具一起关）；"
+                    "在自己桌面跑时不做。什么时候关照上面的选择。"
+                ),
+                CLOSE_CLONE_HOW_KEY: (
+                    "关闭游戏：分身和游戏一起关。"
+                    "在桌面重开：关掉分身后在你的桌面打开游戏。"
+                ),
                 CLOSE_GAME_WHEN_KEY: (
                     "全部成功才关：没有任何一项跑失败、且全部已启用子任务今日均已完成才关。"
                     "跑失败也关：跑完就关，有项目跑失败或中途出错停下也关。"
@@ -276,6 +301,10 @@ class ChildBatchTask(BaseTask):
                 CLOSE_GAME_WHEN_KEY: {
                     "type": "drop_down",
                     "options": list(CLOSE_WHEN_OPTIONS),
+                },
+                CLOSE_CLONE_HOW_KEY: {
+                    "type": "drop_down",
+                    "options": list(CLOSE_CLONE_HOW_OPTIONS),
                 },
             }
         )
@@ -433,6 +462,7 @@ class ChildBatchTask(BaseTask):
             self._slot_settings = scheduled_start.take_run_settings() if mine else {}
         self._run_mode = run_mode
         self._resuming_after_crash = False
+        self._end_clone_after_run = False
         # No 「允许一键运行」 (启用) switch any more (player 2026-11-05, Leo
         # 「直接移除他」): saved off, every press ended at once with nothing
         # run and no word why.  Pressing the button is the permission.
@@ -466,9 +496,11 @@ class ChildBatchTask(BaseTask):
                 # The tool itself broke off (Leo 2026-11-02 「跑程式失敗」):
                 # 跑失败也关 still closes the game before the error goes on.
                 self._maybe_close_game_after_failures()
+                self._plan_close_clone(clean=False)
                 raise
             finally:
                 run_report.finish(self._report_ended)
+                self._close_clone_if_planned()
 
     def _ticked(self, key: str) -> bool:
         """This run does ``key``: the 定时启动 slot's own list, else the tick."""
@@ -781,6 +813,7 @@ class ChildBatchTask(BaseTask):
                 self.info_set("状态", f"{self.batch_label}完成（{len(failed)}项失败）。")
                 self._report_ended = run_report.ENDED_FAILED
             self._maybe_close_game_after_failures()
+            self._plan_close_clone(clean=False)
             return False
 
         self.info_set("状态", f"{self.batch_label}完成。")
@@ -791,6 +824,7 @@ class ChildBatchTask(BaseTask):
         )
         self._maybe_close_game_after_daily(completed, pre_completed)
         self._maybe_shutdown_after_daily(completed, pre_completed)
+        self._plan_close_clone(True, completed, pre_completed)
         return True
 
     period_done_note = "今天已经做完"
@@ -1127,6 +1161,66 @@ class ChildBatchTask(BaseTask):
             self.log_warning(f"{self.batch_label}：{failed_note}。")
             run_report.set_notice(failed_note)
         return closed
+
+    def _plan_close_clone(
+        self,
+        clean: bool,
+        completed: list[str] | tuple[str, ...] = (),
+        pre_completed: list[str] | tuple[str, ...] = (),
+    ) -> None:
+        """做完关闭分身: marks this run to end the 桌面分身 once its report is
+        saved (_close_clone_if_planned).  Same rules as 做完关闭游戏: with
+        全部成功才关 only a clean run with every ticked item done; with
+        跑失败也关 also after failures, but never before a re-login that runs
+        on, nor after the player's own Stop (that path never gets here)."""
+        if not getattr(self, "config", None) or not self.config.get(CLOSE_CLONE_KEY, False):
+            return
+        from src.utils import clone_desktop
+
+        if not clone_desktop.in_clone():
+            return
+        if clean:
+            if not self._close_even_after_failure() and not self._all_done_today(
+                list(completed), pre_completed, "关闭分身"
+            ):
+                return
+        else:
+            if not self._close_even_after_failure():
+                self.log_info(f"{self.batch_label}：有几项失败，设定是全部成功才关，不关闭分身。")
+                return
+            if self._resume_after_login_set():
+                self.log_info(f"{self.batch_label}：重新登录后还要接着跑，先不关闭分身。")
+                return
+        if self._others_in_line("关闭分身"):
+            return
+        self._end_clone_after_run = True
+        self.log_info(f"{self.batch_label}：{CLOSE_CLONE_NOTE}。")
+        run_report.set_notice(CLOSE_CLONE_NOTE)
+
+    def _close_clone_if_planned(self) -> None:
+        if not getattr(self, "_end_clone_after_run", False):
+            return
+        self._end_clone_after_run = False
+        import threading
+
+        threading.Thread(target=self._end_clone, name="close-clone", daemon=True).start()
+
+    def _end_clone(self) -> None:
+        from src.utils import clone_desktop
+
+        time.sleep(CLOSE_CLONE_DELAY_SECONDS)
+        try:
+            move = self.config.get(CLOSE_CLONE_HOW_KEY) == CLOSE_CLONE_MOVE
+            ended = clone_desktop.end_from_inside(
+                clone_desktop.END_MOVE_TO_DESKTOP if move else clone_desktop.END_JUST_CLOSE
+            )
+        except Exception as exc:
+            self.log_error(f"{self.batch_label}：关闭桌面分身失败。", exc)
+            return
+        if not ended:
+            self.log_warning(
+                f"{self.batch_label}：没能关掉桌面分身，请在分身窗口按右上角的 X 关掉。"
+            )
 
     def _maybe_shutdown_after_daily(
         self,

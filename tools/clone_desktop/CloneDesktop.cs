@@ -172,6 +172,10 @@ static class Program
     static readonly string logPath = Path.Combine(dataDir, "viewer.log");
     // Read by the tool outside: "started", "running PID" or "failed WHY".
     static readonly string launchResultPath = Path.Combine(dataDir, "launch-result.txt");
+    // Left by the tool in the clone when its run is done and 做完关闭分身 is on
+    // (Leo 2026-11-08): end the clone as 「直接關掉」 or 「搬回桌面」 does.
+    // Same name as END_REQUEST in clone_desktop.py.
+    static readonly string endRequestPath = Path.Combine(dataDir, "end-request.txt");
 
     internal static void Log(string message)
     {
@@ -895,6 +899,24 @@ static class Program
         {
             try
             {
+                if (!closingForReal && File.Exists(endRequestPath))
+                {
+                    // "end" = 直接關掉, "move" = 搬回桌面 (Leo 2026-11-08), as the X asks.
+                    string asked = "end";
+                    try { asked = File.ReadAllText(endRequestPath).Trim(); } catch { }
+                    try { File.Delete(endRequestPath); } catch { }
+                    bool move = asked == "move" && moveUri != null;
+                    Log("end asked by the tool in the clone: " + asked);
+                    closingForReal = true;
+                    try
+                    {
+                        SignOutChild(move);
+                        if (move) OpenOnDesktop(moveUri);
+                    }
+                    catch (Exception ex) { Log("close failed: " + ex.Message); }
+                    form.Close();
+                    return;
+                }
                 int state = (int)ocx.Connected;  // 0 disconnected, 1 connected, 2 connecting
                 if (state != last)
                 {
@@ -986,6 +1008,8 @@ static class Program
             }
             catch (Exception ex) { Log("poll failed: " + ex.Message); }
         };
+        // One left from before must not end the new clone at once.
+        try { File.Delete(endRequestPath); } catch { }
         timer.Start();
 
         connect();

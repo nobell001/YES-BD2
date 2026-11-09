@@ -100,6 +100,36 @@ class TalkIconRecognitionTest(unittest.TestCase):
                         w, h = result.size
                         self.assertEqual(expected, is_exclamation_glyph(frame[y : y + h, x : x + w]))
 
+    def test_empty_f_slot_over_white_stairs_is_not_the_icon(self):
+        # 4K PC live daily 2026-11-08 (2560x1440 game): beside the goddess the
+        # F slot was empty; the stairs scored 0.958 and a crack passed as the
+        # bar, so the square and 跑商 pressed 4 times and F twice.  The crop
+        # is cut at the 2K equivalent of CROP_ORIGIN_4K.
+        crop = cv2.imread(str(FIXTURES / "f_slot_empty_stairs_2k.png"))
+        for size in SIZES:
+            for transform in (None, _hdr_like):
+                with self.subTest(size=size, hdr=transform is not None):
+                    width, height = size
+                    factor = width / 2560
+                    frame = np.random.default_rng(7).integers(
+                        20, 90, size=(height, width, 3), dtype=np.uint8
+                    )
+                    scaled = cv2.resize(
+                        crop,
+                        (round(crop.shape[1] * factor), round(crop.shape[0] * factor)),
+                        interpolation=cv2.INTER_AREA,
+                    )
+                    x = round(CROP_ORIGIN_4K[0] * width / 3840)
+                    y = round(CROP_ORIGIN_4K[1] * height / 2160)
+                    frame[y : y + scaled.shape[0], x : x + scaled.shape[1]] = scaled
+                    frame = transform(frame) if transform else frame
+                    passed, result = _passes(frame)
+                    if not passed:
+                        continue
+                    left, top = result.position
+                    w, h = result.size
+                    self.assertFalse(is_exclamation_glyph(frame[top : top + h, left : left + w]), result)
+
     def test_dimmed_icon_is_not_pressed(self):
         frame = _frame("f_slot_followers_4k.png", (1920, 1080))
         passed, _result = _passes((frame * 0.35).astype(np.uint8))

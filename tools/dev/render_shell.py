@@ -307,6 +307,11 @@ def dialogs(shell):
             ("close-game", lambda d: d.close_game and d.close_game.setChecked(True)),
             ("close-always", lambda d: d.close_when and d.close_when.set_value(d.close_when_options[-1])),
         ],
+        # The 桌面分身 window: 做完 关闭游戏 / 在桌面重开 (2026-11-08).
+        "run-confirm-clone": [
+            ("close-game", lambda d: d.close_clone and d.close_clone._buttons["关闭游戏"].click()),
+            ("close-move", lambda d: d.close_clone and d.close_clone._buttons["在桌面重开"].click()),
+        ],
         "skill-interval": [
             ("max", lambda d: d.slider.setValue(d.slider.maximum())),
             ("min", lambda d: d.slider.setValue(d.slider.minimum())),
