@@ -21,6 +21,7 @@ from src.ui.shell.widgets import (
     Inset,
     Picture,
     Separator,
+    Slider,
     Text,
     Toggle,
     attach_hint,
@@ -110,12 +111,13 @@ class StickerButton(QWidget):
     # Her visible (closed) eye in the sticker, as a share of its side.
     EYE = (0.51, 0.515)  # on the closed eyelid (Leo: start lower)
 
-    def __init__(self, path: str, size: int = 96, parent=None):
+    def __init__(self, path: str, size: int = 96, parent=None, hover_source: QWidget | None = None):
         super().__init__(parent)
         self._pixmap = QPixmap(path)
         self.setFixedSize(size, size)
         self.setCursor(Qt.PointingHandCursor)
-        self._hover = motion.HoverFade(self, self.update)
+        # The glint follows the whole 循环砍价 row when it sits in one.
+        self._hover = motion.HoverFade(hover_source or self, self.update)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self.isEnabled():
@@ -165,6 +167,47 @@ class StickerButton(QWidget):
         painter.setBrush(gradient)
         painter.drawEllipse(eye, radius, radius)
         painter.restore()
+
+
+class BargainRow(QWidget):
+    """循环砍价 inside the 买 card: the merchant sticker, the name and what it
+    does, and an arrow, like the rows in 设置.  Hovered, the row tints and
+    her eye glints red (Leo 2026-10-11)."""
+
+    clicked = Signal()
+
+    def __init__(self, sticker: str, parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAttribute(Qt.WA_Hover, True)
+        self._hover = motion.HoverFade(self, self.update)
+        gap = theme.size("gap_sm")
+        row = hbox(self, (gap + 6, gap // 2, gap, gap // 2), theme.size("gap_md") + 6)
+        row.addWidget(StickerButton(sticker, 42, self, hover_source=self))
+        texts = vbox(None, (0, 0, 0, 0), 1)
+        texts.addWidget(Text("循环砍价", "h3"))
+        texts.addWidget(Text("练砍价技能", "muted", elide=True))
+        row.addLayout(texts, 1)
+        row.addWidget(IconLabel("chevron-right", 16, "ink3"))
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.isEnabled():
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, _event):
+        # A thin edge at rest (the tip under it is the filled box), filled
+        # while hovered.
+        glow = self._hover.value if self.isEnabled() else 0.0
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        corner = theme.size("corner_small") + 4
+        body = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        fill = theme.color("fill")
+        fill.setAlphaF(glow)
+        painter.setBrush(fill)
+        painter.setPen(QPen(theme.color("hair2"), 1))
+        painter.drawRoundedRect(body, corner, corner)
 
 
 class ItemIcon(QWidget):
@@ -367,22 +410,21 @@ class TradePage(Page):
 
     def _build_buy(self) -> None:
         column = self.buy_card.column
-        # The cartridge and the merchant on one line, the words under them
-        # across the card: between the two pictures 「Chapter 1 Merchant」 was
-        # cut, then one word a line (2026-10-22 check).
-        row = hbox(None, (0, 0, 0, 0), 12)
-        picture = Picture(data.cartridge_picture("S1"), fixed=QSize(84, 64))
-        row.addWidget(picture, 0, Qt.AlignBottom)
-        row.addStretch(1)
-        self.bargain_button = StickerButton(data.bargain_picture(), 96)
+        # Two rows of the same shape (Leo 2026-11-09 「買這邊感覺不太協調」:
+        # a small cartridge low on the left, a big sticker high on the right
+        # and an empty middle).  The merchant: picture, name, one line; then
+        # 循环砍价 in the same shape as a button row; the tip at the bottom.
+        gap = theme.size("gap_sm")
+        merchant = hbox(None, (gap, 0, gap, 0), theme.size("gap_md"))
+        merchant.addWidget(Picture(data.cartridge_picture("S1"), fixed=QSize(54, 42)))
+        texts = vbox(None, (0, 0, 0, 0), 1)
+        texts.addWidget(Text("第一章商人", "h3", elide=True))
+        texts.addWidget(Text("砍价，买下收藏的商品", "muted", elide=True))
+        merchant.addLayout(texts, 1)
+        column.addLayout(merchant)
+        self.bargain_button = BargainRow(data.bargain_picture())
         self.bargain_button.clicked.connect(self._open_bargain)
-        attach_hint(self.bargain_button, t("练砍价技能"), below=True)
-        row.addWidget(self.bargain_button, 0, Qt.AlignTop)
-        column.addLayout(row)
-        texts = vbox(None, (0, 0, 0, 0), 2)
-        texts.addWidget(Text("第一章商人", "h3", wrap=True))
-        texts.addWidget(Text("砍价，买下收藏的商品", "muted", wrap=True))
-        column.addLayout(texts)
+        column.addWidget(self.bargain_button)
         self.bargain_running = QWidget()
         running = hbox(self.bargain_running, (0, 0, 0, 0), 8)
         running.addWidget(IconLabel("loader-circle", 15, "primary"))
@@ -501,7 +543,7 @@ class TradePage(Page):
         self.refresh()
 
     def _bargain_dialog(self, task):
-        from qfluentwidgets import MessageBoxBase, SpinBox
+        from qfluentwidgets import MessageBoxBase
 
         from src.tasks.BargainLoopTask import DEFAULT_LOOPS, LOOP_COUNT_KEY, MAX_LOOPS, loop_count
 
@@ -523,8 +565,10 @@ class TradePage(Page):
         row = hbox(None, (0, 8, 0, 0), 10)
         row.addWidget(Text("次数", "h3"))
         row.addStretch(1)
-        spin = SpinBox()
+        spin = Slider()  # oink-ui Slider + the number (Leo 2026-11-09)
         spin.setRange(1, MAX_LOOPS)
+        spin.setSuffix("次")
+        spin.setFixedWidth(theme.size("control_md") * 8)
         spin.setValue(loop_count(task.config.get(LOOP_COUNT_KEY, DEFAULT_LOOPS)))
         row.addWidget(spin)
         column.addLayout(row)

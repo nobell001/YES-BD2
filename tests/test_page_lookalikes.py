@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover - CI without OCR
 from src.tasks.map_trade.models import ScreenState
 from src.tasks.map_trade.navigator import Navigator
 from src.tasks.map_trade.vision import Vision
-from src.utils import known_popups
+from src.utils import known_popups, title_screen
 
 FIXTURES = Path(__file__).parent / "fixtures"
 MANIFEST = FIXTURES / "pages.json"
@@ -53,6 +53,8 @@ TRADE_STATES = {
     # The 珍藏集 page and the quick-switch bar both show the 剧情游戏卡 tab.
     "card_collection": ScreenState.CARD_MENU,
     "quick_switch_bar": ScreenState.CARD_MENU,
+    # The BROWN DUST II logo after a login tap (live 2K 2026-11-09).
+    "loading": ScreenState.LOADING,
 }
 
 # name -> (check, the pages it says yes on)
@@ -115,6 +117,17 @@ CHECKS = {
     "抽卡结果页": (
         lambda nav, frame: _gacha_result(nav, frame),
         {"gacha_result"},
+    ),
+    # The login's title, also with TOUCH TO START hidden (YES-BD2 #75): its
+    # blank upper middle is tapped only there; recovery hands it to the login.
+    "标题画面": (
+        lambda nav, frame: title_screen.shown(nav.task.ocr(frame=frame), frame.shape),
+        {"title", "title_starting"},
+    ),
+    # While 「啟動遊戲中」 shows nothing is tapped.
+    "启动游戏中": (
+        lambda nav, frame: title_screen.still_starting(nav.task.ocr(frame=frame)),
+        {"title_starting"},
     ),
 }
 

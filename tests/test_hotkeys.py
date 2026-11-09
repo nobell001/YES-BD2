@@ -6,11 +6,6 @@ from unittest.mock import patch
 from src.ui.shell import hotkeys
 
 
-class FakeRecordTask:
-    def __init__(self, key=None):
-        self.config = {} if key is None else {"录制按键": key}
-
-
 class HotkeysTest(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
@@ -21,79 +16,68 @@ class HotkeysTest(unittest.TestCase):
         self.addCleanup(self.folder.cleanup)
 
     def test_defaults(self):
-        self.assertEqual(
-            {"pause": "F9", "stop": "F10", "record": "F8"}, hotkeys.keys(FakeRecordTask())
-        )
+        self.assertEqual({"pause": "F9", "stop": "F10"}, hotkeys.keys())
+
+    # Leo 2026-11-08: 魔兽追踪者 is gone, and its record key with it.
+    def test_only_pause_and_stop(self):
+        self.assertEqual(("pause", "stop"), hotkeys.ACTIONS)
 
     def test_choices_are_f6_to_f12(self):
         self.assertEqual(("F6", "F7", "F8", "F9", "F10", "F11", "F12"), hotkeys.KEY_CHOICES)
 
-    def test_record_key_comes_from_the_fiend_task(self):
-        self.assertEqual("F7", hotkeys.keys(FakeRecordTask("F7"))["record"])
-
     def test_picking_a_used_key_swaps(self):
-        task = FakeRecordTask("F8")
-        current = hotkeys.set_key("pause", "F10", task)
-        self.assertEqual({"pause": "F10", "stop": "F9", "record": "F8"}, current)
-        self.assertEqual(current, hotkeys.keys(task))
-
-    def test_record_key_swaps_with_pause_and_is_saved_on_the_task(self):
-        task = FakeRecordTask("F8")
-        current = hotkeys.set_key("record", "F9", task)
-        self.assertEqual({"pause": "F8", "stop": "F10", "record": "F9"}, current)
-        self.assertEqual("F9", task.config["录制按键"])
-
-    def test_old_record_key_f9_never_shares_with_pause(self):
-        # Before 10-09 the record key could already be F9 or F10.
-        current = hotkeys.keys(FakeRecordTask("F9"))
-        self.assertEqual("F9", current["record"])
-        self.assertEqual(3, len(set(current.values())))
+        current = hotkeys.set_key("pause", "F10")
+        self.assertEqual({"pause": "F10", "stop": "F9"}, current)
+        self.assertEqual(current, hotkeys.keys())
 
     def test_broken_file_falls_back(self):
         self.file.parent.mkdir(parents=True)
         self.file.write_text("{oops", encoding="utf-8")
-        self.assertEqual("F9", hotkeys.keys(FakeRecordTask())["pause"])
+        self.assertEqual("F9", hotkeys.keys()["pause"])
 
     def test_unknown_key_is_ignored(self):
-        task = FakeRecordTask()
-        self.assertEqual(hotkeys.keys(task), hotkeys.set_key("pause", "F1", task))
+        self.assertEqual(hotkeys.keys(), hotkeys.set_key("pause", "F1"))
 
-    # Leo 2026-10-20: each of the three keys can be 「无」 (off).
+    # Leo 2026-10-20: each key can be 「无」 (off).
     def test_none_is_a_choice_for_every_key(self):
         self.assertEqual(("无", *hotkeys.KEY_CHOICES), hotkeys.OPTIONS)
-        task = FakeRecordTask("F8")
-        hotkeys.set_key("pause", "无", task)
-        hotkeys.set_key("stop", "无", task)
-        current = hotkeys.set_key("record", "无", task)
-        self.assertEqual({"pause": "无", "stop": "无", "record": "无"}, current)
-        self.assertEqual(current, hotkeys.keys(task))
-        self.assertEqual("无", task.config["录制按键"])
+        hotkeys.set_key("pause", "无")
+        current = hotkeys.set_key("stop", "无")
+        self.assertEqual({"pause": "无", "stop": "无"}, current)
+        self.assertEqual(current, hotkeys.keys())
 
     def test_none_takes_nobodys_key(self):
-        task = FakeRecordTask("F8")
-        current = hotkeys.set_key("stop", "无", task)
-        self.assertEqual({"pause": "F9", "stop": "无", "record": "F8"}, current)
+        current = hotkeys.set_key("stop", "无")
+        self.assertEqual({"pause": "F9", "stop": "无"}, current)
 
     def test_picking_a_used_key_while_off_does_not_turn_the_other_off(self):
-        task = FakeRecordTask("F8")
-        hotkeys.set_key("pause", "无", task)
-        current = hotkeys.set_key("pause", "F10", task)
+        hotkeys.set_key("pause", "无")
+        current = hotkeys.set_key("pause", "F10")
         self.assertEqual("F10", current["pause"])
-        self.assertNotIn(current["stop"], ("无", "F10", "F8"))
-        self.assertEqual(3, len(set(current.values())))
+        self.assertNotIn(current["stop"], ("无", "F10"))
 
     def test_existing_players_keep_their_keys(self):
         self.file.parent.mkdir(parents=True)
         self.file.write_text('{"pause": "F7", "stop": "F11"}', encoding="utf-8")
-        self.assertEqual(
-            {"pause": "F7", "stop": "F11", "record": "F8"}, hotkeys.keys(FakeRecordTask())
-        )
+        self.assertEqual({"pause": "F7", "stop": "F11"}, hotkeys.keys())
+
+    def test_old_file_with_a_record_key_still_loads(self):
+        self.file.parent.mkdir(parents=True)
+        self.file.write_text('{"pause": "F8", "stop": "F10"}', encoding="utf-8")
+        self.assertEqual({"pause": "F8", "stop": "F10"}, hotkeys.keys())
+
+    def test_same_key_saved_twice_is_split(self):
+        self.file.parent.mkdir(parents=True)
+        self.file.write_text('{"pause": "F10", "stop": "F10"}', encoding="utf-8")
+        current = hotkeys.keys()
+        self.assertEqual("F10", current["pause"])
+        self.assertNotEqual("F10", current["stop"])
 
     def test_hint_names_only_the_keys_that_are_on(self):
         with patch("src.ui.shell.widgets.t", lambda text: text):
-            both = hotkeys.hint({"pause": "F9", "stop": "F10", "record": "F8"})
-            stop_only = hotkeys.hint({"pause": "无", "stop": "F10", "record": "F8"})
-            off = hotkeys.hint({"pause": "无", "stop": "无", "record": "F8"})
+            both = hotkeys.hint({"pause": "F9", "stop": "F10"})
+            stop_only = hotkeys.hint({"pause": "无", "stop": "F10"})
+            off = hotkeys.hint({"pause": "无", "stop": "无"})
         self.assertIn("F9", both)
         self.assertEqual("按 F10 停止，可在设置里改", stop_only)
         self.assertEqual("快捷键已关闭，可在设置里改", off)
@@ -145,9 +129,6 @@ class TakenKeyTest(unittest.TestCase):
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
         patcher = patch.object(hotkeys, "KEYS_FILE", Path(self.folder.name) / "hotkeys.json")
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        patcher = patch.object(hotkeys, "_record_task", lambda: None)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.pressed = []

@@ -528,11 +528,25 @@ class SquareGoddessTask(BaseBD2Task):
                     # popup...): never stuck (Leo 2026-10-11 「不可以說認不到辨識
                     # 不到就卡住 你可以用快捷鍵」).  The game's own H key goes to
                     # 主页; a click could land on home's menu icon instead.
-                    self.log_info(
-                        "广场女神像：没认出主页，也没认出广场按钮，"
-                        f"第{completed_home_clicks}次改按快捷键 H 回主页。"
-                    )
-                    self.tap_key(SQUARE_HOME_KEY, after_sleep=1.0)
+                    from src.tasks.map_trade.home_house import find_house
+                    from src.tasks.map_trade.vision import Vision
+
+                    vision = Vision(self)
+                    house = find_house(vision, frame)
+                    if house is not None:
+                        # The house (or its 「H」 badge) reads: a mouse press
+                        # needs no front (#518, 定时启动 H never sent).
+                        self.log_info(
+                            "广场女神像：没认出主页，但认到右上角主页按钮，"
+                            f"第{completed_home_clicks}次用鼠标点它。"
+                        )
+                        vision.click_client(house.center, frame.shape, after_sleep=1.0)  # 不用确认：外层循环接着看主页
+                    else:
+                        self.log_info(
+                            "广场女神像：没认出主页，也没认出广场按钮，"
+                            f"第{completed_home_clicks}次改按快捷键 H 回主页。"
+                        )
+                        self.tap_key(SQUARE_HOME_KEY, after_sleep=1.0)
                 next_home_retry_at = monotonic() + retry_interval
                 continue
             if wait is not None and wait.over(frame, monotonic(), loading=is_loading_dark(frame)):

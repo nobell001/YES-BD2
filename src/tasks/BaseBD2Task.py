@@ -86,6 +86,18 @@ DISMISS_REPRESS_SECONDS = 3.0
 DISMISS_SAME_SPOT = 0.04  # share of the window width/height
 # Windows may refuse to raise the game while the user works elsewhere.
 FOREGROUND_ATTEMPTS = 3
+FOREGROUND_WAY_WORDS = {
+    "alt": "按住 Alt 再换",
+    "switch": "用切换窗口的方法",
+    "caption": "点一下游戏视窗的标题栏",
+}
+# A locked PC takes no key: wait this long for the player to unlock it.
+LOCKED_WAIT_SECONDS = 30 * 60
+LOCKED_LOOK_SECONDS = 2.0
+# A key whose press lost the front half way is pressed once more.
+KEY_FRONT_ROUNDS = 2
+# A front change shows within this long when Windows allowed it.
+FOREGROUND_SHOW_SECONDS = 0.15
 # A shortcut tap: long enough for the PC client to read it (WASD holds work live).
 KEY_TAP_SECONDS = 0.08
 # W A S D, then ← ↑ → ↓ (virtual-key codes).
@@ -218,18 +230,13 @@ def _run_watched(task, run, args, kwargs, stepped_in=False, watched=False):
             task.log_info(f"{name}：已回主页，再做一次。")
             continue
         except FrozenScreen as exc:
-            why = str(exc) or (
-                f"画面 {FROZEN_SCREEN_SECONDS:.0f} 秒没有变化（点了没反应或认不出画面）"
-            )
+            # Leo 2026-10-14 「那就按esc 而且要跟用戶說明是哪裡卡住觸發了這個」:
+            # the step it stuck on goes in front of the reason, Esc goes first.
+            why = stuck_reason(task, exc)
         finally:
             task._frozen_watch = None
         stepped_in = False
         again = attempt == 1 and safe_again
-        # Leo 2026-10-14 「那就按esc 而且要跟用戶說明是哪裡卡住觸發了這個」:
-        # the step it stuck on goes in front of the reason, Esc goes first.
-        where = stuck_step(task)
-        if where and where not in why:
-            why = f"卡在「{where}」：{why}"
         if _escape_when_stuck(task):
             why += "，已按 Esc"
         if attempt == 2 and first_why and first_why != why:
@@ -264,20 +271,93 @@ def _keep_first_why(task, first_why: str) -> None:
         task._why = f"{second}（第一次：{first_why}）" if second else f"第一次：{first_why}"
 
 
+# How much of what the last check read goes into a stuck reason, and how
+# recent that check must be (an older one is not what it stuck on).
+STUCK_READ_CHARS = 30
+STUCK_CHECK_SECONDS = 30.0
+
+
 def stuck_step(task) -> str:
     """The step a run is on, in the player's words: its 当前阶段, else the
-    last thing it logged (a short line, for the 问题摘要)."""
+    check it was making (「认活动页」), else the last thing it logged (a
+    short line, for the 问题摘要).
+
+    Not the task's 状态 「启动…」: that only says the task started (player
+    v0.3.5 2026-11-09 「卡在「启动活动每日战斗」」, Leo 「報告要寫出真正卡在哪」).
+    """
+    info = task_info_snapshot(task)
+    stage = str(info.get("当前阶段") or "").strip()
+    name = str(getattr(task, "name", "") or "")
+    if stage and stage != "-":
+        if name and stage.startswith(name):
+            stage = stage[len(name):].lstrip("：: ")
+        return problem_report.plain(stage).rstrip("。.")[:60]
+    check = _last_check(task)
+    if check is not None:
+        return f"认{problem_report.check_place(check[0])}"
     try:
         stage = problem_report._stage(task)
     except Exception:
         stage = ""
-    if stage:
+    if stage and not _only_started(stage, name):
         return stage
     last = str(getattr(task, "_last_step", "") or "").strip()
-    if name := str(getattr(task, "name", "") or ""):
-        if last.startswith(name):
-            last = last[len(name):].lstrip("：: ")
-    return last.rstrip("。.")[:60]
+    if name and last.startswith(name):
+        last = last[len(name):].lstrip("：: ")
+    last = last.rstrip("。.")[:60]
+    return last or stage
+
+
+def stuck_reason(task, exc) -> str:
+    """Why a stuck watch fired, naming where: 「卡在「step」：reason（最后在认…）」.
+
+    Every place that catches FrozenScreen says it this way (Leo 2026-11-09
+    「報告要寫出真正卡在哪」「同類型不要再出錯」), and this moment's frame,
+    reads and step go to the 问题摘要 before an Esc or a trip home change
+    them.
+    """
+    why = str(exc) or (
+        f"画面 {FROZEN_SCREEN_SECONDS:.0f} 秒没有变化（点了没反应或认不出画面）"
+    )
+    where = stuck_step(task)
+    detail = stuck_detail(task)
+    try:
+        problem_report.note_stuck(task, where)
+    except Exception:
+        pass  # the record must never break the run
+    if where and where not in why:
+        why = f"卡在「{where}」：{why}"
+    if detail and detail not in why:
+        why += f"（{detail}）"
+    return why
+
+
+def _only_started(text: str, name: str) -> bool:
+    """「启动活动每日战斗」: the task's start line, not a step."""
+    text = text.strip().rstrip("。.")
+    if name and text.endswith(name):
+        text = text[: -len(name)]
+    return text.strip("：: ") in {"", "启动", "开始", "运行中"}
+
+
+def _last_check(task):
+    try:
+        return problem_report.last_check(task, within=STUCK_CHECK_SECONDS)
+    except Exception:
+        return None
+
+
+def stuck_detail(task) -> str:
+    """「最后在认「活动页」，读到「挑战战斗 …」」: what the run was looking at
+    when it stuck, so the reason names the real screen (Leo 2026-11-09)."""
+    check = _last_check(task)
+    if check is None:
+        return ""
+    key, text = check
+    text = " ".join(str(text or "").split())
+    if len(text) > STUCK_READ_CHARS:
+        text = text[:STUCK_READ_CHARS] + "…"
+    return f"最后在认「{problem_report.check_place(key)}」，读到「{text}」"
 
 
 def _escape_when_stuck(task) -> bool:
@@ -353,20 +433,90 @@ class RecentPvpCartridgeMatch:
         )
 
 
-def _set_foreground_attached(target: int) -> None:
-    """SetForegroundWindow while attached to the foreground window's input queue.
+def _what_is_in_front() -> str:
+    """What holds the front instead of the game, in player words, for the
+    log: the program's file name and window kind, never its title (a title
+    can carry the player's own names or documents)."""
+    try:
+        import win32gui
+        import win32process
 
-    Windows' foreground lock can refuse a plain call from a background process
-    (live 4K 2026-09-30: PVP's WASD walk stopped with the Claude window in
-    front, a second run a minute later passed); sharing the foreground
-    thread's input state lifts the lock.
+        if not _input_desktop_open():
+            return "电脑锁屏了，Windows 不让按键送到游戏（鼠标点击照常）"
+        foreground = win32gui.GetForegroundWindow()
+        if not foreground:
+            return "没有任何窗口在最前面（电脑可能开着屏保或熄屏了），Windows 不让按键送到游戏"
+        _thread, pid = win32process.GetWindowThreadProcessId(foreground)
+        program = ""
+        try:
+            import psutil
+
+            program = psutil.Process(pid).name()
+        except Exception:
+            pass
+        kind = win32gui.GetClassName(foreground) or "?"
+        return f"最前面是 {program or '另一个程序'}（{kind}），Windows 拒绝把游戏换到前面"
+    except Exception as exc:
+        return f"看不出最前面是什么：{exc!r}"
+
+
+def _input_desktop_open() -> bool:
+    """False while the PC is locked (or on the sign-in / UAC screen): no
+    program gets the front then and no key reaches any game.  The same check
+    a scheduled start makes before it runs (SwitchDesktop too: an elevated
+    tool may open the input desktop even while it is locked)."""
+    from src.utils.scheduled_start import screen_locked
+
+    return not screen_locked()
+
+
+def _front_is(target: int, wait: float = FOREGROUND_SHOW_SECONDS) -> bool:
+    import win32gui
+
+    end_at = time.monotonic() + wait  # 自己等：Windows 换前景只看 0.15 秒，不是等画面
+    while True:
+        if win32gui.GetForegroundWindow() == target:
+            return True
+        if time.monotonic() >= end_at:
+            return False
+        time.sleep(0.02)
+
+
+def _set_foreground_attached(target: int) -> str:
+    """Bring ``target`` to the front, each way stronger than the last, until
+    one holds.
+
+    1. SetForegroundWindow while attached to the foreground window's input
+       queue.  Windows' foreground lock can refuse a plain call from a
+       background process (live 4K 2026-09-30: PVP's WASD walk stopped with
+       the Claude window in front, a second run a minute later passed);
+       sharing the foreground thread's input state lifts the lock.
+    2. Alt held while asking: Windows lifts the foreground lock whenever Alt
+       is pressed (documented under LockSetForegroundWindow).  This is what
+       a program started by a schedule needs: nobody has touched the PC, so
+       way 1 alone was refused for two minutes on end (player v0.3.2
+       2026-11-08, 定时启动, H never sent).  The Alt release lands on the game
+       once it is in front.
+    3. SwitchToThisWindow, the call Alt+Tab itself uses.
+    4. A real mouse press on the game's own title bar (windowed game only,
+       and only where nothing covers it): a pressed window always gets the
+       front.
+
+    A minimized game is restored first: the front alone does not show it.
+    Returns the way that held ("" none), for the log.
     """
     import ctypes
 
     import win32api
+    import win32con
     import win32gui
     import win32process
 
+    try:
+        if win32gui.IsIconic(target):
+            win32gui.ShowWindow(target, win32con.SW_RESTORE)
+    except Exception:
+        pass
     foreground = win32gui.GetForegroundWindow()
     their_thread, _pid = win32process.GetWindowThreadProcessId(foreground)
     our_thread = win32api.GetCurrentThreadId()
@@ -376,11 +526,77 @@ def _set_foreground_attached(target: int) -> None:
         and ctypes.windll.user32.AttachThreadInput(our_thread, their_thread, True)
     )
     try:
-        win32gui.BringWindowToTop(target)
-        win32gui.SetForegroundWindow(target)
+        try:
+            win32gui.BringWindowToTop(target)
+            win32gui.SetForegroundWindow(target)
+        except Exception:
+            pass
+        if _front_is(target):
+            return "attach"
+        alt_scan = win32api.MapVirtualKey(win32con.VK_MENU, 0)
+        win32api.keybd_event(win32con.VK_MENU, alt_scan, 0, 0)
+        try:
+            try:
+                win32gui.SetForegroundWindow(target)
+            except Exception:
+                pass
+        finally:
+            win32api.keybd_event(win32con.VK_MENU, alt_scan, win32con.KEYEVENTF_KEYUP, 0)
+        if _front_is(target):
+            return "alt"
+        try:
+            ctypes.windll.user32.SwitchToThisWindow(target, True)
+        except Exception:
+            pass
+        if _front_is(target):
+            return "switch"
     finally:
         if attached:
             ctypes.windll.user32.AttachThreadInput(our_thread, their_thread, False)
+    return "caption" if _click_caption(target) and _front_is(target, 0.4) else ""
+
+
+def _caption_point(target: int):
+    """The middle of the game window's own title bar, in screen pixels, or
+    None (borderless / fullscreen: no title bar, nothing harmless to click)."""
+    import win32gui
+
+    left, top, right, _bottom = win32gui.GetWindowRect(target)
+    _x, client_top = win32gui.ClientToScreen(target, (0, 0))
+    if client_top - top < 12 or right - left < 200:
+        return None
+    return (left + (right - left) * 2 // 5, (top + client_top) // 2)
+
+
+def _click_caption(target: int) -> bool:
+    """A real click on the game's title bar: Windows always gives the front
+    to the window the mouse presses, and a title bar press does nothing in
+    the game.  Only when that spot shows the game itself (not a window over
+    it); the cursor goes back where it was."""
+    import ctypes
+
+    import win32api
+    import win32con
+    import win32gui
+
+    try:
+        point = _caption_point(target)
+        if point is None:
+            return False
+        under = win32gui.WindowFromPoint(point)
+        if not under or ctypes.windll.user32.GetAncestor(under, 2) != target:  # GA_ROOT
+            return False
+        before = win32api.GetCursorPos()
+        win32api.SetCursorPos(point)
+        try:
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+            time.sleep(0.03)
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+        finally:
+            win32api.SetCursorPos(before)
+        return True
+    except Exception:
+        return False
 
 
 class BaseBD2Task(BaseTask):
@@ -1395,6 +1611,7 @@ class BaseBD2Task(BaseTask):
         """
         import win32gui
 
+        self._foreground_why = ""
         if self._game_in_foreground():
             return True
         interaction = getattr(self.executor, "interaction", None)
@@ -1402,17 +1619,26 @@ class BaseBD2Task(BaseTask):
         target = getattr(window, "top_hwnd", None) or getattr(window, "hwnd", None)
         if not target:
             return False
+        if not _input_desktop_open():
+            self._foreground_why = _what_is_in_front()
+            return False
         for attempt in range(FOREGROUND_ATTEMPTS):
             try:
                 if attempt == 0:
                     win32gui.SetForegroundWindow(target)
                 else:
-                    _set_foreground_attached(target)
+                    way = _set_foreground_attached(target)
+                    if way in FOREGROUND_WAY_WORDS and way != getattr(self, "_foreground_way_logged", ""):
+                        self._foreground_way_logged = way
+                        self.log_info(
+                            f"游戏窗口被 Windows 挡着不让换到前面，{FOREGROUND_WAY_WORDS[way]}才换到前面。"
+                        )
             except Exception:
                 pass
             time.sleep(0.4)
             if self._game_in_foreground():
                 return True
+        self._foreground_why = _what_is_in_front()
         return False
 
     def hold_key(self, key: str, seconds: float, after_sleep: float = 0.0) -> bool:
@@ -1501,26 +1727,75 @@ class BaseBD2Task(BaseTask):
             return False
         return bool(wait_home(timeout))
 
+    def _wait_unlocked(self) -> bool:
+        """A locked PC takes no key at all: wait for the player to unlock it
+        (up to LOCKED_WAIT_SECONDS), then press.  The run keeps the screen on
+        (keep_awake), so only a PC locked before the run gets here."""
+        if _input_desktop_open():
+            return True
+        self.info_set("快捷键", "电脑锁屏中，等解锁再按")
+        self.log_warning(
+            f"电脑锁屏了，Windows 不让按键送到游戏。解锁后接着跑（最多等 {LOCKED_WAIT_SECONDS // 60} 分钟）。",
+            notify=True,
+        )
+        # Waiting for the player is not a stuck screen: the stuck-screen
+        # watch (15 s with the same picture) rests meanwhile.
+        watch = getattr(self, "_frozen_watch", None)
+        if watch is not None:
+            watch.paused += 1
+        try:
+            unlocked = wait_for(
+                lambda: _input_desktop_open(),
+                LOCKED_WAIT_SECONDS,
+                sleep=self.sleep,
+                poll=LOCKED_LOOK_SECONDS,
+                clock=lambda: time.monotonic(),
+            )
+        finally:
+            if watch is not None:
+                watch.paused -= 1
+                watch.pressed()
+        if not unlocked:
+            return False
+        self.log_info("电脑已解锁，接着按键。")
+        self.sleep(1.0)
+        return True
+
     def _send_game_key(self, code: int, seconds: float) -> bool:
         """Press ``code`` for ``seconds`` with the game in the foreground; the
         key is injected, so the takeover guard ignores it."""
+        self._wait_unlocked()
         sent = []
 
         def action():
             import win32api
             import win32con
 
-            if not self._bring_game_to_foreground():
-                return
-            scan = win32api.MapVirtualKey(code, 0)
-            win32api.keybd_event(code, scan, 0, 0)
-            sent.append(True)
-            try:
-                time.sleep(max(0.0, float(seconds)))
-            finally:
-                win32api.keybd_event(code, scan, win32con.KEYEVENTF_KEYUP, 0)
+            for _round in range(KEY_FRONT_ROUNDS):  # 不是重试点击：按键途中游戏被换下去才再按一次
+                if not self._bring_game_to_foreground():
+                    return
+                scan = win32api.MapVirtualKey(code, 0)
+                win32api.keybd_event(code, scan, 0, 0)
+                try:
+                    time.sleep(max(0.0, float(seconds)))
+                    # Still in front at key-up: the game had the whole press.
+                    held = self._game_in_foreground()
+                finally:
+                    win32api.keybd_event(code, scan, win32con.KEYEVENTF_KEYUP, 0)
+                if held:
+                    sent.append(True)
+                    return
+                self.log_info("按键途中游戏窗口被换到后面，这一下可能没收到，重新按一次。")
+            sent.append(True)  # pressed twice with the game in front at key-down
 
         self.operate(action, block=True, restore_cursor=True)
+        if not sent:
+            why = getattr(self, "_foreground_why", "")
+            if why and why != getattr(self, "_foreground_why_logged", ""):
+                # Once per cause: what Windows kept in front, so a report
+                # says why the key could not go (player v0.3.2 2026-11-08).
+                self._foreground_why_logged = why
+                self.log_info(f"游戏窗口没能叫到最前面：{why}")
         return bool(sent)
 
     def scroll_client(
@@ -1793,6 +2068,7 @@ class BaseBD2Task(BaseTask):
         from src.utils import task_vision
         from src.utils.field_followers import (
             FIELD_TALK_ICON_TEMPLATE,
+            FOLLOWERS_ABSENT,
             FOLLOWERS_DISMISSED,
             FOLLOWERS_DONE_TODAY,
             FOLLOWERS_STILL_VISIBLE,
@@ -1847,6 +2123,19 @@ class BaseBD2Task(BaseTask):
 
         if gather_seconds > 0:
             self.info_set("跟随角色按钮", "等待跟随角色靠过来")
+        def crowd() -> bool:
+            from src.utils.follower_balloons import find_balloons, MIN_CROWD
+
+            frame = self.capture_frame()
+            seen = len(find_balloons(frame)) if frame is not None else 0
+            self.info_set("派遣头上感叹号", str(seen))
+            return seen >= MIN_CROWD
+
+        # No 派遣 yet today: a crowd still walking over is waited for (Leo
+        # 2026-11-09); claimed today: only the after-press check uses it.
+        from src.utils.field_followers import CROWD_WAIT_SECONDS
+
+        started = monotonic()
         outcome = dismiss_field_followers(
             observe,
             click,
@@ -1854,14 +2143,46 @@ class BaseBD2Task(BaseTask):
             appear_seconds=appear_seconds,
             gather_seconds=gather_seconds,
             press_key=press_key if use_key else None,
+            crowd=crowd,
+            crowd_wait_seconds=0.0 if dismissed_today() else CROWD_WAIT_SECONDS,
         )
+        waited = monotonic() - started
+        where = str(getattr(self, "name", "") or "箱庭")
         if outcome == FOLLOWERS_DISMISSED:
             mark_dismissed()
-            self.log_info("箱庭：跟随角色已用F键感叹号赶走。")
+            self.log_info(f"派遣：{where}按F键感叹号，跟随角色已领走（找了 {waited:.1f} 秒）。")
         elif outcome == FOLLOWERS_STILL_VISIBLE:
-            self.log_info("箱庭：按了两次F键感叹号，图标仍在，继续原流程。")
+            self.log_info(f"派遣：{where}按了F键感叹号，图标仍在，没领到，继续原流程。")
             self._save_flow_diagnostic("field_followers_still_visible")
+        elif outcome == FOLLOWERS_ABSENT:
+            self.log_info(f"派遣：{where}找了 {waited:.1f} 秒，F键上没出现感叹号。")
+        self.note_dispatch(outcome, waited)
         return outcome
+
+    def note_dispatch(self, outcome: str, waited: float = 0.0) -> None:
+        """Keep what this look at 派遣 found for today's record and say it on
+        the run's row (Leo 2026-11-09 「當天有沒有派遣 要記錄下來」)."""
+        from src.utils import field_followers
+
+        where = str(getattr(self, "name", "") or "箱庭")
+        record = field_followers.note_look(outcome, where, waited=waited)
+        if record is None:
+            return
+        info_set = getattr(self, "info_set", None)
+        if callable(info_set):
+            info_set("派遣", field_followers.record_text(record))
+        if outcome == field_followers.FOLLOWERS_DISMISSED:
+            note = "派遣已领"
+        elif outcome == field_followers.FOLLOWERS_STILL_VISIBLE:
+            note = "派遣按了没消失"
+        else:
+            return  # nothing seen here: the day's record says it, the row stays quiet
+        try:
+            from src.tasks import run_report
+
+            run_report.add_current_note(note)
+        except Exception:
+            pass
 
     def _retry_recent_cartridge_entry(
         self,

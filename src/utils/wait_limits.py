@@ -107,6 +107,54 @@ class StillTimer:
         return now - self.since
 
 
+# One look that misreads (OCR 「v2.38.11」 as 「2.38.11」, 「UID」 as 「JID」)
+# must not start a "shown for N s" count over: live 4K 2026-11-09 (#528) only
+# 99 of 148 title looks read both corner lines, and a wake tap meant after
+# 10 s came after 2 min 20 s.  Gone this long counts as gone.
+MISS_GRACE_SECONDS = 3.0
+
+
+class HeldFor:
+    """How long something has kept showing, forgiving short misreads.
+
+    ``look(shown, now)`` returns the seconds it has shown, counted from the
+    first look of this showing; a miss shorter than ``grace`` does not end
+    the showing (Leo 2026-11-09: one unread look never starts a wait over).
+    """
+
+    def __init__(self, grace: float = MISS_GRACE_SECONDS):
+        self.grace = grace
+        self.since: float | None = None
+        self.last_seen: float | None = None
+
+    def reset(self) -> None:
+        self.since = None
+        self.last_seen = None
+
+    def _lapsed(self, now: float) -> bool:
+        return self.last_seen is None or now - self.last_seen > self.grace
+
+    def look(self, shown: bool, now: float) -> float:
+        if shown:
+            if self.since is None or self._lapsed(now):
+                self.since = now
+            self.last_seen = now
+            return now - self.since
+        if self._lapsed(now):
+            self.since = None  # last_seen stays: how long it has been gone
+        return self.held(now)
+
+    def held(self, now: float) -> float:
+        """Seconds shown so far (0 when not showing)."""
+        if self.since is None or self._lapsed(now):
+            return 0.0
+        return now - self.since
+
+    def showing(self, now: float) -> bool:
+        """Seen within the grace."""
+        return not self._lapsed(now)
+
+
 # A walk pans the field by far more than the stuck check's threshold: live
 # 4K clone 2026-10-27, walking 39-81 a look, standing still at most 2.1, the
 # followers and camera settling after arrival 3.1 then 2.3.  Above that

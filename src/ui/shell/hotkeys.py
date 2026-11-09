@@ -1,17 +1,17 @@
-"""快捷键：暂停/继续、停止、魔兽录制，三个都在「设置」里换（F6~F12）。
+"""快捷键：暂停/继续、停止，两个都在「设置」里换（F6~F12）。
 
-Leo 2026-10-09（玩家建议 YES-BD2 issue #1）：暂停和停止是两个不同的键，
-魔兽录制键也放进设置。F 键不会被当成玩家接手（takeover 放过 F1~F24），
-游戏本身也不用 F6~F12。
+Leo 2026-10-09（玩家建议 YES-BD2 issue #1）：暂停和停止是两个不同的键。
+F 键不会被当成玩家接手（takeover 放过 F1~F24），游戏本身也不用 F6~F12。
 
 暂停、停止用 Windows 的全局热键（工具在后台、游戏在前面也收得到），
 按下去等于按首页的「暂停」「停止」，桌面分身里跑的也一样（这时只在工具或分身
-视窗在最前面时才算，免得在别的程式按 F9 把分身里的跑步停住，2026-10-23）。录制键不注册
-热键：录制时工具自己轮询这个键（FiendHuntTask.HotKey），注册了游戏和
-工具就收不到了。三个键不能重复，选了别人正在用的键就跟它对调。
+视窗在最前面时才算，免得在别的程式按 F9 把分身里的跑步停住，2026-10-23）。
+两个键不能重复，选了别人正在用的键就跟它对调。
 
-Leo 2026-10-20：三个都可以选「无」，选了就完全不听这个键（不注册、不轮询），
-「无」可以好几个一起选。
+Leo 2026-10-20：都可以选「无」，选了就完全不听这个键（不注册、不轮询），
+「无」可以两个一起选。
+
+2026-11-08 魔兽追踪者拿掉了，它的录制键也一起拿掉。
 
 ok-script 原本的 F9（暂停整个执行器）会被关掉，免得一个键做两件事。
 """
@@ -36,13 +36,9 @@ NONE = "无"  # the key is off; shown translated, saved as is
 OPTIONS = (NONE, *KEY_CHOICES)
 PAUSE = "pause"
 STOP = "stop"
-RECORD = "record"
-ACTIONS = (PAUSE, STOP, RECORD)
-LABELS = {PAUSE: "暂停/继续", STOP: "停止", RECORD: "魔兽录制"}
-DEFAULTS = {PAUSE: "F9", STOP: "F10", RECORD: "F8"}
-# The 魔兽追踪者 record task keeps its key in its own config (its page has a picker too).
-RECORD_TASK = "FiendHuntRecordTask"
-RECORD_CONFIG_KEY = "录制按键"
+ACTIONS = (PAUSE, STOP)
+LABELS = {PAUSE: "暂停/继续", STOP: "停止"}
+DEFAULTS = {PAUSE: "F9", STOP: "F10"}
 OK_START_STOP = "Start/Stop"
 
 
@@ -63,15 +59,6 @@ def from_display(text: str) -> str:
     return text if text in KEY_CHOICES else NONE
 
 
-def _record_task():
-    try:
-        from src.ui.shell import data
-
-        return data.task_by_class_name(RECORD_TASK)
-    except Exception:
-        return None
-
-
 def _read_file() -> dict:
     try:
         saved = json.loads(KEYS_FILE.read_text(encoding="utf-8"))
@@ -80,36 +67,26 @@ def _read_file() -> dict:
     return saved if isinstance(saved, dict) else {}
 
 
-def keys(record_task=None) -> dict[str, str]:
-    """The three keys now; anything missing or broken falls back to the defaults
-    (and a duplicate falls back too, so two actions never share a key).
-    Any of them can be 「无」 (off), several at once."""
+def keys() -> dict[str, str]:
+    """The two keys now; anything missing or broken falls back to the defaults
+    (and a duplicate falls back too, so the two never share a key).
+    Either can be 「无」 (off), both at once."""
     saved = _read_file()
-    task = record_task if record_task is not None else _record_task()
-    if task is not None:
-        saved[RECORD] = (getattr(task, "config", None) or {}).get(RECORD_CONFIG_KEY)
     chosen: dict[str, str] = {}
     for action in ACTIONS:
         key = saved.get(action)
         chosen[action] = key if key in OPTIONS else DEFAULTS[action]
-    on = [chosen[action] for action in ACTIONS if chosen[action] != NONE]
-    if len(set(on)) < len(on):
-        used: set[str] = set()
-        for action in (RECORD, PAUSE, STOP):  # the recorded fights' key wins
-            if chosen[action] == NONE:
-                continue
-            if chosen[action] in used:
-                chosen[action] = next(k for k in (DEFAULTS[action], *KEY_CHOICES) if k not in used)
-            used.add(chosen[action])
+    if chosen[PAUSE] != NONE and chosen[PAUSE] == chosen[STOP]:
+        chosen[STOP] = next(k for k in (DEFAULTS[STOP], *KEY_CHOICES) if k != chosen[PAUSE])
     return chosen
 
 
-def set_key(action: str, key: str, record_task=None) -> dict[str, str]:
+def set_key(action: str, key: str) -> dict[str, str]:
     """Give ``action`` this key; whoever had it takes ``action``'s old key.
     「无」 turns the key off and swaps with nobody."""
     if action not in ACTIONS or key not in OPTIONS:
-        return keys(record_task)
-    current = keys(record_task)
+        return keys()
+    current = keys()
     for other, other_key in current.items():
         if key != NONE and other != action and other_key == key:
             old = current[action]
@@ -118,12 +95,6 @@ def set_key(action: str, key: str, record_task=None) -> dict[str, str]:
                 old = next(k for k in (DEFAULTS[other], *KEY_CHOICES) if k not in taken)
             current[other] = old
     current[action] = key
-    task = record_task if record_task is not None else _record_task()
-    if task is not None:
-        try:
-            task.config[RECORD_CONFIG_KEY] = current[RECORD]
-        except Exception as exc:
-            logger.warning(f"hotkeys: record key not saved ({exc})")
     try:
         KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
         KEYS_FILE.write_text(

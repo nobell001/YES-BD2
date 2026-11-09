@@ -48,6 +48,19 @@ LIGHT = {
     "line": "#EEECF6",
     "line2": "#DEDBEA",
     "track": "#EEECF6",
+    # oink-ui style (Leo 2026-11-09): sunken wells for switch tracks, option
+    # rows and keys, a raised thumb, and hairlines instead of outlines.
+    "well": "#ECEAF3",
+    "well2": "#DCD9E8",
+    "raised": "#FFFFFF",
+    "knob": "#FFFFFF",
+    "fill": "#ECEAF3",
+    "fill_hover": "#DCD9E8",
+    # tooltips: dark ink with light words (oink-ui Tooltip)
+    "inverse": "#1F1D29",
+    "on_inverse": "#F4F3F9",
+    "hair": _mix("#1F1D29", "#FFFFFF", 0.08),
+    "hair2": _mix("#1F1D29", "#FFFFFF", 0.16),
     # Dark text on a light ground reads thinner than light text on dark
     # (Leo, 2026-10-05), so the greys sit a step darker than the draft.
     "ink": "#1F1D29",
@@ -140,6 +153,17 @@ DARK = {
     "line": "#2B2A37",
     "line2": "#383646",
     "track": "#2B2A37",
+    "well": "#1A1922",
+    "well2": "#3A3849",
+    "raised": "#3A3849",
+    "knob": "#FFFFFF",
+    # buttons sit a step lighter than the card in the dark look
+    "fill": "#33313F",
+    "fill_hover": "#3F3D4D",
+    "inverse": "#ECEAF4",
+    "on_inverse": "#1F1D29",
+    "hair": _mix("#FFFFFF", _NIGHT_CARD, 0.08),
+    "hair2": _mix("#FFFFFF", _NIGHT_CARD, 0.16),
     "ink": "#ECEAF4",
     "ink2": "#B5B2C4",
     "ink3": "#9B98AD",
@@ -203,6 +227,45 @@ DARK = {
     **{f"kind_{kind}": "#9A8FEA" for kind in KINDS},
     **{f"kind_{kind}_bg": _NIGHT_SOFT for kind in KINDS},
 }
+
+# One design language (Leo 2026-11-09: 「統一的設計語言」, no 「拼裝感」).
+# Every control reads its height, corner, gap and text size from here, so a
+# newly added part sits in the same system as the old ones:
+# - controls that sit side by side share one height: sm 28, md 32, lg 38
+#   (buttons, steppers, selects, segmented rows, key caps);
+# - anything a finger presses is fully round (a pill or a circle); boxes
+#   that hold content use the card / box corners; small squares (key caps,
+#   check boxes) use the small corner;
+# - gaps on a 4 px grid; text sizes from the short scale below;
+# - colours only from LIGHT / DARK (no hex in a page), soft fills and
+#   hairlines instead of outlines, violet only for the chosen / main thing.
+SIZES = {
+    "control_sm": 28,
+    "control_md": 32,
+    "control_lg": 38,
+    "corner_small": 8,
+    "check": 22,
+    "toggle_w": 44,
+    "toggle_h": 26,
+    "toggle_sm_w": 36,
+    "toggle_sm_h": 22,
+    "slider_track": 6,
+    "slider_knob": 18,
+    "gap_xs": 4,
+    "gap_sm": 8,
+    "gap_md": 12,
+    "gap_lg": 16,
+    "text_xs": 11,
+    "text_sm": 12,
+    "text_md": 13,
+    "text_lg": 14,
+}
+
+
+def size(name: str) -> int:
+    """A size of the shared design language (px)."""
+    return SIZES[name]
+
 
 # Corners and how icons and the sidebar are drawn (both themes).
 SHAPES = {
@@ -361,6 +424,7 @@ def on_theme_changed(owner, callback: Callable[[], None]) -> None:
 def style_sheet() -> str:
     """The style shared by the sidebar and every new page."""
     t = tokens()
+    z = SIZES
     inset = int(shape("inset"))
     pill = shape("button") == 0
     # Pill buttons in 淡紫: the corner is half of each button height.
@@ -370,7 +434,7 @@ def style_sheet() -> str:
     # Plain text is Regular, see body_weight().
     body_weight = " font-weight: 400;"
     secondary = (
-        f"background: {t['inset']}; color: {t['ink']}; border: none;"
+        f"background: {t['fill']}; color: {t['ink']}; border: none;"
         if pill
         else f"background: {t['card']}; color: {t['ink']}; border: 1px solid {t['line2']};"
     )
@@ -405,6 +469,12 @@ QLabel[role="pill"][tone="ok"] {{ color: {t["ok"]}; background: {t["ok_soft"]}; 
 QLabel[role="pill"][tone="run"] {{ color: {t["pill_run_ink"]}; background: {t["pill_run"]}; border-color: {t["pill_run"]}; }}
 QLabel[role="pill"][tone="warn"] {{ color: {t["warn"]}; background: {t["warn_soft"]}; border-color: {t["warn_soft"]}; }}
 QLabel[role="pill"][tone="bad"] {{ color: {t["bad"]}; background: {t["bad_soft"]}; border-color: {t["bad_soft"]}; }}
+QLabel[role="pill"][tone="ok"], QLabel[role="pill"][tone="run"], QLabel[role="pill"][tone="warn"],
+QLabel[role="pill"][tone="bad"] {{ padding-left: 20px; }}
+QFrame[alert="warn"] {{ background: {t["warn_soft"]}; border: none; border-radius: {inset}px; }}
+QFrame[alert="bad"] {{ background: {t["bad_soft"]}; border: none; border-radius: {inset}px; }}
+QFrame[alert="ok"] {{ background: {t["ok_soft"]}; border: none; border-radius: {inset}px; }}
+QFrame[alert="info"] {{ background: {t["accent_soft"]}; border: none; border-radius: {inset}px; }}
 QLabel[role="tag"] {{ color: {t["tag_ink"]}; background: {t["tag"]}; border-radius: 3px;
     padding: 0px 5px; font-size: 11px; }}
 
@@ -415,13 +485,14 @@ QFrame[inset="true"][outlined="true"] {{ border: 1px solid transparent; }}
 QFrame[inset="true"][outlined="true"][bad="true"] {{ border: 1px solid {t["bad"]}; }}
 QFrame[sep="true"] {{ background: {t["line"]}; border: none; max-height: 1px; min-height: 1px; }}
 
-QPushButton {{ font-size: 13px; border-radius: {button}px; min-height: 32px; max-height: 32px;
+QPushButton {{ font-size: {z["text_md"]}px; border-radius: {button}px; min-height: {z["control_md"]}px;
+    max-height: {z["control_md"]}px;
     padding: 0px 14px; }}
 QPushButton[kind="primary"] {{ background: {t["primary"]}; color: {t["on_primary"]}; border: none; }}
 QPushButton[kind="primary"]:hover {{ background: {t["primary_hover"]}; }}
 QPushButton[kind="primary"]:disabled {{ background: {t["line2"]}; color: {t["ink3"]}; }}
 QPushButton[kind="secondary"] {{ {secondary} }}
-QPushButton[kind="secondary"]:hover {{ background: {t["accent_soft"] if pill else t["inset"]}; }}
+QPushButton[kind="secondary"]:hover {{ background: {t["fill_hover"] if pill else t["inset"]}; }}
 QPushButton[kind="secondary"]:disabled {{ color: {t["ink3"]}; }}
 QPushButton[kind="ghost"] {{ background: {t["accent_soft"] if pill else "transparent"}; color: {t["ghost_ink"]};
     border: 1px solid {"transparent" if pill else t["ghost_line"]}; }}
@@ -436,19 +507,30 @@ QPushButton[kind="flat"] {{ background: transparent; border: none; color: {t["in
 QPushButton[kind="flat"]:hover {{ color: {t["ink"]}; }}
 QPushButton[kind="chip"] {{ background: transparent; color: {t["ink2"]}; border: 1px solid transparent; padding: 0px 8px; }}
 QPushButton[kind="chip"]:hover {{ background: {t["accent_soft"]}; color: {t["accent"]}; border: 1px solid {t["accent"]}; }}
-QPushButton[size="lg"] {{ min-height: 38px; max-height: 38px; font-size: 14px; padding: 0px 18px;
+QPushButton[size="lg"] {{ min-height: {z["control_lg"]}px; max-height: {z["control_lg"]}px; font-size: {z["text_lg"]}px; padding: 0px 18px;
     border-radius: {button_lg}px; }}
-QPushButton[size="sm"] {{ min-height: 28px; max-height: 28px; font-size: 12px; padding: 0px 10px;
+QPushButton[size="sm"] {{ min-height: {z["control_sm"]}px; max-height: {z["control_sm"]}px; font-size: {z["text_sm"]}px; padding: 0px 10px;
     border-radius: {button_sm}px; }}
 
-QFrame[segmented="true"] {{ background: {t["inset"]}; border: 1px solid {rgba("ink3", 0.38)};
-    border-radius: {seg}px; }}
+QFrame[segmented="true"] {{ background: {t["well"]}; border: none; border-radius: {seg}px; }}
 QPushButton[seg="true"] {{ background: transparent; color: {t["ink2"]}; border: none; border-radius: {seg_item}px;
-    min-height: 26px; max-height: 999px; padding: 0px 12px; font-size: 12px; }}
+    min-height: {z["control_md"] - 6}px; max-height: 999px; padding: 0px 12px; font-size: {z["text_sm"]}px; }}
 QPushButton[seg="true"]:hover {{ color: {t["ink"]}; }}
 QPushButton[seg="true"]:checked {{ background: transparent; color: {t["ink"]};
     border: 1px solid transparent; }}
 QPushButton[seg="true"][segAccent="true"]:checked {{ color: {t["on_accent"]}; }}
 
-QToolTip {{ color: {t["ink"]}; background: {t["card"]}; border: 1px solid {t["line2"]}; padding: 4px 6px; }}
+QFrame[stepper="true"] {{ background: {t["well"]}; border: none; border-radius: {z["control_md"] // 2}px; }}
+QPushButton[kind="stepper"] {{ background: transparent; border: none; padding: 0px;
+    min-width: {z["control_md"] - 6}px; max-width: {z["control_md"] - 6}px; min-height: {z["control_md"] - 6}px;
+    max-height: {z["control_md"] - 6}px; border-radius: {(z["control_md"] - 6) // 2}px; }}
+QPushButton[kind="stepper"]:hover {{ background: {t["raised"]}; }}
+QLineEdit#stepperEdit {{ background: transparent; border: none; color: {t["ink"]}; font-size: {z["text_lg"]}px;
+    selection-background-color: {t["accent_soft"]}; selection-color: {t["ink"]}; }}
+QPushButton[kind="select"] {{ background: {t["fill"]}; color: {t["ink"]}; border: none;
+    padding: 0px 36px 0px 14px; text-align: left; }}
+QPushButton[kind="select"]:hover {{ background: {t["fill_hover"]}; }}
+
+QToolTip {{ color: {t["on_inverse"]}; background: {t["inverse"]}; border: none; border-radius: 8px;
+    padding: 5px 9px; }}
 """

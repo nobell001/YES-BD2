@@ -9,6 +9,7 @@ from ok.util.GlobalConfig import create_basic_options
 
 from src import GAME_EXE, HWND_CLASS
 from src.capture.hdr_wgc import install as install_hdr_aware_capture
+from src.compat.bitblt_gdi import install as install_plain_gdi_bitblt
 from src.compat.about_tab_layout import install_about_tab_layout
 from src.compat.launcher_update_notice import install_launcher_update_notice
 from src.compat.main_window_geometry import install_main_window_geometry_debounce
@@ -42,6 +43,9 @@ def runtime_version(project_file: Path | None = None) -> str:
 
 apply_app_font()
 enable_windows_10_wgc()
+# BitBlt capture: plain GDI handles instead of win32ui's thread-bound MFC
+# objects, which crashed the tool when another thread freed them (#77).
+install_plain_gdi_bitblt()
 # Windows HDR: capture 16-bit float and convert back to the game's SDR image
 # (8-bit WGC frames come out over-exposed and every colour check drifts).
 install_hdr_aware_capture()
@@ -194,8 +198,6 @@ config = {
         ["src.tasks.DailyBatchTask", "DailyBatchTask"],
         ["src.tasks.DailyTask", "DailyTask"],
         ["src.tasks.QuickHuntTask", "QuickHuntTask"],
-        ["src.tasks.FiendHuntTask", "FiendHuntTask"],
-        ["src.tasks.FiendHuntTask", "FiendHuntRecordTask"],
         ["src.tasks.TalosTask", "TalosTask"],
         ["src.tasks.MainStoryTask", "MainStoryTask"],
         ["src.tasks.SquareGoddessTask", "SquareGoddessTask"],

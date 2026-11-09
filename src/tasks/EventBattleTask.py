@@ -185,6 +185,8 @@ STATE_KEYS = ("stage", "free_ap", "auto", "quick")
 # does not count, up to LOADING_MAX_SECONDS of it (Leo 2026-10-15 「我說的10秒
 # 是卡死 或者辨識不到」「你單純等載入怎麼可以改成只等10秒」).
 PAGE_STUCK_SECONDS = MAX_WAIT_SECONDS
+# A step's own wait ends first and says why; the guard only after it.
+GUARD_MARGIN_SECONDS = 2.0
 
 NORMAL_MODE = "普通战斗"
 CHALLENGE_MODE = "挑战战斗"
@@ -324,6 +326,8 @@ class EventBattleTask(_ClaimTaskBase):
         self._battles_done = 0
         self._why = ""
         self._page_deadline = None
+        self._hub_unsure = False
+        self._mode_unopened = False
 
     def load_config(self):
         # Saved settings from before this update: 只刷普通难度 goes back off
@@ -373,11 +377,16 @@ class EventBattleTask(_ClaimTaskBase):
         pushed = min(since + LOADING_MAX_SECONDS, now + PAGE_STUCK_SECONDS)
         self._page_deadline = max(self._page_deadline, pushed)
 
-    @staticmethod
-    def _page_wait(timeout: float) -> ProgressWait:
+    def _page_wait(self, timeout: float) -> ProgressWait:
         """``timeout``, stretched only by the black loading screen (up to
         LOADING_MAX_SECONDS): the event art keeps moving, so movement does
-        not count here (see ``_page_wait_over``)."""
+        not count here (see ``_page_wait_over``).
+
+        The page guard waits for it: a step that may wait longer than the
+        guard (banner click: 6 + 2 + 10 s) used to be cut off by the guard's
+        「10 秒没走到下一步」, which hid the step's own reason and remedy
+        (player v0.3.5 2026-11-09, Leo 「報告要寫出真正卡在哪」)."""
+        self._hold_guard(timeout)
         return ProgressWait(monotonic(), stuck=max(0.0, timeout), cap=max(timeout, LOADING_MAX_SECONDS))
 
     @staticmethod
@@ -393,6 +402,20 @@ class EventBattleTask(_ClaimTaskBase):
         """A page, stage or battle was reached: the guard starts over."""
         if getattr(self, "_page_deadline", None) is not None:
             self._page_deadline = monotonic() + PAGE_STUCK_SECONDS
+
+    def _hold_guard(self, seconds: float) -> None:
+        """A step's own wait of ``seconds`` is running: the guard does not end it."""
+        deadline = getattr(self, "_page_deadline", None)
+        if deadline is not None:
+            self._page_deadline = max(deadline, monotonic() + max(0.0, seconds) + GUARD_MARGIN_SECONDS)
+
+    def _unguarded(self, step):
+        """``step`` has its own limits (going home, a load): no page guard meanwhile."""
+        self._pause_guard()
+        try:
+            return step()
+        finally:
+            self._resume_guard()
 
     def _pause_guard(self) -> None:
         self._page_deadline = None
@@ -420,14 +443,25 @@ class EventBattleTask(_ClaimTaskBase):
         modes = self._modes()
         farm = None  # (mode, stage) for the AP left once nothing more can be pushed
         stuck: list[str] = []
+        unopened: list[str] = []
         done_text = "完成"
-        for mode in modes:
+        for at, mode in enumerate(modes):
             if self._battle_budget() <= 0:
                 break
+            self._mode_unopened = False
             result = self._run_mode(mode)
             if result == "no_event":
                 return self._no_event()
+            if result == "failed" and self._mode_unopened and at + 1 < len(modes):
+                # Leo 2026-11-09: once on the event page, 普通 or 挑战 must be
+                # tried; one that would not open does not end the run.
+                unopened.append(f"{mode}：{self._why}")
+                self.log_warning(f"活动每日战斗：{mode}没打开（{self._why}），改试下一个。")
+                self._why = ""
+                continue
             if result == "failed":
+                if unopened:
+                    self._why = "；".join(unopened + [f"{mode}：{self._why}"])
                 return self._event_fail(mode)
             if result == "no_ap":
                 return self._finish(self._no_ap_text())
@@ -581,6 +615,7 @@ class EventBattleTask(_ClaimTaskBase):
         self._progressed()  # the carousel wait has its own limit
         wait = float(self.config.get("横幅轮播等待秒数", MAX_WAIT_SECONDS))
         end_at = monotonic() + min(max(wait, 0.0), MAX_WAIT_SECONDS)
+        self._hold_guard(min(max(wait, 0.0), MAX_WAIT_SECONDS))
         tolerance = BANNER_POSITION_TOLERANCE / REFERENCE_WIDTH * max(1, int(self.width))
         looked = False  # 至少看一次：时间已到也先看一眼再说没看到
         while not looked or monotonic() <= end_at:
@@ -611,18 +646,22 @@ class EventBattleTask(_ClaimTaskBase):
         stage page to the hub instead of going home and through the banner
         again (user, 2026-09-27).
         """
-        if self._wait_for_hub(timeout=0.0):
+        self.info_set("当前阶段", "进活动页")
+        where = self._where_in_event()
+        if where == "hub":
             return "ok"
-        if any(self._wait_for_stage_page(mode, timeout=0.0, quiet=True) for mode in MODES):
+        if where:
             self._click_reference(*BACK_BUTTON_POINT, after_sleep=1.0)  # 不用确认：下面等活动首页，没等到就回主页
             if self._wait_for_hub(timeout=HUB_RETRY_SECONDS):
                 return "ok"
-        if not recover_to_home(self):
+        self.info_set("当前阶段", "回主页去点活动横幅")
+        if not self._unguarded(lambda: recover_to_home(self)):
             return self._failed("回不到主页，没能去点活动横幅")
-        if not self._wait_for_home_confirmation("活动入口前主页确认"):
+        if not self._unguarded(lambda: self._wait_for_home_confirmation("活动入口前主页确认")):
             return self._failed("没认出主页，没去点活动横幅")
         keywords = BANNER_KEYWORDS
         for attempt in range(1, BANNER_CLICK_ATTEMPTS + 1):
+            self.info_set("当前阶段", "主页找活动横幅")
             banner = self._find_stable_banner(keywords)
             if banner is None:
                 # Home confirmed yet no caption during a whole carousel cycle.
@@ -631,8 +670,10 @@ class EventBattleTask(_ClaimTaskBase):
                 return self._failed("点了活动横幅没进去，之后横幅也找不到了")
             self._sleep_after_recognition()
             self._click_box(banner, after_sleep=1.0)  # 不用确认：循环里还在主页就再点横幅
+            self.info_set("当前阶段", "点了活动横幅，等活动页")
             if self._wait_for_hub(timeout=HUB_RETRY_SECONDS):
                 return "ok"
+            self._hold_guard(2.0)
             if self._wait_for_home_confirmation("活动横幅重试前主页确认", timeout=2.0):
                 # Swallowed click: still on home, look for the banner again.
                 self.log_info(f"活动每日战斗：第{attempt}次点击横幅未生效，重试。")
@@ -640,8 +681,36 @@ class EventBattleTask(_ClaimTaskBase):
             # Left home (loading): give the hub its full time.
             if self._wait_for_hub(timeout=MAX_WAIT_SECONDS):
                 return "ok"
-            return self._failed("点了活动横幅后，活动页一直没出来")
+            # Leo 2026-11-09 「我都打開活動頁了，那程式一定得去普通戰鬥或挑戰戰鬥」:
+            # home is gone after the banner, so this is most likely the event
+            # page the checks did not recognise.  The mode buttons are looked
+            # for anyway (text, swords, usual spot); the stage page decides.
+            self.log_info(
+                "活动每日战斗：点了活动横幅后没认出活动页，但已经离开主页，照样去找普通／挑战战斗。"
+            )
+            self._hub_unsure = True
+            return "ok"
         return self._failed(f"活动横幅点了 {BANNER_CLICK_ATTEMPTS} 次都没进活动页")
+
+    def _where_in_event(self, grace: float = SLOW_PC_GRACE_SECONDS) -> str:
+        """"hub", a mode whose stage page shows, or "" (not inside the event).
+
+        Looked at again for ``grace``: one look of each used to decide, and a
+        player's run on the 挑战战斗 page (v0.3.5 2026-11-09, both modes just
+        cleared, about to quick-battle 挑战15) missed it once and went home
+        from there instead; the trip home then ran into the page guard.
+        """
+        self._hold_guard(grace)
+
+        def look():
+            if self._wait_for_hub(timeout=0.0):
+                return "hub"
+            return next(
+                (mode for mode in MODES if self._wait_for_stage_page(mode, timeout=0.0, quiet=True)),
+                None,
+            )
+
+        return wait_for(look, max(0.0, grace), sleep=self.sleep, poll=0.5) or ""
 
     def _wait_for_hub(self, timeout: float = MAX_WAIT_SECONDS) -> bool:
         wait = self._page_wait(timeout)
@@ -666,11 +735,20 @@ class EventBattleTask(_ClaimTaskBase):
 
     def _open_mode(self, mode: str) -> str:
         """Open one mode's stage page from home: ok / no_event / failed."""
+        self._hub_unsure = False
         entered = self._enter_hub()
         if entered != "ok":
             return entered
+        opened = self._open_mode_from_hub(mode)
+        if opened == "failed" and self._hub_unsure:
+            self._why = f"点了活动横幅后没认出活动页，照样试了：{self._why}"
+        return opened
+
+    def _open_mode_from_hub(self, mode: str) -> str:
         for attempt in range(1, MODE_CLICK_ATTEMPTS + 1):
             self._hub_read = ""
+            self.info_set("当前阶段", f"活动页找「{mode}」")
+            self._hold_guard(SLOW_PC_GRACE_SECONDS)
             button = wait_for(
                 lambda: self._mode_button(mode), SLOW_PC_GRACE_SECONDS, sleep=self.sleep, poll=0.5
             )
@@ -683,6 +761,7 @@ class EventBattleTask(_ClaimTaskBase):
                 return self._failed(missed)
             self._sleep_after_recognition()
             self._click_box(button, after_sleep=1.5)  # 不用确认：循环里还在活动页就再点
+            self.info_set("当前阶段", f"点了「{mode}」，等关卡页")
             if self._wait_for_stage_page(mode, timeout=HUB_RETRY_SECONDS, quiet=True):
                 return "ok"
             if usual:
@@ -784,7 +863,10 @@ class EventBattleTask(_ClaimTaskBase):
             frame = self.capture_frame()
             if not is_loading_dark(frame) and self._title_visible(frame, (mode,), mode):
                 panel = self._boxes_text(self._roi_boxes(frame, PANEL_TITLE_ROI, f"{mode}关卡"))
-                if parse_stage_number(panel, mode) is not None:
+                # The stage number, else the page's own buttons: a number the
+                # art makes unreadable must not keep the run off a page it is
+                # on (Leo 2026-11-09 「一定得去普通戰鬥或挑戰戰鬥嘗試」).
+                if parse_stage_number(panel, mode) is not None or self._stage_buttons_shown(frame):
                     self._progressed()
                     return True
             if self._page_wait_over(wait, frame):
@@ -793,6 +875,15 @@ class EventBattleTask(_ClaimTaskBase):
         if not quiet:
             self.log_info(f"活动每日战斗：未确认{mode}关卡页。")
         return False
+
+    def _stage_buttons_shown(self, frame) -> bool:
+        """自动战斗 or 快速战斗 at the stage page's bottom right."""
+        toggle = self._boxes_text(self._roi_boxes(frame, AUTO_TOGGLE_ROI, "自动战斗开关"))
+        buttons = self._boxes_text(self._roi_boxes(frame, BOTTOM_BUTTONS_ROI, "关卡按钮"))
+        return (
+            keyword_match_count(toggle, (AUTO_TOGGLE_TEXT,)) >= 1
+            or keyword_match_count(buttons, (QUICK_BATTLE_TEXT,)) >= 1
+        )
 
     # -- stage page state ---------------------------------------------------
 
@@ -806,6 +897,7 @@ class EventBattleTask(_ClaimTaskBase):
         read (Leo 09:00Z: they are on the same page, one late means both
         late).  Up to AP_READ_SECONDS; then the last read.
         """
+        self._hold_guard(AP_READ_SECONDS)
         reads = [self._stage_state(mode)]
 
         def agreed():
@@ -940,15 +1032,24 @@ class EventBattleTask(_ClaimTaskBase):
         """
         opened = self._open_mode(mode)
         if opened != "ok":
+            self._mode_unopened = opened == "failed"
             return opened
         cap = self._stage_cap(mode)
         for _round in range(3):
+            self.info_set("当前阶段", f"读{mode}关卡页")
             state = self._stable_stage_state(mode)
             if not state["auto"] and not state["quick"]:
-                # Cleared shows 快速战斗; neither is not a page to judge from.
-                return self._failed(
-                    f"{mode}关卡页右下 {AP_READ_SECONDS:g} 秒都没看到「自动战斗」或「快速战斗」"
+                # Leo 2026-11-09 「一定得去嘗試點戰鬥或快速戰鬥」: neither read,
+                # so 自动战斗 is pressed where it always is.  Opening its dialog
+                # spends nothing; the dialog's own checks (free AP switch, MAX,
+                # count) decide whether anything is fought.
+                if state["free_ap"] == 0:
+                    return "no_ap"
+                self.log_info(
+                    f"活动每日战斗：{mode}关卡页右下 {AP_READ_SECONDS:g} 秒都没看到「自动战斗」或"
+                    "「快速战斗」，照平常位置按自动战斗试试。"
                 )
+                state = dict(state, auto=True, unread=True)
             if not state["auto"]:
                 state = self._select_unfinished_stage(mode, state)
             if cap < LAST_STAGE and state["stage"] is not None and (
@@ -976,6 +1077,19 @@ class EventBattleTask(_ClaimTaskBase):
                 wanted = self._battle_budget()
             else:
                 wanted = min(self._usable_ap(state), self._battle_budget())
+            if cap < LAST_STAGE and state["stage"] is None:
+                # 挑战战斗最高关卡 is set: an unknown stage could chain past it
+                # (Leo 2026-11-09 「設定頁也有相關設定 不要出錯」).  Read once more.
+                again = self._stable_stage_state(mode)
+                if again["stage"] is None:
+                    return self._failed(
+                        f"设定只打到第{cap}关，但读不到{mode}现在是第几关，"
+                        "为了不超过设定没开打"
+                    )
+                state = dict(state, stage=again["stage"])
+                if state["stage"] > cap or (state["stage"] == cap and not again["auto"]):
+                    self.log_info(f"活动每日战斗：{mode}已推到设定的第{cap}关，不再往后打。")
+                    return "capped"
             if cap < LAST_STAGE and state["stage"] is not None:
                 # The chain moves on a stage per win: stop it at the cap.
                 wanted = min(wanted, cap - state["stage"] + 1)
@@ -983,6 +1097,17 @@ class EventBattleTask(_ClaimTaskBase):
                 return "no_ap"
             self._defeated = False
             fought = self._auto_battle(mode, wanted, state)
+            if fought is None and state.get("unread"):
+                # Not the 自动战斗 page after all (a cleared stage shows only
+                # 快速战斗): read the page once more and go on from what shows.
+                again = self._stable_stage_state(mode)
+                if again["auto"] or again["quick"]:
+                    self._why = ""
+                    continue
+                return self._failed(
+                    f"{mode}关卡页右下没看到「自动战斗」或「快速战斗」，"
+                    "照平常位置按了自动战斗也没出选场数的窗口"
+                )
             if fought is None:
                 return "failed"
             if fought == 0:
@@ -996,7 +1121,7 @@ class EventBattleTask(_ClaimTaskBase):
             # 4K PC 2026-10-10), and 25 - 0 counted 25 battles.
             self._battles_done += fought
             lost = getattr(self, "_defeated", False) or (
-                after["auto"] and after["stage"] == state["stage"]
+                after["auto"] and after["stage"] is not None and after["stage"] == state["stage"]
             )
             if lost:
                 self._lost_stage = after["stage"] if after["stage"] is not None else state["stage"]
@@ -1495,7 +1620,13 @@ class EventBattleTask(_ClaimTaskBase):
         exceed the free AP read from the top bar.  Other stages and 普通战斗
         are assumed to use the same dialog (not seen live yet).
         """
-        opened = self._open_mode(mode)
+        # Both modes were just read cleared on their stage page: quick battle
+        # starts from there when it is that mode's page (no trip out and in).
+        self.info_set("当前阶段", f"{mode}{stage}：准备快速战斗")
+        if self._where_in_event() == mode:
+            opened = "ok"
+        else:
+            opened = self._open_mode(mode)
         if opened != "ok":
             return opened
         state = self._stable_stage_state(mode)

@@ -13,6 +13,7 @@
   "doom/doom_page_after_record_1080.jpg": "doom",
   "doom/doom_page_after_record_4k.jpg": "doom",
   "doom/new_record_2k.jpg": "doom",
+  "doom/field_red_costume_1440_as_1080.png": "field",
   "event_battle/defeat_screen_leo_1440_as_1080.jpg": "battle_result",
   "field/bright_4k/beach_battle1_glare_full.jpg": "field",
   "field/bright_4k/beach_safe_glare_full.jpg": "field",
@@ -64,6 +65,7 @@
   "pass/character_pass_reward_tab_fhd.png": "pass",
   "pass/pass_page_badges_fhd.png": "pass",
   "pvp/home_bright_skin_cues_fhd.png": "home",
+  "pvp/hub_dispatch_crowd_leo_1080.jpg": "field",
   "pvp/pvp_hub_top_bar_hdr_issue16_fhd.png": "pvp_hub",
   "pvp/pvp_hub_top_bar_shifted_fhd.png": "pvp_hub",
   "pvp/recent_pvp_home_fhd.png": "part_home",
@@ -87,6 +89,10 @@
   "square/square_area_map_2k.jpg": "square_map",
   "square/square_field_nav_menu_2k.jpg": "field_nav_menu",
   "square/hud_hidden_channel_popup_player_1080.jpg": "square_hud_hidden",
-  "talos/pause_menu_leo_4k_as_1080.jpg": "battle_pause_menu"
+  "talos/pause_menu_leo_4k_as_1080.jpg": "battle_pause_menu",
+  "title/loading_logo_2k_clone.jpg": "loading",
+  "title/title_no_touch_simulated.jpg": "title",
+  "title/title_starting_2k_clone.jpg": "title_starting",
+  "title/title_touch_2k_clone.jpg": "title"
  }
 }

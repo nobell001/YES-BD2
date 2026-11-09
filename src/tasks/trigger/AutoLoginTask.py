@@ -10,7 +10,14 @@ from qfluentwidgets import FluentIcon
 
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.map_trade.models import MatchResult, TemplateSpec
-from src.utils import game_process, maintenance_notice, scheduled_start, task_vision, wait_settings
+from src.utils import (
+    game_process,
+    maintenance_notice,
+    scheduled_start,
+    task_vision,
+    title_screen,
+    wait_settings,
+)
 from src.utils.calibration import FHD_1080
 from src.utils.game_day import GAME_TZ
 from src.utils.game_process import game_running
@@ -31,6 +38,7 @@ from src.utils.image_utils import (
     crop_relative,
 )
 from src.utils.ocr_utils import normalize_ocr_text
+from src.utils.wait_limits import HeldFor
 from src.utils import ocr_size
 
 REFERENCE_WIDTH = FHD_1080.width
@@ -78,6 +86,24 @@ GAME_GONE_EXTRA_SECONDS = 60
 GAME_GONE_NOTE = (
     "一键日常/周常已取消：在等游戏登录时，游戏关掉了，{m} 分钟都没再打开。"
     "下次打开游戏不会自己开始跑，要跑请再按开始。"
+)
+# YES-BD2 #75 (2026-11-09): the title up without its TOUCH TO START words
+# (a player: after a slow load the title goes into a standby that hides them
+# for good).  Once the spinner's 「啟動遊戲中」 is gone and the words are still
+# missing this long (the 10 s stuck limit), the blank upper middle is tapped:
+# any tap on the title logs in (live 2K 2026-11-09).  At most this many
+# taps, this far apart; then the player is told and the look goes on.
+TITLE_WAKE_AFTER_SECONDS = 10.0
+TITLE_WAKE_TAP_GAP_SECONDS = 10.0
+TITLE_WAKE_TAPS_MAX = 3
+# The title gone this soon after a wake tap: that tap started the login.
+# Gone means unseen this long (longer than the miss grace): a few misread
+# looks are not a login.
+TITLE_LEFT_AFTER_TAP_SECONDS = 30.0
+TITLE_GONE_AFTER_TAP_SECONDS = 5.0
+TITLE_WAKE_FAILED_MESSAGE = (
+    "游戏开机画面一直没有出现「TOUCH TO START」（可能进了待机），"
+    "工具点了 {n} 次画面上方空白处也没进去。请自己点一下游戏画面，点完工具会接着登录。"
 )
 # Two looks at the 公告事项 saying 维护 before the game is closed.
 MAINTENANCE_HITS_NEEDED = 2
@@ -193,6 +219,10 @@ class AutoLoginTask(BaseBD2Task):
         self._no_login_signal_since: float | None = None
         self._login_clicks = 0
         self._touch_still_hits = 0
+        self._title_held = HeldFor()
+        self._wake_taps = 0
+        self._wake_tapped_at: float | None = None
+        self._wake_failed_warned = False
         self._finished = False
         self._game_gone_since: float | None = None
         self._missing_template_names: set[str] = set()
@@ -334,6 +364,8 @@ class AutoLoginTask(BaseBD2Task):
                 if self._login_clicked_at is not None:
                     self._login_clicked_at = monotonic()
                 return False
+            if self._wordless_title_back(frame, boxes):
+                return False
 
         if self._state == "clearing":
             # clearing 帧不经过 _wait_loading_then_home 的超时检查，必须
@@ -419,6 +451,9 @@ class AutoLoginTask(BaseBD2Task):
             self.info_set("更新下载", "-")
             self.info_set("下载进度", "-")
             self._click_login_after_touch(touch_to_start)  # 不用确认：登录轮询里画面还在会再点（_touch_to_start_still_shown）
+            return False
+
+        if self._title_without_touch(frame, boxes):
             return False
 
         if self._is_browndustx_present(browndustx):
@@ -778,6 +813,110 @@ class AutoLoginTask(BaseBD2Task):
         self.operate_click(x, y, after_sleep=after_sleep)
         return True
 
+    def _title_held_for(self) -> HeldFor:
+        held = getattr(self, "_title_held", None)
+        if held is None:
+            held = self._title_held = HeldFor()
+        return held
+
+    def _title_without_touch(self, frame, boxes: list) -> bool:
+        """The title up without TOUCH TO START: wait, then tap it awake (#75).
+
+        True while this look was about the title (nothing else to do now).
+        One misread look does not start the wait over (#528 live 4K: only
+        99 of 148 looks read both corner lines; the tap came after 2 min 20 s
+        instead of 10 s): the title counts as up until unseen MISS_GRACE_SECONDS.
+        """
+        now = monotonic()
+        held = self._title_held_for()
+        shown = title_screen.shown(boxes, frame.shape)
+        if shown and title_screen.still_starting(boxes):
+            # 「启动游戏中」 read: still starting, the count begins after it.
+            held.reset()
+            self._no_login_signal_since = None
+            self._set_stage("游戏启动中")
+            self._set_action("开机画面还在「启动游戏中」，等它载入完。")
+            return True
+        waited = held.look(shown, now)
+        if not held.showing(now):
+            tapped_at = getattr(self, "_wake_tapped_at", None)
+            gone_for = now - (held.last_seen or now)
+            if (
+                tapped_at is not None
+                and now - tapped_at <= TITLE_LEFT_AFTER_TAP_SECONDS
+                and gone_for >= TITLE_GONE_AFTER_TAP_SECONDS
+            ):
+                # The tap itself started the login (live 2K: black screen,
+                # loading logo, home): wait as after a login press.
+                self._wake_tapped_at = None
+                self.log_info(
+                    f"自动登录：点了开机画面后，开机画面已 {gone_for:.0f} 秒没出现，"
+                    "开始等待加载和主页。"
+                )
+                self._enter_login_wait()
+                return True
+            return False
+        # The title is up (or was a moment ago): the game is not already in.
+        self._no_login_signal_since = None
+        self.info_set("TOUCH TO START", "开机画面没有这几个字")
+        if waited < TITLE_WAKE_AFTER_SECONDS:
+            self._set_stage("等待登录页")
+            self._set_action(
+                f"开机画面已载入，但没看到 TOUCH TO START，再看 {waited:.0f}/"
+                f"{TITLE_WAKE_AFTER_SECONDS:.0f} 秒。"
+            )
+            return True
+        taps = getattr(self, "_wake_taps", 0)
+        if taps >= TITLE_WAKE_TAPS_MAX:
+            if not getattr(self, "_wake_failed_warned", False):
+                self._wake_failed_warned = True
+                self.log_warning(
+                    f"自动登录：{TITLE_WAKE_FAILED_MESSAGE.format(n=taps)}", notify=True
+                )
+            self._set_stage("等待登录页")
+            self._set_action(TITLE_WAKE_FAILED_MESSAGE.format(n=taps))
+            return True
+        tapped_at = getattr(self, "_wake_tapped_at", None)
+        if tapped_at is not None and now - tapped_at < TITLE_WAKE_TAP_GAP_SECONDS:
+            return True
+        self._wake_taps = taps + 1
+        self._wake_tapped_at = now
+        self._set_stage("叫醒开机画面")
+        self._set_action(
+            f"开机画面 {waited:.0f} 秒没出现 TOUCH TO START（可能进了待机），"
+            f"点画面上方空白处（第 {taps + 1}/{TITLE_WAKE_TAPS_MAX} 次）。"
+        )
+        self.log_info(
+            "自动登录：开机画面没有 TOUCH TO START、也不在「启动游戏中」，"
+            f"已等 {waited:.0f} 秒，点上方空白处叫醒（第 {taps + 1} 次）。"
+        )
+        self._sleep_after_recognition()
+        # Checked by the next look: the words back → the usual login press;
+        # the title gone → wait for loading; still wordless → again in 10 s.
+        self.operate_click(  # 不用确认：下一次看画面会判断
+            title_screen.WAKE_TAP_X, title_screen.WAKE_TAP_Y, after_sleep=1.0
+        )
+        return True
+
+    def _wordless_title_back(self, frame, boxes: list) -> bool:
+        """After a login press, the title without its words still up for
+        MISS_GRACE_SECONDS: the press (or tap) did not log in, so back to the
+        title's wake taps instead of waiting minutes for a home that never
+        comes.  The title with TOUCH TO START is _touch_to_start_still_shown's.
+        """
+        now = monotonic()
+        held = self._title_held_for()
+        wordless = title_screen.shown(boxes, frame.shape) and not (
+            title_screen.touch_text_read(boxes) or title_screen.still_starting(boxes)
+        )
+        if held.look(wordless, now) < held.grace:
+            return False
+        self.log_info("自动登录：点了以后开机画面还在、也没有 TOUCH TO START，回到叫醒开机画面。")
+        self._state = "waiting"
+        self._login_clicked_at = None
+        self._waiting_home_since = None
+        return True
+
     def _click_login_after_touch(self, touch_to_start: MatchResult, *, retry: bool = False) -> None:
         self._login_clicks = getattr(self, "_login_clicks", 0) + 1 if retry else 1
         self._touch_still_hits = 0
@@ -790,6 +929,11 @@ class AutoLoginTask(BaseBD2Task):
             self._percent_config("登录按钮点击 Y 百分比"),
             after_sleep=2.0,
         )
+        self._enter_login_wait()
+
+    def _enter_login_wait(self) -> None:
+        """The login was pressed: wait for the loading and then home."""
+        self._title_held_for().reset()
         self._state = "waiting_loading"
         self._home_bright_since = None
         self._login_clicked_at = monotonic()
@@ -1289,6 +1433,10 @@ class AutoLoginTask(BaseBD2Task):
         self._last_confirm_click_at = 0.0
         self._last_download_click_at = 0.0
         self._no_login_signal_since = None
+        self._title_held_for().reset()
+        self._wake_taps = 0
+        self._wake_tapped_at = None
+        self._wake_failed_warned = False
         self._finished = False
         self._set_stage("等待登录页")
         self._set_action(action)

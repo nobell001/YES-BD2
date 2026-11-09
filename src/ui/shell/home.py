@@ -46,6 +46,7 @@ from src.utils import accounts
 from src.ui.shell.safe import guarded
 from src.ui.shell.trade_line import TradeLine
 from src.ui.shell.widgets import (
+    Alert,
     SHADOW_MARGINS,
     Bar,
     Button,
@@ -92,6 +93,22 @@ SUMMARY_TITLE = {
     run_report.ENDED_ERROR: "出错停了",
     run_report.ENDED_SETUP: "没有开始跑",
 }
+
+
+DISPATCH_STATE_TEXT = {
+    "dismissed": "派遣：已领",
+    "still_visible": "派遣：按了「!」没消失，可能没领到",
+    "key_pressed_blind": "派遣：没看到「!」，照样按了一次 F",
+    "absent": "派遣：没看到「!」",
+}
+
+
+def dispatch_line(dispatch) -> str:
+    """The results page's 派遣 line from the report's ``dispatch`` field."""
+    if not isinstance(dispatch, dict):
+        return ""
+    text = DISPATCH_STATE_TEXT.get(str(dispatch.get("state") or ""))
+    return t(text) if text else ""
 
 
 def stopped_name(row: dict) -> str:
@@ -286,7 +303,7 @@ class BoardTile(ClickableCard):
         self.tile.follow_hover(self)
         top.addWidget(self.tile)
         top.addStretch(1)
-        self.include = CheckBox("", child.included, box=20)
+        self.include = CheckBox("", child.included)
         self.include.setFixedSize(26, 26)
         self.include.setToolTip(t("勾选：一键完成日常会跑这项"))
         if on_include is not None:
@@ -1354,13 +1371,18 @@ class HomePage(Page):
         # Leo 2026-11-04 「報表要說明清楚」: a failed run with an FPS tool open says so.
         from src.ui.shell.fps_notice import WarnIcon
 
-        self.sum_fps = QWidget()
-        fps_row = hbox(self.sum_fps, (0, 0, 0, 0), 8)
+        # oink-ui Alert (2026-11-09): the note sits in a soft amber box.
+        self.sum_fps = Alert("warn")
+        fps_row = hbox(self.sum_fps, (12, 10, 14, 10), 8)
         fps_row.addWidget(WarnIcon(22), 0, Qt.AlignTop)
         self.sum_fps_text = Text("", "warn", wrap=True)
         fps_row.addWidget(self.sum_fps_text, 1)
         self.sum_fps.hide()
         layout.addWidget(self.sum_fps)
+        # Leo 2026-11-09 「當天有沒有派遣 要記錄下來」.
+        self.sum_dispatch = Text("", "muted", wrap=True)
+        self.sum_dispatch.hide()
+        layout.addWidget(self.sum_dispatch)
         # A run the 开跑前检查 stopped shows only its reminder (Leo 10-09
         # 「5提醒就好了」): nothing ran, so no numbers and no list.
         self.sum_body = QWidget()
@@ -1441,6 +1463,9 @@ class HomePage(Page):
 
             self.sum_fps_text.set_text(fps_line(report["fps_tools"]))
         self.sum_fps.setVisible(fps)
+        dispatch = dispatch_line(report.get("dispatch"))
+        self.sum_dispatch.set_text(dispatch)
+        self.sum_dispatch.setVisible(not setup and bool(dispatch))
         self.sum_boxes.setVisible(not setup)
         self.sum_body.setVisible(not setup)
         rows = report.get("rows") or []

@@ -28,7 +28,7 @@ from PySide6.QtWidgets import QFileDialog, QLabel, QWidget
 from src.ui.shell import data, icons, motion, theme
 from src.ui.shell.floating import Floating, Panel
 from src.ui.shell.run_confirm import HeroIcon
-from src.ui.shell.widgets import Button, Inset, Separator, Text, hbox, mix, t, tf, vbox
+from src.ui.shell.widgets import Alert, Button, Inset, Separator, Text, hbox, mix, t, tf, vbox
 from src.utils import accounts
 
 AVATAR_PIXELS = 256  # the picture is scaled down to this once, then cached
@@ -534,10 +534,7 @@ class MismatchDialog(Floating):
         body.setWordWrap(True)
         body.setTextFormat(Qt.PlainText)
         self.column.addWidget(body)
-        warn = Inset()
-        warn.setStyleSheet(
-            f"background: {theme.tokens()['warn_soft']}; border-radius: 12px; border: none;"
-        )
+        warn = Alert("warn")
         warn_box = vbox(warn, (14, 10, 14, 10), 2)
         for line in ("跑图先停下了，没有按任何技能。", "请在右上角选对账号，再按开始。"):
             label = Text(line, None, wrap=True)

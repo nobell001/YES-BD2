@@ -1,4 +1,5 @@
-"""镜中之战's 倍数 and 场数 as two steppers (Leo 2026-10-14).
+"""镜中之战's 倍数 and 场数 as two sliders with the number shown (Leo
+2026-10-14 steppers; 2026-11-09 「數字類可以用 SLIDER 加顯示數字」).
 
 Only the look changes: the saved settings stay 竞技场战斗倍数 (int 1~40) and
 战斗场数 (drop_down "MAX"/"1".."40"), so the run reads exactly what it read
@@ -12,134 +13,23 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QAction, QIntValidator, QPainter, QPen
-from PySide6.QtWidgets import QFrame, QGridLayout, QLineEdit, QWidget
-from qfluentwidgets import RoundMenu, isDarkTheme
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QGridLayout, QWidget
 
-from src.ui.shell import motion, theme
-from src.ui.shell.widgets import Button, Text, hbox, tf
+from src.ui.shell import theme
+from src.ui.shell.widgets import Button, Slider, Text, tf
 
 MULTIPLIER_KEY = "竞技场战斗倍数"
 COUNT_KEY = "战斗场数"
 COUNT_MAX = "MAX"
 FREE_COCKTAILS = 40
-# The ▾ list of 倍数: the ones that use all 40 cocktails with whole 场数.
+# The 倍数 slider's stops: the ones that use all 40 cocktails with whole 场数
+# (any other 1~40 can still be typed in the number box).
 MULTIPLIER_CHOICES = [1, 2, 4, 5, 8, 10, 20, 40]
 
 
 def max_count(multiplier: int) -> int:
     return max(1, FREE_COCKTAILS // max(1, multiplier))
-
-
-class Stepper(QFrame):
-    """[ − | value ▾ | + ] on one pill.  The number can be typed, picked from
-    the ▾ list or stepped; − and + dip when pressed and repeat when held, and
-    the pill's edge glows violet for a moment when the value changes."""
-
-    picked = Signal(int)
-
-    def __init__(self, unit: str, parent=None):
-        super().__init__(parent)
-        self.setObjectName("stepper")
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self._value = 1
-        self._choices: list[int] = []
-        self._glow = motion.Tween(self, self.update, 600, 0.0)
-        row = hbox(self, (3, 3, 3, 3), 0)
-        self.minus = self._button("−", lambda: self.picked.emit(self._value - 1))
-        self.edit = QLineEdit(self)
-        self.edit.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.edit.setValidator(QIntValidator(0, 99, self.edit))
-        self.edit.setFixedWidth(30)
-        self.edit.setFocusPolicy(Qt.ClickFocus)
-        self.edit.editingFinished.connect(self._typed)
-        self.unit = Text(unit, "h3")
-        self.drop = self._button("", self._open_menu)
-        self.drop.set_icon_name("chevron-down")
-        self.drop.setFixedWidth(22)
-        self.plus = self._button("+", lambda: self.picked.emit(self._value + 1))
-        row.addWidget(self.minus)
-        row.addSpacing(4)
-        row.addWidget(self.edit)
-        row.addSpacing(2)
-        row.addWidget(self.unit)
-        row.addWidget(self.drop)
-        row.addWidget(self.plus)
-        self._restyle()
-        theme.on_theme_changed(self, self._restyle)
-
-    def _button(self, label: str, action) -> Button:
-        button = Button(label, "flat", on_click=action)
-        button.setProperty("stepper", True)
-        button.setFixedWidth(30)
-        if label:
-            button.setAutoRepeat(True)  # hold to keep stepping
-        return button
-
-    def _restyle(self) -> None:
-        tk = theme.tokens()
-        dark = isDarkTheme()
-        self.setStyleSheet(
-            # 淡紫: a white pill with an edge, else it melts into the page
-            # (Leo 2026-10-14: 紫色的沒有外框); 深色 keeps the plain dark pill.
-            f"QFrame#stepper {{ background: {tk['inset'] if dark else tk['card']};"
-            f" border: {'none' if dark else '1px solid ' + tk['line2']}; border-radius: 16px; }}"
-            f"QFrame#stepper QPushButton {{ background: transparent; border: none;"
-            f" border-radius: 13px; color: {tk['ink']}; font-size: 16px;"
-            f" padding: 0px;"
-            f" min-height: 26px; max-height: 26px; }}"
-            f"QFrame#stepper QPushButton:hover {{ color: {tk['accent']};"
-            f" background: {tk['card'] if dark else tk['accent_soft']}; }}"
-            f"QFrame#stepper QPushButton:disabled {{ color: {theme.rgba('ink', 0.25)}; }}"
-            f"QFrame#stepper QLineEdit {{ background: transparent; border: none; padding: 0px;"
-            f" color: {tk['ink']}; font-size: 14px;"
-            f" selection-background-color: {tk['accent']}; selection-color: {tk['on_accent']}; }}"
-            f"QFrame#stepper QLineEdit:focus {{ border-bottom: 2px solid {tk['accent']}; }}"
-        )
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        glow = float(self._glow.value)
-        if glow <= 0:
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        colour = theme.color("accent")
-        colour.setAlphaF(glow)
-        painter.setPen(QPen(colour, 1.5))
-        painter.setBrush(Qt.NoBrush)
-        rect = QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
-        painter.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
-
-    def _typed(self) -> None:
-        text = self.edit.text().strip()
-        if text.isdigit():
-            self.picked.emit(int(text))
-        # Too big or not a number: show what was kept (the limit, or the old value).
-        self.edit.setText(str(self._value))
-
-    def _open_menu(self) -> None:
-        menu = RoundMenu(parent=self)
-        menu.setMaxVisibleItems(10)  # 场数 can list up to 40; scroll past 10
-        for choice in self._choices:
-            action = QAction(f"{choice} {self.unit.text()}", menu)
-            action.triggered.connect(lambda _c=False, v=choice: self.picked.emit(v))
-            menu.addAction(action)
-        menu.exec(self.mapToGlobal(self.rect().bottomLeft()))
-
-    def set_state(self, value: int, choices: list[int], can_down: bool, can_up: bool) -> None:
-        changed = value != self._value
-        self._value = value
-        self._choices = choices
-        if not self.edit.hasFocus() or changed:
-            self.edit.setText(str(value))
-        self.minus.setEnabled(can_down)
-        self.plus.setEnabled(can_up)
-        self.drop.setEnabled(len(choices) > 1)
-        if changed:
-            self._glow.go(1.0, animate=False)
-            self._glow.go(0.0)
 
 
 class PvpPanel(QWidget):
@@ -153,43 +43,46 @@ class PvpPanel(QWidget):
         grid.setVerticalSpacing(12)
         grid.setColumnStretch(1, 1)
 
-        self.multiplier = Stepper("倍", self)
-        self.multiplier.picked.connect(self._set_multiplier)
+        # The two bars line up: label | slider + number | MAX (场数 only).
+        self.multiplier = Slider(self)
+        self.multiplier.setRange(1, FREE_COCKTAILS)
+        self.multiplier.setSuffix("倍")
+        self.multiplier.setStops(MULTIPLIER_CHOICES)
+        self.multiplier.valueChanged.connect(self._set_multiplier)
         grid.addWidget(Text("战斗倍数", "sub"), 0, 0, Qt.AlignLeft | Qt.AlignVCenter)
-        grid.addWidget(self.multiplier, 0, 1, Qt.AlignRight | Qt.AlignVCenter)
+        grid.addWidget(self.multiplier, 0, 1, Qt.AlignVCenter)
 
-        count_box = QWidget(self)
-        count_row = hbox(count_box, (0, 0, 0, 0), 8)
-        self.max_button = Button("MAX", "flat", parent=count_box)  # hover fade + press dip
+        self.count = Slider(self)
+        self.count.setSuffix("场")
+        self.count.valueChanged.connect(self._set_count)
+        self.max_button = Button("MAX", "flat", parent=self)  # hover fade + press dip
         self.max_button.setCheckable(True)
         self.max_button.clicked.connect(self._toggle_max)
-        self.count = Stepper("场", count_box)
-        self.count.picked.connect(self._set_count)
-        count_row.addWidget(self.max_button)
-        count_row.addWidget(self.count)
         grid.addWidget(Text("战斗场数", "sub"), 1, 0, Qt.AlignLeft | Qt.AlignVCenter)
-        grid.addWidget(count_box, 1, 1, Qt.AlignRight | Qt.AlignVCenter)
+        grid.addWidget(self.count, 1, 1, Qt.AlignVCenter)
+        grid.addWidget(self.max_button, 1, 2, Qt.AlignVCenter)
 
+        Slider.same_box_width((self.multiplier, self.count))
         # How many of the day's free cocktails this run uses (Leo: no bar, 狀態條不好看).
         self.cups_text = Text("", "h3")
         grid.addWidget(Text("免费鸡尾酒", "sub"), 2, 0, Qt.AlignLeft | Qt.AlignVCenter)
-        grid.addWidget(self.cups_text, 2, 1, Qt.AlignRight | Qt.AlignVCenter)
+        grid.addWidget(self.cups_text, 2, 1, 1, 2, Qt.AlignRight | Qt.AlignVCenter)
         self._restyle()
         theme.on_theme_changed(self, self._restyle)
         self.sync()
 
     def _restyle(self) -> None:
+        # The shared design language: a 32 px pill on the ``fill`` token, the
+        # primary colour once on.
         tk = theme.tokens()
-        dark = isDarkTheme()
+        height = theme.size("control_md")
         self.max_button.setStyleSheet(
-            f"QPushButton {{ min-height: 32px; max-height: 32px; border-radius: 16px;"
-            f" padding: 0px 14px; font-size: 13px;"
-            f" background: {tk['inset'] if dark else tk['card']};"
-            f" color: {tk['ink'] if dark else tk['accent']};"
-            f" border: {'none' if dark else '1px solid ' + tk['line2']}; }}"
-            f"QPushButton:hover {{ background: {tk['card'] if dark else tk['accent_soft']}; }}"
-            f"QPushButton:checked {{ background: {tk['accent']}; color: {tk['on_accent']};"
-            f" border-color: {tk['accent']}; }}"
+            f"QPushButton {{ min-height: {height}px; max-height: {height}px;"
+            f" border-radius: {height // 2}px; padding: 0px 14px;"
+            f" font-size: {theme.size('text_md')}px;"
+            f" background: {tk['fill']}; color: {tk['ink']}; border: none; }}"
+            f"QPushButton:hover {{ background: {tk['fill_hover']}; }}"
+            f"QPushButton:checked {{ background: {tk['primary']}; color: {tk['on_primary']}; }}"
         )
 
     # ------------------------------------------------------------ values
@@ -245,12 +138,17 @@ class PvpPanel(QWidget):
         count = self._count()
         top = max_count(multiplier)
         is_max = self._is_max()
-        self.multiplier.set_state(
-            multiplier, MULTIPLIER_CHOICES, multiplier > 1, multiplier < FREE_COCKTAILS
-        )
-        self.count.set_state(
-            count, list(range(1, top + 1)), not is_max and count > 1, not is_max and count < top
-        )
+        for slider, low, high, value in (
+            (self.multiplier, 1, FREE_COCKTAILS, multiplier),
+            (self.count, 1, top, count),
+        ):
+            slider.blockSignals(True)
+            slider.setRange(low, high)
+            slider.setValue(value)
+            slider.blockSignals(False)
+        # 倍数 40 leaves one 场.  With MAX on the knob sits at the top; moving
+        # it picks that number and turns MAX off.
+        self.count.setEnabled(top > 1)
         self.max_button.setChecked(is_max)
         used = multiplier * count
         self.cups_text.set_text(tf("{used} / {free} 杯", used=used, free=FREE_COCKTAILS))

@@ -50,7 +50,7 @@ from src.tasks.main_story import borrow, screen
 from src.tasks.main_story.screen import Kind
 from src.tasks.RewardClaimTasks import _ClaimTaskBase
 from src.utils.ocr_utils import normalize_ocr_text
-from src.utils.wait_limits import is_loading_dark
+from src.utils.wait_limits import HeldFor, is_loading_dark
 
 LABEL = "推剧情"
 LOOK_GAP = 0.6  # between looks (one whole-screen OCR each)
@@ -336,6 +336,8 @@ class MainStoryTask(_ClaimTaskBase):
 
     def _send_game_key(self, code: int, seconds: float) -> bool:
         """The base one raises the game and leaves it in front."""
+        self._wait_unlocked()  # a locked PC takes no key: wait for the player
+
         def action():
             import win32api
             import win32con
@@ -401,7 +403,8 @@ class MainStoryTask(_ClaimTaskBase):
         idle_noted = ""
         battle_wait: BattleWait | None = None
         last_line = None
-        spend_since: float | None = None
+        # One misread look does not start the hold over (HeldFor).
+        spend_held = HeldFor()
         walk_watch = WalkWatch()
         walked_at = 0.0
         player_step: str | None = None  # the quest line while the player does a step
@@ -553,16 +556,16 @@ class MainStoryTask(_ClaimTaskBase):
                     continue
                 if kind == Kind.OTHER:
                     word = spend_words_on(boxes)
+                    spend_for = spend_held.look(bool(word), now)
                     if word:
-                        spend_since = now if spend_since is None else spend_since
-                        if now - spend_since >= SPEND_HOLD:
+                        if spend_for >= SPEND_HOLD:
                             self._pause_on_spend(word)
-                            last_small, step, spend_since = None, 0, None
+                            last_small, step = None, 0
+                            spend_held.reset()
                             continue
                         self.info_set("状态", "等画面变化")
                         self.sleep(LOOK_GAP)
                         continue
-                    spend_since = None
                 ladder = LADDERS.get(kind, ())
                 if now - last_press_at < (DIALOG_GAP if kind == Kind.DIALOG else PRESS_GAP) and step:
                     self.sleep(LOOK_GAP)

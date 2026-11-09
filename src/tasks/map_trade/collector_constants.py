@@ -96,6 +96,8 @@ ACTION_SUCCESS_FEEDBACK = {
     "压制": (
         "已制伏地图内所有怪物",
         "已制伏地图内所有的怪物",
+        # 繁中 client (live 4K 2026-11-09): 「已消滅地圖內所有怪獸」.
+        "已消灭地图内所有怪兽",
     ),
 }
 ACTION_FAILURE_FEEDBACK = {

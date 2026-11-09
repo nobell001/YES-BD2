@@ -11,14 +11,18 @@ from collections.abc import Callable, Iterable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QGridLayout, QWidget
-from qfluentwidgets import ComboBox, DoubleSpinBox, FlowLayout, LineEdit, SpinBox
+from qfluentwidgets import DoubleSpinBox, FlowLayout, LineEdit
 
 from src.ui.hide_config_rows import mark_hidden_config_keys
+from src.ui.shell import theme
 from src.ui.shell.widgets import (
     Button,
     CheckBox,
     IconLabel,
     Segmented,
+    Select,
+    Slider,
+    Stepper,
     Text,
     Toggle,
     attach_hint,
@@ -28,6 +32,9 @@ from src.ui.shell.widgets import (
 )
 
 SEGMENTED_MAX_TEXT = 26
+# A slider row's width: the bar plus its number box (design language: 8 × the
+# middle control height).
+SLIDER_WIDTH = theme.size("control_md") * 8
 # Task class -> the only settings that keep their ⓘ hint (Leo, 2026-10-04:
 # 「日常設定 下面的備注 ... 不需要」).  Only the hint goes; the setting stays.
 HINTS_KEPT = {
@@ -220,11 +227,29 @@ class ConfigForm(QWidget):
             toggle = Toggle(bool(value), self)
             toggle.toggled.connect(lambda checked, k=key: self._set(k, bool(checked)))
             return toggle, lambda: toggle.set_checked_quietly(bool(self.task.config.get(key)))
+        bounded = "min" in the_type and "max" in the_type
+        if isinstance(value, (int, float)) and bounded:
+            # A number with both ends known: a slider with the number shown
+            # (Leo 2026-11-09 「數字類可以用 SLIDER 加顯示數字」).
+            is_float = isinstance(value, float)
+            step = the_type.get("step", 0.1 if is_float else 1)
+            decimals = 0
+            if is_float:
+                decimals = 2 if float(step) < 0.1 else 1
+            cast = float if is_float else int
+            slider = Slider(self, decimals=decimals)
+            slider.setRange(cast(the_type["min"]), cast(the_type["max"]))
+            slider.setSingleStep(cast(step))
+            slider.setValue(cast(value))
+            slider.setFixedWidth(SLIDER_WIDTH)
+            slider.valueChanged.connect(lambda v, k=key, c=cast: self._set(k, c(v)))
+            return slider, lambda: self._quiet(
+                slider, lambda: slider.setValue(cast(self.task.config.get(key) or 0))
+            )
         if isinstance(value, int):
-            spin = SpinBox(self)
+            spin = Stepper(self)  # no ends known: − number +
             spin.setRange(int(the_type.get("min", -999999)), int(the_type.get("max", 999999)))
             spin.setValue(int(value))
-            spin.setFixedWidth(150)
             spin.valueChanged.connect(lambda v, k=key: self._set(k, int(v)))
             return spin, lambda: self._quiet(
                 spin, lambda: spin.setValue(int(self.task.config.get(key) or 0))
@@ -279,7 +304,7 @@ class ConfigForm(QWidget):
     def _drop_down(self, key: str, options: list[str]):
         if len(options) <= 4 and sum(len(str(option)) for option in options) <= SEGMENTED_MAX_TEXT:
             return self._segmented(key, options)
-        combo = ComboBox(self)
+        combo = Select(self)  # oink-ui Select (2026-11-09)
         for option in options:
             combo.addItem(t(str(option)), userData=option)
         combo.setMinimumWidth(200)

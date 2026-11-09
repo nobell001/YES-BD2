@@ -141,7 +141,14 @@ class Tween(QObject):
     page always opens looking settled and only changes you watch are animated.
     """
 
-    def __init__(self, owner: QWidget, on_change: Callable[[], None], duration: int, value=0.0):
+    def __init__(
+        self,
+        owner: QWidget,
+        on_change: Callable[[], None],
+        duration: int,
+        value=0.0,
+        easing: QEasingCurve.Type = QEasingCurve.OutCubic,
+    ):
         super().__init__(owner)
         self._owner = owner
         self.value = value
@@ -149,7 +156,7 @@ class Tween(QObject):
         self._on_change = on_change
         self._anim = QVariantAnimation(self)
         self._anim.setDuration(duration)
-        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.setEasingCurve(easing)
         self._anim.valueChanged.connect(self._step)
 
     def running(self) -> bool:

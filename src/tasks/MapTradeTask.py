@@ -9,7 +9,7 @@ from ok.util.file import get_relative_path
 from qfluentwidgets import FluentIcon
 
 from src.tasks import problem_report, run_report
-from src.tasks.BaseBD2Task import BaseBD2Task
+from src.tasks.BaseBD2Task import BaseBD2Task, stuck_reason
 from src.tasks.map_trade import trade_detail
 from src.tasks.map_trade.models import OPTIONAL_COOKING_RECIPES
 from src.tasks.map_trade.navigator import Navigator
@@ -24,7 +24,7 @@ from src.tasks.map_trade.sale_days import (
 from src.tasks.map_trade.trader import Trader
 from src.tasks.map_trade.trader_cooking import MAIN_COOKING_RECIPES
 from src.tasks.map_trade.vision import Vision
-from src.utils.frozen_screen import FROZEN_SCREEN_SECONDS, FrozenScreen, FrozenWatch
+from src.utils.frozen_screen import FrozenScreen, FrozenWatch
 from src.utils.wait_limits import LOADING_MAX_SECONDS
 
 LEGACY_VISION_THRESHOLD_KEY = "跑图跑商识图阈值"
@@ -163,9 +163,7 @@ class MapAutomationTaskBase(BaseBD2Task):
                     # error it gave the 问题摘要 「买：」 with no reason, and the
                     # fired watch failed every later phase (a player's 1080p
                     # run, 2026-10-16).  Say why, start the watch over, go on.
-                    why = str(exc) or (
-                        f"画面 {FROZEN_SCREEN_SECONDS:.0f} 秒没有变化（点了没反应或认不出画面）"
-                    )
+                    why = stuck_reason(self, exc)
                     if getattr(self, "_frozen_watch", None) is not None:
                         self._frozen_watch = FrozenWatch()
                     failed.append(name)
@@ -225,9 +223,7 @@ class MapAutomationTaskBase(BaseBD2Task):
             # (a player's v0.2.27 run logged it as 「返回章节主页异常。
             # Traceback」), and start the watch over, or the fired watch failed
             # the screenshot and the phase run again from home at once.
-            why = str(exc) or (
-                f"画面 {FROZEN_SCREEN_SECONDS:.0f} 秒没有变化（点了没反应或认不出画面）"
-            )
+            why = stuck_reason(self, exc)
             self.log_warning(f"{self.task_log_name}：返回章节主页时{why}，改用通用返回。")
             self._save_diagnostic(f"{self.diagnostic_prefix}_return_home_frozen")
             if getattr(self, "_frozen_watch", None) is not None:
@@ -420,9 +416,7 @@ class MapTradeTask(MapAutomationTaskBase):
         except FrozenScreen as exc:
             # str(exc): the exception itself is always true, so an empty
             # one logged 「买：。」 (player v0.2.13 2026-10-25).
-            why = str(exc) or (
-                f"画面 {FROZEN_SCREEN_SECONDS:.0f} 秒没有变化（点了没反应或认不出画面）"
-            )
+            why = stuck_reason(self, exc)
             self.log_warning(f"{name}：{why}。")
             if getattr(self, "_frozen_watch", None) is not None:
                 self._frozen_watch = FrozenWatch()

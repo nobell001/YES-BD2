@@ -43,8 +43,13 @@ from src.utils.stage_walk import (
     MARKER_TARGET,
     NUDGE_SEQUENCE,
     find_marker,
+    MARKER_SHAPE_SCORE,
+    VIEW_MOVED_PIXELS,
+    follows_character,
+    marker_shape_score,
     plan_step,
     predict_after_step,
+    view_shift,
 )
 from src.utils.wait_limits import (
     STUCK_SECONDS,
@@ -472,6 +477,12 @@ class CartridgeFieldTask(_ClaimTaskBase):
         """
         self.info_set("当前阶段", "键盘走到战斗标记")
         missing, estimate, predicted = 0, None, 0
+        # The walk was predicted to end on the marker: the character's feet
+        # may hide it now, so not seeing it means nudge, not give up.
+        near = False
+        # Red spots that stayed put while the view moved: on the party.
+        ignore: list[tuple[int, int]] = []
+        last_seen, last_step, last_frame = None, None, None
         for step_index in range(1, WALK_MAX_STEPS + 1):
             frame = self.capture_frame()
             if self._doom_page_visible(frame):
@@ -483,12 +494,28 @@ class CartridgeFieldTask(_ClaimTaskBase):
                     return False
                 self.sleep(0.6)
                 continue
-            marker = find_marker(cv2.resize(frame[:, :, :3], (REFERENCE_WIDTH, REFERENCE_HEIGHT)))
+            frame_1080 = cv2.resize(frame[:, :, :3], (REFERENCE_WIDTH, REFERENCE_HEIGHT))
+            marker = find_marker(frame_1080, tuple(ignore))
+            if (
+                marker is not None
+                and last_seen is not None
+                and last_step is not None
+                and follows_character(last_seen, marker, last_step)
+                and marker_shape_score(frame_1080, marker) < MARKER_SHAPE_SCORE
+                and view_shift(last_frame, frame_1080) >= VIEW_MOVED_PIXELS
+            ):
+                self.log_info(f"{self.label}：{marker} 的红色跟着角色走，不是战斗标记，改找别的。")
+                ignore.append(marker)
+                estimate = None
+                marker = find_marker(frame_1080, tuple(ignore))
+            last_seen, last_step, last_frame = marker, None, frame_1080
             if marker is not None:
-                estimate, predicted, missing = marker, 0, 0
+                estimate, predicted, missing, near = marker, 0, 0, False
             elif estimate is not None and predicted < MAX_PREDICTED_STEPS:
                 predicted += 1
             else:
+                if near:
+                    break
                 missing += 1
                 if missing >= 5:
                     self.log_info(f"{self.label}：画面中找不到红色战斗标记。")
@@ -501,12 +528,13 @@ class CartridgeFieldTask(_ClaimTaskBase):
             if step is None:
                 if marker is None:
                     # Predicted arrival only: look again before nudging.
-                    estimate = None
+                    estimate, near = None, True
                     continue
                 break
             if not self.hold_key(step.key, step.seconds, after_sleep=0.6):
                 self._keys_refused = True
                 return False
+            last_step = step
             estimate = predict_after_step(estimate, step)
         for step in NUDGE_SEQUENCE:
             if self._wait_for(self._doom_page_visible, timeout=1.0):
@@ -830,7 +858,7 @@ class DoomBookTask(CartridgeFieldTask):
             return self._claim_fail("打开游戏卡珍藏集")
         if not self._enter_cartridge():
             return self._claim_fail("进入末日之书")
-        self.dismiss_field_followers()
+        self.clear_field_followers()  # 没有派遣记录就等跟随角色靠过来
         self._keys_refused = False
         if not self._reach_marker():
             if self._keys_refused:

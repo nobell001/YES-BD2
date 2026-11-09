@@ -30,7 +30,6 @@ class Shell(QObject):
 
     def __init__(self, window):
         super().__init__(window)
-        from src.ui.shell.fiend_page import FiendPage
         from src.ui.shell.home import HomePage
         from src.ui.shell.map_page import MapPage
         from src.ui.shell.report_page import ReportPage
@@ -52,7 +51,6 @@ class Shell(QObject):
             "map": MapPage(),
             "story": StoryPage(),
             "talos": TalosPage(),
-            "fiend": FiendPage(),
             "settings": SettingsPage(window),
         }
         self.sidebar = Sidebar()
@@ -194,11 +192,8 @@ class Shell(QObject):
         self.navigate(key)
 
     def _after_start(self) -> None:
-        """A start goes to 首页, except from the 魔兽追踪者 page (Leo 2026-10-06:
-        recording and replaying are watched there, with the save's turns)."""
+        """A start goes to 首页, unless the page asks to stay."""
         current = self.window.stackedWidget.currentWidget()
-        if current is self.pages.get("fiend"):
-            return
         # 循环砍价 is watched on the 跑商 page (Leo 2026-10-11).
         keep = getattr(current, "keep_page_on_start", None)
         if callable(keep) and keep():

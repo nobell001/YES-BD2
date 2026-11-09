@@ -42,7 +42,7 @@ from src.utils import image_io
 from src.utils.image_utils import template_match_response
 from src.utils.ocr_utils import keyword_match_count, normalize_ocr_text
 from src.utils.stage_walk import MARKER_TARGET, NUDGE_SEQUENCE, plan_step
-from src.utils.wait_limits import STUCK_SECONDS, StillTimer
+from src.utils.wait_limits import STUCK_SECONDS, HeldFor, StillTimer
 
 LABEL = "救赎之塔"
 ASSET_DIR = (
@@ -260,7 +260,7 @@ class RedemptionTowerTask(CartridgeFieldTask):
             return self._claim_fail("打开游戏卡珍藏集")
         if (forced or not self._enter_cartridge()) and not self._enter_by_row():
             return self._claim_fail("进入恶魔城")
-        self.dismiss_field_followers()
+        self.clear_field_followers()  # 没有派遣记录就等跟随角色靠过来
         self._keys_refused = False
         if forced or not self._reach_marker():
             if self._keys_refused:
@@ -615,7 +615,8 @@ class RedemptionTowerTask(CartridgeFieldTask):
         still = StillTimer()
         taps = 0
         seen_result = False
-        page_since = None
+        # One misread look does not start the settle over (HeldFor).
+        page_held = HeldFor()
         end_at = monotonic() + AFTER_BATTLE_MAX_SECONDS
         while True:
             frame = self.capture_frame()
@@ -630,15 +631,13 @@ class RedemptionTowerTask(CartridgeFieldTask):
                     self.tap_escape(after_sleep=1.2)
                 still.reset()
                 continue
-            if self._tower_page_visible(frame):
-                # Without the result screen, the page must stay a moment: the
-                # result may still be on its way.
-                page_since = page_since or monotonic()
-                if seen_result or monotonic() - page_since >= TOWER_PAGE_SETTLE_SECONDS:
-                    self.log_info(f"{LABEL}：快速战斗完成。")
-                    return True
-            else:
-                page_since = None
+            # Without the result screen, the page must stay a moment: the
+            # result may still be on its way.
+            page_visible = self._tower_page_visible(frame)
+            page_for = page_held.look(page_visible, monotonic())
+            if page_visible and (seen_result or page_for >= TOWER_PAGE_SETTLE_SECONDS):
+                self.log_info(f"{LABEL}：快速战斗完成。")
+                return True
             if self.close_known_popup(LABEL):
                 still.reset()
                 continue

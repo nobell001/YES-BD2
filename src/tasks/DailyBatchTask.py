@@ -499,8 +499,25 @@ class ChildBatchTask(BaseTask):
                 self._plan_close_clone(clean=False)
                 raise
             finally:
+                self._mark_dispatch()
                 run_report.finish(self._report_ended)
                 self._close_clone_if_planned()
+
+    @staticmethod
+    def _mark_dispatch() -> None:
+        """Today's 派遣 on the run's report (Leo 2026-11-09 「當天有沒有派遣
+        要記錄下來」); nothing when no field was looked at today."""
+        try:
+            from src.utils import field_followers
+
+            record = field_followers.today_record()
+            if record:
+                run_report.mark("dispatch", {
+                    "state": record.get("state"),
+                    "text": field_followers.record_text(record),
+                })
+        except Exception:
+            pass
 
     def _ticked(self, key: str) -> bool:
         """This run does ``key``: the 定时启动 slot's own list, else the tick."""

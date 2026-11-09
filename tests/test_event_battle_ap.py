@@ -95,13 +95,35 @@ class StableReadTest(unittest.TestCase):
         task = self._task([blank, blank, state(), state()])
         self.assertTrue(task._stable_stage_state("普通战斗")["auto"])
 
-    def test_a_page_never_drawn_fails_with_its_reason(self):
+    def test_a_page_never_drawn_still_tries_auto_battle_then_says_why(self):
+        # Leo 2026-11-09 「一定得去嘗試點戰鬥或快速戰鬥」: 自动战斗 is pressed at
+        # its usual spot; its dialog's own checks guard the AP.
         task = make_task()
         task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
         task._stable_stage_state = lambda mode: state(free_ap=None, auto=False, quick=False)
-        task._auto_battle = lambda *a: self.fail("dialog opened on a page not drawn")
+        tried = []
+        task._auto_battle = lambda *a: tried.append(a) or None
         self.assertEqual("failed", task._run_mode("普通战斗"))
+        self.assertEqual(1, len(tried))
         self.assertIn("没看到「自动战斗」或「快速战斗」", task._why)
+        self.assertIn("照平常位置按了自动战斗", task._why)
+
+    def test_a_page_never_drawn_goes_on_when_the_dialog_opens(self):
+        task = make_task()
+        task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
+        task._stable_stage_state = lambda mode: state(free_ap=None, auto=False, quick=False)
+        task._auto_battle = lambda mode, wanted, read: 0
+        self.assertEqual("no_ap", task._run_mode("普通战斗"))
+
+    def test_a_clear_zero_ap_does_not_press(self):
+        task = make_task()
+        task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
+        task._stable_stage_state = lambda mode: state(free_ap=0, auto=False, quick=False)
+        task._auto_battle = lambda *a: self.fail("pressed with 0 AP read")
+        self.assertEqual("no_ap", task._run_mode("普通战斗"))
 
     def test_an_ap_never_read_ends_with_the_last_read(self):
         none = state(free_ap=None)
@@ -116,6 +138,7 @@ class DoubleCheckTest(unittest.TestCase):
     def _asked(self, free_ap):
         task = make_task()
         task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
         task._stable_stage_state = lambda mode: state(free_ap=free_ap)
         asked = []
         task._auto_battle = lambda mode, wanted, read: asked.append(wanted) or 0
@@ -187,6 +210,7 @@ class DoubleCheckTest(unittest.TestCase):
         # 「挑战战斗关卡页上方的活动AP没读到」 with both modes cleared.
         task = make_task()
         task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
         task._stable_stage_state = lambda mode: state(15, free_ap=None, auto=False, quick=True)
         asked = []
         task._open_quick_dialog = lambda: True
@@ -265,6 +289,7 @@ class CountFromTheDialogTest(unittest.TestCase):
     def _task(self, reads, fought):
         task = make_task()
         task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
         reads = iter(reads)
         task._stable_stage_state = lambda mode: next(reads)
         task._auto_battle = lambda mode, wanted, read: fought
@@ -304,6 +329,7 @@ class NoFreeApLeftTest(unittest.TestCase):
         reads = iter(costs)
         task._settled_cost = lambda read: next(reads)
         task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
         task._stable_stage_state = lambda mode: state(free_ap=free_ap)
         task._dismiss_ap_shortage = lambda: False
         task._wait_for_dialog = lambda: True
@@ -384,6 +410,7 @@ class ClearedStageSelectedTest(unittest.TestCase):
     def _task(self, after_click):
         task = make_task()
         task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
         task.panel = 10
         task.clicks = []
 

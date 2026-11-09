@@ -18,10 +18,10 @@ from PySide6.QtWidgets import QFrame, QLabel, QScrollArea, QWidget
 from src.ui.shell import data, icons, motion, theme
 from src.ui.shell.floating import Floating, Panel
 from src.ui.shell.widgets import (
+    Alert,
     Button,
     CheckBox,
     IconTile,
-    Inset,
     OptionSwitch,
     Segmented,
     StateIcon,
@@ -106,7 +106,7 @@ class PickTile(QWidget):
         self.tile.follow_hover(self)
         top.addWidget(self.tile)
         top.addStretch(1)
-        self.check = CheckBox("", child.included, box=20)
+        self.check = CheckBox("", child.included)
         self.check.setFixedSize(26, 26)
         self.check.toggled.connect(self._toggled)
         top.addWidget(self.check, 0, Qt.AlignTop)
@@ -276,7 +276,7 @@ class RunConfirm(Floating):
         column.addWidget(self.scroll, 1)
 
         # Leo 2026-10-09: the keyboard / mouse warning moved here from home.
-        hint = Inset()
+        hint = Alert("info")  # oink-ui Alert (2026-11-09)
         hint_row = hbox(hint, (14, 12, 16, 12), 12)
         hint_row.addWidget(IconTile("monitor" if clone else "mouse", 34, 18), 0, Qt.AlignVCenter)
         hint_text = vbox(None, (0, 0, 0, 0), 2)

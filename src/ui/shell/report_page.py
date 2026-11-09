@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QPainter
+from PySide6.QtWidgets import QGridLayout, QWidget
 
 from src.tasks import run_log, run_report
 from src.ui.shell import data, theme
@@ -23,6 +24,7 @@ from src.ui.shell.widgets import (
     StateIcon,
     Text,
     clear_layout,
+    empty_state,
     fmt_clock,
     fmt_duration,
     grid_container,
@@ -92,35 +94,83 @@ def today_pictures(day: str) -> dict[str, list[str]]:
     return found
 
 
+class RunDot(QWidget):
+    """One run on the day's line: a dot in the run's colour with a soft ring,
+    and the line down to the next run (oink-ui Timeline, Leo 2026-11-09)."""
+
+    COLOURS = {run_log.DONE: ("ok", "ok_soft"), run_log.FAIL: ("bad", "bad_soft")}
+    SIZE = 22
+
+    def __init__(self, state: str, last: bool, parent=None):
+        super().__init__(parent)
+        self._state = state
+        self._last = last
+        self.setFixedWidth(self.SIZE)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        centre = QPointF(self.SIZE / 2, self.SIZE / 2)
+        if not self._last:
+            painter.fillRect(
+                QRectF(self.SIZE / 2 - 0.5, self.SIZE / 2 + 8, 1, self.height()),
+                theme.color("hair2"),
+            )
+        dot, ring = self.COLOURS.get(self._state, ("warn", "warn_soft"))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(theme.color(ring))
+        painter.drawEllipse(centre, 8.5, 8.5)
+        painter.setBrush(theme.color(dot))
+        painter.drawEllipse(centre, 4.5, 4.5)
+
+
 class TaskRuns(QWidget):
-    """A task: its overall state and name, then one line per run."""
+    """A task: its overall state and name, then its runs on a time line:
+    time, a coloured dot, where it started from and how long it took."""
 
     def __init__(self, name: str, runs: list[dict], parent=None):
         super().__init__(parent)
         layout = hbox(self, (8, 8, 8, 8), 10)
         layout.addWidget(StateIcon(task_state(runs), 17), 0, Qt.AlignTop)
-        texts = vbox(None, (0, 0, 0, 0), 3)
+        texts = vbox(None, (0, 0, 0, 0), 6)
         head = hbox(None, (0, 0, 0, 0), 8)
         head.addWidget(Text(name, "h3", elide=True), 1)
         if len(runs) > 1:
             head.addWidget(Text(tf("跑了 {n} 次", n=len(runs)), "muted"))
         texts.addLayout(head)
-        for run in runs:
-            line = hbox(None, (0, 0, 0, 0), 6)
-            line.addWidget(StateIcon(run.get("state") or run_log.SKIP, 12), 0, Qt.AlignVCenter)
-            line.addWidget(Text(run_line(run), "muted"), 1)
-            texts.addLayout(line)
+        lines = QGridLayout()
+        lines.setContentsMargins(0, 0, 0, 0)
+        lines.setHorizontalSpacing(8)
+        lines.setVerticalSpacing(0)
+        lines.setColumnStretch(2, 1)
+        for index, run in enumerate(runs):
+            state = run.get("state") or run_log.SKIP
+            when = Text(data.clock_text(run.get("finished")), "muted")
+            when.setFixedSize(when.fontMetrics().horizontalAdvance("00:00") + 4, RunDot.SIZE)
+            lines.addWidget(when, index, 0, Qt.AlignTop)
+            lines.addWidget(RunDot(state, index == len(runs) - 1), index, 1)
+            detail = vbox(None, (0, 0, 0, 10 if index < len(runs) - 1 else 0), 2)
+            what = Text(
+                f"{via_text(run.get('via', ''))} · {t(STATE_TEXT.get(state, '跳过'))}", None
+            )
+            what.setFixedHeight(RunDot.SIZE)
+            detail.addWidget(what)
             note = str(run.get("note") or "")
             if note:
-                texts.addWidget(
-                    Text(note, "bad" if run.get("state") == run_log.FAIL else "muted", wrap=True)
-                )
+                detail.addWidget(Text(note, "bad" if state == run_log.FAIL else "muted", wrap=True))
             if run.get("fps_tools"):
-                texts.addWidget(Text(fps_line(run["fps_tools"]), "warn", wrap=True))
+                detail.addWidget(Text(fps_line(run["fps_tools"]), "warn", wrap=True))
             if run.get("trade"):
                 trade = TradeLine()
                 trade.set_trade(run["trade"])
-                texts.addWidget(trade)
+                detail.addWidget(trade)
+            lines.addLayout(detail, index, 2)
+            took = Text(
+                fmt_clock(run["duration"]) if run.get("duration") is not None else "", "muted"
+            )
+            took.setFixedHeight(RunDot.SIZE)
+            lines.addWidget(took, index, 3, Qt.AlignTop | Qt.AlignRight)
+        texts.addLayout(lines)
         layout.addLayout(texts, 1)
 
 
@@ -140,9 +190,12 @@ class ReportPage(Page):
         self.body.addWidget(boxes)
 
         self.empty = Card()
-        empty_layout = vbox(self.empty, (20, 18, 20, 18), 4)
-        empty_layout.addWidget(Text("今天还没跑过任务", "h3"))
-        empty_layout.addWidget(Text("每次跑完（一键日常、周常或单独执行）都会记在这里。", "muted"))
+        empty_state(
+            self.empty,
+            "list-checks",
+            "今天还没跑过任务",
+            "每次跑完（一键日常、周常或单独执行）都会记在这里。",
+        )
         self.body.addWidget(self.empty)
 
         # The runs on the left, today's pictures beside them (seen without

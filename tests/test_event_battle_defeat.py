@@ -198,6 +198,7 @@ class AfterDefeatFlowTest(unittest.TestCase):
     def _mode_task(self, before, after, config=None, defeated=True):
         task = make_task(config)
         task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
         reads = iter([before, after])
         task._stable_stage_state = lambda mode: next(reads)
         task._wait_for_stage_page = lambda mode, timeout=25.0: True
@@ -276,6 +277,7 @@ class ChallengeCapTest(unittest.TestCase):
     def test_a_stage_past_the_cap_is_not_fought(self):
         task = make_task({CHALLENGE_CAP_KEY: "10"})
         task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
         task._stable_stage_state = lambda mode: state(stage=12)
         task._auto_battle = lambda *a: self.fail("fought past the cap")
         self.assertEqual("capped", task._run_mode(CHALLENGE_MODE))
@@ -306,6 +308,7 @@ class ChallengeCapTest(unittest.TestCase):
     def test_cleared_stage_at_the_cap_is_capped_not_walked_past(self):
         task = make_task({CHALLENGE_CAP_KEY: "10"})
         task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
         task._stable_stage_state = lambda mode: state(stage=10, auto=False, quick=True)
         task._select_stage = lambda *a: self.fail("selected a stage past the cap")
         self.assertEqual("capped", task._run_mode(CHALLENGE_MODE))
@@ -331,6 +334,7 @@ class QuickBattleStageTest(unittest.TestCase):
     def test_another_selected_stage_is_changed_to_the_target_first(self):
         task = make_task()
         task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
         reads = iter([state(stage=11, auto=True), state(stage=10, auto=False, quick=True)])
         task._stable_stage_state = lambda mode: next(reads)
         selected = []
@@ -343,6 +347,7 @@ class QuickBattleStageTest(unittest.TestCase):
     def test_a_stage_that_cannot_be_selected_is_skipped(self):
         task = make_task()
         task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
         task._stable_stage_state = lambda mode: state(stage=11, auto=True)
         task._select_stage = lambda *a: False
         task._open_quick_dialog = lambda: self.fail("opened on the wrong stage")
@@ -414,6 +419,7 @@ class NoQuickBeforeTheTargetTest(unittest.TestCase):
     def test_a_cleared_10_whose_next_stage_cannot_be_selected_is_not_all_cleared(self):
         task = make_task({CHALLENGE_CAP_KEY: "15"})
         task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
         task._stable_stage_state = lambda mode: state(stage=10, auto=False, quick=True)
         task._select_stage = lambda *a, **k: False
         task.scroll_client = lambda *a, **k: None

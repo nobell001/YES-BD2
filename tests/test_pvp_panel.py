@@ -41,12 +41,13 @@ class PvpPanelTest(unittest.TestCase):
     def test_bigger_multiplier_lowers_the_count(self):
         task = _Task(5, "8")
         panel = PvpPanel(task)
-        panel.multiplier.picked.emit(10)
+        panel.multiplier.setValue(10)
         self.assertEqual(task.config, {**task.config, "竞技场战斗倍数": 10, "战斗场数": "4"})
-        panel.multiplier.picked.emit(99)
+        panel.multiplier.setValue(99)
         self.assertEqual((task.config["竞技场战斗倍数"], task.config["战斗场数"]), (40, "1"))
-        panel.multiplier.picked.emit(0)
+        panel.multiplier.setValue(0)
         self.assertEqual(task.config["竞技场战斗倍数"], 1)
+        self.assertEqual(panel.count.maximum(), 40)
 
     def test_typed_count_is_kept_within_the_limit(self):
         task = _Task(10, "3")
@@ -59,30 +60,46 @@ class PvpPanelTest(unittest.TestCase):
         panel.count.edit.editingFinished.emit()
         self.assertEqual((task.config["战斗场数"], panel.count.edit.text()), ("4", "4"))
 
-    def test_steppers_stop_at_the_ends(self):
-        panel = PvpPanel(_Task(40, "1"))
-        self.assertFalse(panel.multiplier.plus.isEnabled())
-        self.assertFalse(panel.count.plus.isEnabled())
-        self.assertFalse(panel.count.minus.isEnabled())
+    def test_sliders_stop_at_the_ends(self):
+        task = _Task(40, "1")
+        panel = PvpPanel(task)
+        self.assertEqual(panel.multiplier.value(), 40)
+        self.assertEqual((panel.count.minimum(), panel.count.maximum()), (1, 1))
+        self.assertFalse(panel.count.isEnabled())  # 40 倍 leaves one 场
+        panel.multiplier._nudge(1)
+        self.assertEqual(task.config["竞技场战斗倍数"], 40)
         self.assertEqual(panel.cups_text.text(), "40 / 40 杯")
+
+    def test_multiplier_slider_snaps_to_the_whole_stops(self):
+        task = _Task(1, "40")
+        panel = PvpPanel(task)
+        panel.multiplier._slide_to(0.5, jump=True)  # middle of 1 2 4 5 8 10 20 40
+        self.assertIn(task.config["竞技场战斗倍数"], (5, 8))
+        panel.multiplier._nudge(1)
+        self.assertIn(task.config["竞技场战斗倍数"], (8, 10))
+        panel.multiplier.edit.setText("3")  # any 1~40 can still be typed
+        panel.multiplier.edit.editingFinished.emit()
+        self.assertEqual(task.config["竞技场战斗倍数"], 3)
+        self.assertEqual(panel.count.maximum(), 13)
+        self.assertLessEqual(3 * int(task.config["战斗场数"]), 40)
 
     def test_max_stays_max_and_follows_the_multiplier(self):
         task = _Task(10, "2")
         panel = PvpPanel(task)
         panel.max_button.click()
         self.assertEqual(task.config["战斗场数"], "MAX")
-        panel.multiplier.picked.emit(20)
+        panel.multiplier.setValue(20)
         self.assertEqual(task.config["战斗场数"], "MAX")
         self.assertEqual(panel.count.edit.text(), "2")
-        panel.count.picked.emit(1)  # picking a number turns MAX off
+        panel.count.setValue(1)  # picking a number turns MAX off
         self.assertEqual(task.config["战斗场数"], "1")
         self.assertFalse(panel.max_button.isChecked())
 
     def test_saved_values_keep_their_types(self):
         task = _Task(10, "3")
         panel = PvpPanel(task)
-        panel.multiplier.plus.click()
-        panel.count.minus.click()
+        panel.multiplier._nudge(1)
+        panel.count._nudge(-1)
         self.assertIsInstance(task.config["竞技场战斗倍数"], int)
         self.assertIsInstance(task.config["战斗场数"], str)
 

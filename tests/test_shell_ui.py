@@ -1079,25 +1079,25 @@ class SaleDayTickTest(unittest.TestCase):
         self.assertIsNot(page._panel_checks["面包"], boxes["面包"])
 
 
-class StartStaysOnFiendPageTest(unittest.TestCase):
-    """Leo 2026-10-06: 录制/开始打 on the 魔兽追踪者 page don't jump to 首页."""
+class StartGoesHomeTest(unittest.TestCase):
+    """A start jumps to 首页 (the 魔兽追踪者 page, which stayed, removed 2026-11-08)."""
 
     def shell(self, current):
         from types import SimpleNamespace
 
-        pages = {"home": object(), "fiend": object(), "map": object()}
+        pages = {"home": object(), "talos": object(), "map": object()}
         shown = []
         stack = SimpleNamespace(currentWidget=lambda: pages[current])
         window = SimpleNamespace(stackedWidget=stack, switchTo=shown.append)
         shell = SimpleNamespace(window=window, pages=pages, navigate=shown.append)
         return shell, shown
 
-    def test_fiend_page_stays(self):
+    def test_talos_page_goes_home(self):
         from src.ui.shell.install import Shell
 
-        shell, shown = self.shell("fiend")
+        shell, shown = self.shell("talos")
         Shell._after_start(shell)
-        self.assertEqual([], shown)
+        self.assertEqual(["home"], shown)
 
     def test_other_pages_go_home(self):
         from src.ui.shell.install import Shell

@@ -206,6 +206,196 @@ class DismissFlowTest(unittest.TestCase):
         self.assertEqual(2, len(clicks))
 
 
+class CrowdBalloonTest(unittest.TestCase):
+    """The "!" balloons over the 派遣 crowd (Leo's 1080p 镜中之战 frame,
+    2026-11-09) only add waiting, never shorten a look."""
+
+    CENTER = (0.735, 0.82)
+
+    def _run(self, sightings, crowd_frames, **kwargs):
+        frames = iter(sightings)
+        crowds = iter(crowd_frames)
+        clicks, keys = [], []
+        now = [0.0]
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        outcome = dismiss_field_followers(
+            lambda: next(frames, TalkIconSighting(False)),
+            lambda x, y: clicks.append((x, y)),
+            sleep,
+            clock=lambda: now[0],
+            crowd=lambda: next(crowds, False),
+            press_key=lambda: keys.append("F"),
+            **kwargs,
+        )
+        return outcome, clicks, keys, now[0]
+
+    def seen(self):
+        return TalkIconSighting(True, 0.99, self.CENTER)
+
+    def test_crowd_still_walking_over_is_waited_for_past_the_look(self):
+        # A slow PC: the F "!" shows only after the 5 s look (15 frames at
+        # 0.35 s); the balloons on screen keep the look going.
+        quiet = [TalkIconSighting(False)] * 20
+        outcome, clicks, _keys, _t = self._run(
+            quiet + [self.seen(), self.seen()], [True] * 40 + [False] * 10,
+            appear_seconds=5.0,
+        )
+        self.assertEqual(FOLLOWERS_DISMISSED, outcome)
+        self.assertEqual(1, len(clicks))
+
+    def test_without_balloons_the_look_is_as_before(self):
+        quiet = [TalkIconSighting(False)] * 20
+        outcome, clicks, _keys, waited = self._run(
+            quiet + [self.seen(), self.seen()], [False] * 50, appear_seconds=5.0
+        )
+        self.assertEqual((FOLLOWERS_ABSENT, []), (outcome, clicks))
+        self.assertLess(waited, 6.0)
+
+    def test_crowd_wait_has_a_cap(self):
+        outcome, clicks, _keys, waited = self._run(
+            [], [True] * 500, appear_seconds=5.0, crowd_wait_seconds=15.0
+        )
+        self.assertEqual((FOLLOWERS_ABSENT, []), (outcome, clicks))
+        self.assertLess(waited, 17.0)
+
+    def test_balloons_left_after_the_press_get_the_f_key(self):
+        # The F "!" went (the HUD hides while moving) but the crowd stays.
+        outcome, clicks, keys, _t = self._run(
+            [self.seen(), self.seen()], [True] * 50, appear_seconds=3.0
+        )
+        self.assertEqual(FOLLOWERS_DISMISSED, outcome)
+        self.assertEqual((1, ["F"]), (len(clicks), keys))
+
+    def test_balloons_gone_with_the_press_need_no_key(self):
+        outcome, clicks, keys, _t = self._run(
+            [self.seen(), self.seen()], [False] * 50, appear_seconds=3.0
+        )
+        self.assertEqual((FOLLOWERS_DISMISSED, 1, []), (outcome, len(clicks), keys))
+
+
+class BalloonRecognitionTest(unittest.TestCase):
+    PAGES = Path(__file__).resolve().parent / "fixtures"
+    # Saved frames that show the crowd: Leo's hub, the square, 救赎之塔.
+    CROWD = {
+        "pvp/hub_dispatch_crowd_leo_1080.jpg",
+        "square/square_field_nav_menu_2k.jpg",
+        "redemption_tower/field_spawn_2k.jpg",
+        "redemption_tower/field_altar_marker_2k.jpg",
+    }
+
+    def test_crowd_found_at_every_resolution_and_with_hdr(self):
+        from src.utils.follower_balloons import crowd_seen
+
+        hub = cv2.imread(str(self.PAGES / "pvp/hub_dispatch_crowd_leo_1080.jpg"))
+        for size in SIZES:
+            for transform in (None, _hdr_like):
+                with self.subTest(size=size, hdr=transform is not None):
+                    frame = cv2.resize(hub, size, interpolation=cv2.INTER_CUBIC)
+                    self.assertTrue(crowd_seen(transform(frame) if transform else frame))
+
+    def test_crowd_only_on_the_frames_that_show_it(self):
+        import json
+
+        from src.utils.follower_balloons import crowd_seen
+
+        pages = json.loads((self.PAGES / "pages.json").read_text(encoding="utf-8"))["pages"]
+        paths = set(pages) | self.CROWD
+        for path in sorted(paths):
+            with self.subTest(picture=path):
+                frame = cv2.imread(str(self.PAGES / path))
+                self.assertEqual(path in self.CROWD, crowd_seen(frame))
+
+
+class DayRecordTest(unittest.TestCase):
+    """Leo 2026-11-09 「當天有沒有派遣 要記錄下來」 / 「如果有紀錄派遣成功，就不用等」."""
+
+    def setUp(self):
+        reset_dismissed()
+        self.addCleanup(reset_dismissed)
+
+    def test_the_day_keeps_its_best_outcome_and_every_look(self):
+        from src.utils.field_followers import note_look, record_text, today_record
+
+        note_look("absent", "自动PVP", waited=5.0)
+        note_look("dismissed", "广场女神像", waited=11.2)
+        note_look("absent", "跑商", waited=0.5)
+        record = today_record()
+        self.assertEqual(("dismissed", "广场女神像"), (record["state"], record["where"]))
+        self.assertEqual(3, len(record["looks"]))
+        self.assertTrue(record_text(record).startswith("已领（广场女神像"))
+
+    def test_not_claimed_says_where_it_looked(self):
+        from src.utils.field_followers import note_look, record_text, today_record
+
+        note_look("key_pressed_blind", "自动PVP", waited=5.0)
+        note_look("absent", "广场女神像", waited=10.0)
+        self.assertEqual(
+            "没看到「!」，照样按了一次 F（找过：自动PVP 5 秒 按了 F、广场女神像 10 秒）",
+            record_text(today_record()),
+        )
+
+    def test_a_saved_claim_is_remembered_after_a_restart(self):
+        from src.utils import field_followers
+
+        field_followers.note_look("dismissed", "自动PVP")
+        field_followers.mark_dismissed()
+        # A new tool life: memory gone, the file stays.
+        field_followers._dismissed_game_day.clear()
+        field_followers._day_records.clear()
+        self.assertTrue(dismissed_today())
+
+    def test_each_account_has_its_own_day(self):
+        from unittest import mock
+
+        from src.utils import accounts
+
+        with mock.patch.object(accounts, "current_id", return_value="1"):
+            mark_dismissed()
+            self.assertTrue(dismissed_today())
+        with mock.patch.object(accounts, "current_id", return_value="2"):
+            self.assertFalse(dismissed_today())
+
+
+class DispatchReportTest(unittest.TestCase):
+    """Today's 派遣 reaches the run report, the 问题摘要 and the results page.
+    Those callers swallow errors, so each is run for real here."""
+
+    def setUp(self):
+        reset_dismissed()
+        self.addCleanup(reset_dismissed)
+
+    def test_batch_marks_todays_dispatch_on_its_report(self):
+        from unittest import mock
+
+        from src.tasks import run_report
+        from src.tasks.DailyBatchTask import DailyBatchTask
+        from src.utils.field_followers import note_look
+
+        note_look("dismissed", "自动PVP", waited=6.0)
+        with mock.patch.object(run_report, "mark") as mark:
+            DailyBatchTask._mark_dispatch()
+        key, value = mark.call_args.args
+        self.assertEqual("dispatch", key)
+        self.assertEqual("dismissed", value["state"])
+        self.assertTrue(value["text"].startswith("已领（自动PVP"))
+
+    def test_problem_summary_and_results_page_say_it(self):
+        from src.tasks import problem_report
+        from src.ui.shell.home import dispatch_line
+        from src.utils.field_followers import note_look
+
+        self.assertIsNone(problem_report._dispatch_today())
+        note_look("absent", "广场女神像", waited=5.0)
+        dispatch = problem_report._dispatch_today()
+        self.assertEqual("absent", dispatch["state"])
+        self.assertIn("广场女神像 5 秒", dispatch["text"])
+        self.assertTrue(dispatch_line(dispatch))
+        self.assertEqual("", dispatch_line(None))
+
+
 class OncePerDayTest(unittest.TestCase):
     def setUp(self):
         reset_dismissed()

@@ -1,3 +1,4 @@
+import itertools
 import unittest
 
 from src.utils.cartridge_quick_switch import QUICK_SWITCH_STABLE_FRAMES
@@ -2110,6 +2111,8 @@ class PVPTaskHelperTest(unittest.TestCase):
         # The old check searched a box written in 1080p numbers as if they
         # were 1440p ones, so it never saw the F button "!"; this test only
         # mirrored that box and could not catch it (fixed 2026-10-03).
+        from src.utils.field_followers import reset_dismissed, today_record
+
         look = {"appear_seconds": 5.0, "even_if_done_today": True}
         for outcome, after in (
             # Leo 2026-10-20: cleared → wait 1.5 s; not cleared (or never
@@ -2128,10 +2131,44 @@ class PVPTaskHelperTest(unittest.TestCase):
                 task.sleep = lambda seconds: calls.append(("sleep", seconds))
                 task.tap_key = lambda key, after_sleep=0.0: calls.append(("key", key, after_sleep))
                 task.log_info = lambda *_a, **_k: None
+                task.name = "自动PVP"
+                info = {}
+                task.info_set = lambda key, value: info.__setitem__(key, value)
+                reset_dismissed()
+                self.addCleanup(reset_dismissed)
 
                 PVPTask._clear_pvp_hub_notice_if_present(task)
 
                 self.assertEqual([look, *after], calls)
+                if outcome != "dismissed":
+                    # The blind F press goes into today's 派遣 record
+                    # (Leo 2026-11-09 「當天有沒有派遣 要記錄下來」).
+                    self.assertEqual("key_pressed_blind", today_record()["state"])
+                    self.assertIn("照样按了一次 F", info["派遣"])
+
+    def test_dismiss_field_followers_with_no_crowd_on_real_frame(self):
+        # PR #526 live 4K 2026-11-09: no "!" in the F slot crashed every field
+        # entry (NameError on FOLLOWERS_ABSENT); the real method, not a stub.
+        from src.utils.field_followers import dismissed_today, reset_dismissed, today_record
+        from tests.test_field_followers import _frame
+
+        reset_dismissed()
+        self.addCleanup(reset_dismissed)
+        without_icon = _frame("slot2_button_4k.png", (2560, 1440))
+        task = object.__new__(PVPTask)
+        task.name = "末日之书"
+        task.config = {}
+        info = {}
+        task.info_set = lambda key, value: info.__setitem__(key, value)
+        task.log_info = lambda *_args, **_kwargs: None
+        task.sleep = lambda *_args, **_kwargs: None
+        task.capture_frame = lambda: without_icon
+        task.operate_click = lambda *_a, **_k: self.fail("nothing to press")
+
+        self.assertEqual("absent", PVPTask.dismiss_field_followers(task, appear_seconds=0.3))
+        self.assertFalse(dismissed_today())
+        self.assertEqual("absent", today_record()["state"])
+        self.assertIn("没看到「!」", info["派遣"])
 
     def test_dismiss_field_followers_presses_f_icon_once_on_real_frame(self):
         from src.utils.field_followers import dismissed_today, reset_dismissed
@@ -2141,7 +2178,8 @@ class PVPTaskHelperTest(unittest.TestCase):
         self.addCleanup(reset_dismissed)
         with_icon = _frame("f_slot_followers_4k.png", (2560, 1440))
         without_icon = _frame("slot2_button_4k.png", (2560, 1440))
-        frames = iter([with_icon, with_icon, without_icon, without_icon])
+        # The crowd check after the press reads more frames: the icon is gone.
+        frames = itertools.chain([with_icon, with_icon], itertools.repeat(without_icon))
         task = object.__new__(PVPTask)
         task.config = {}
         task.info_set = lambda *_args, **_kwargs: None

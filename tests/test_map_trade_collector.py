@@ -3079,9 +3079,10 @@ class GreyAbsorbSkipsMapTest(unittest.TestCase):
         # Splash Queen's battle map (live 4K 2026-10-09): 吸收 done by hand,
         # 召集 and 压制 still to do.
         prepared, results, _states = self._grey_absorb_run(summon_grey=False)
-        self.assertEqual(["吸收", "召集"], prepared)
-        self.assertFalse(results[-1].completed)
-        self.assertEqual("召集可按", results[-1].message)
+        # 2026-11-09: a skill that cannot be prepared no longer stops the
+        # map's others, so 压制 is judged too.
+        self.assertEqual(["吸收", "召集", "压制"], prepared)
+        self.assertIn("召集可按", [result.message for result in results if not result.completed])
 
     def test_memory_edge_battle_area_still_presses_suppress(self):
         # Leo 2026-10-15 「活動卡帶記憶邊緣 戰鬥區 就算沒資源能吸收 也要按壓制」.

@@ -50,7 +50,7 @@ from src.utils.cartridge_quick_switch import (
     category_highlight_ratio,
 )
 from src.utils.colour_rules import switch_knob_side, switch_yellow_ratio
-from src.utils.field_followers import FOLLOWERS_DISMISSED
+from src.utils.field_followers import FOLLOWERS_DISMISSED, KEY_PRESSED_BLIND
 from src.utils.free_switch import ensure_free_switch_on
 from src.utils.home_confirmation import (
     HOME_DIMMED_P95_THRESHOLD_DEFAULT,
@@ -1010,6 +1010,7 @@ class PVPTask(BaseBD2Task):
             return
         self.log_info("镜中之战：开场 5 秒没确认赶走跟随角色，先按一次 F，等 1 秒再走去舞台。")
         self.tap_key(FIELD_FOLLOWERS_KEY, after_sleep=PVP_FOLLOWERS_KEY_SETTLE_SECONDS)
+        self.note_dispatch(KEY_PRESSED_BLIND, PVP_FOLLOWERS_STAND_SECONDS)
 
     def _click_pvp_stage_once(self, timeout: float, by_colour: bool = False) -> bool:
         # Standing on the stage hides it under the line-up, so the template

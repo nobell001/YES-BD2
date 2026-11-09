@@ -164,9 +164,11 @@ class EscapeStepTest(unittest.TestCase):
         return result, events
 
     def test_esc_follows_a_back_arrow_that_changed_nothing(self):
-        result, events = self._run([], home_after_presses=3)
+        result, events = self._run([], home_after_presses=4)
         self.assertTrue(result)
-        self.assertEqual(events, ["back", "H", "esc"])
+        # back did nothing → the top-right house's spot (a mouse press, #518)
+        # → H → Esc.
+        self.assertEqual(events, ["back", "back", "H", "esc"])
 
     def test_esc_is_pressed_one_at_a_time_and_at_most_three_times(self):
         result, events = self._run([])
@@ -177,7 +179,7 @@ class EscapeStepTest(unittest.TestCase):
 
     def test_no_more_esc_after_the_quit_dialog(self):
         # The first Esc brings the quit dialog; it is cancelled, Esc stops.
-        result, events = self._run(["none", "none", "none", "quit"])
+        result, events = self._run(["none", "none", "none", "none", "quit"])
         self.assertFalse(result)
         self.assertEqual(events.count("esc"), 1)
 

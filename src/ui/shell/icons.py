@@ -71,15 +71,30 @@ def icon(name: str, color: QColor | str, size: int = 18, stroke: float = 1.9) ->
     return result
 
 
+@lru_cache(maxsize=1024)
+def _renderer(name: str, color: str, opacity: float, stroke: float):
+    from PySide6.QtSvg import QSvgRenderer
+
+    return QSvgRenderer(_svg_bytes(name, color, stroke, opacity))
+
+
 def paint(
     painter: QPainter, rect: QRectF, name: str, color: QColor | str, stroke: float = 1.9
 ) -> None:
-    """Draw an icon into ``rect`` (logical pixels) with the painter."""
-    size = int(round(min(rect.width(), rect.height())))
-    painter.drawPixmap(
-        QRectF(rect.x(), rect.y(), size, size).toRect(),
-        pixmap(name, color, size, stroke),
-    )
+    """Draw an icon into ``rect`` (logical pixels) with the painter.
+
+    Drawn as lines at the screen's own resolution: a small picture scaled to
+    125 % / 150 % made thin strokes uneven, and the tick of a check box
+    looked broken at its corner (Leo 2026-11-09 「這個勾感覺像斷掉」)."""
+    value = QColor(color)
+    side = min(rect.width(), rect.height())
+    renderer = _renderer(name, value.name(), round(value.alphaF(), 3), float(stroke))
+    if not renderer.isValid():
+        return
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing)
+    renderer.render(painter, QRectF(rect.x(), rect.y(), side, side))
+    painter.restore()
 
 
 def icon_size(size: int) -> QSize:

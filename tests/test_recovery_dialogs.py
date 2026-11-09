@@ -309,7 +309,9 @@ class FastRecoveryTest(unittest.TestCase):
             mock.patch.object(recovery, "monotonic", iter(range(0, 1000)).__next__),
         ):
             self.assertTrue(recovery.recover_to_home(task))
-        self.assertEqual(1, len(presses))  # the back arrow first
+        # The back arrow first, then (back did nothing: 餐厅-like page) the
+        # top-right house's own spot once, by mouse (#518), then H.
+        self.assertEqual(2, len(presses))
         self.assertEqual(["H"], keys)
 
     def test_back_that_moved_a_page_is_pressed_again_before_h(self):

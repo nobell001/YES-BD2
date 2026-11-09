@@ -77,7 +77,7 @@ class _Game:
         self.presses = []
 
     def detect(self, _frame, icon):
-        state = self.icons[icon.name]
+        state = self.icons.get(icon.name, ActionIconState.ABSENT)
         if self.dim.get(icon.name, 0) > 0:
             self.dim[icon.name] -= 1
             state = USED

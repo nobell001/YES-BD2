@@ -3730,3 +3730,15 @@ msgstr "When the clone closes"
 
 msgid "不关"
 msgstr "Keep open"
+
+msgid "派遣：已领"
+msgstr "Dispatch: claimed"
+
+msgid "派遣：按了「!」没消失，可能没领到"
+msgstr "Dispatch: pressed \"!\" but it stayed, maybe not claimed"
+
+msgid "派遣：没看到「!」，照样按了一次 F"
+msgstr "Dispatch: no \"!\" seen, pressed F once anyway"
+
+msgid "派遣：没看到「!」"
+msgstr "Dispatch: no \"!\" seen"

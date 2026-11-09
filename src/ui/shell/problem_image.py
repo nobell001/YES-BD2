@@ -169,6 +169,9 @@ def summary_text(record: dict) -> str:
     read = read_line(record)
     if read:
         lines.append(tf("读到：{text}", text=read))
+    dispatch = record.get("dispatch") or {}
+    if dispatch.get("text"):
+        lines.append(tf("派遣：{text}", text=dispatch["text"]))
     return "\n".join(lines)
 
 
@@ -292,6 +295,10 @@ def _paint(pen: _Pen, record: dict, frame, before=()) -> float:
         other.append(t("用了桌面分身") if env["clone"] else t("没用分身"))
     if other:
         rows.append((t("其他"), " · ".join(other), None))
+    dispatch = record.get("dispatch") or {}
+    if dispatch.get("text"):
+        rows.append((t("派遣"), str(dispatch["text"]),
+                     None if dispatch.get("state") == "dismissed" else WARN))
     y = _card(pen, y, inner, lambda p, top: _rows(p, top, inner, rows))
 
     # How the run got there: its last steps (Leo 2026-11-05).

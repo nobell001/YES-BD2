@@ -20,15 +20,16 @@ from qfluentwidgets import FluentIcon
 from src.tasks.BaseBD2Task import HOME_KEY, BaseBD2Task
 from src.tasks.map_trade.models import ScreenState
 from src.tasks.map_trade.navigator import Navigator
+from src.tasks.map_trade.home_house import HOUSE_POINT, find_house
 from src.tasks.map_trade.vision import Vision
 from src.tasks.task_vision_mixin import REFERENCE_HEIGHT, REFERENCE_WIDTH
-from src.utils import field_battle, known_popups
+from src.utils import field_battle, known_popups, title_screen
 from src.utils.home_confirmation import HOME_LEFT_COLUMN_REQUIRED_HITS
-from src.utils.ocr_utils import fuzzy_substring_match, normalize_ocr_text
 from src.utils.wait_limits import LOADING_MAX_SECONDS
 
-# Room for the Esc steps after the back arrow and H.
-RECOVERY_ATTEMPTS = 8
+# Room for the Esc steps after the back arrow and H, plus the top-right
+# house presses (TOP_RIGHT_HOME_PRESSES_MAX, #518).
+RECOVERY_ATTEMPTS = 10
 UNKNOWN_SETTLE_SECONDS = 1.0
 # After a back press, poll the cheap home check this long.
 BACK_HOME_POLL_SECONDS = 1.5
@@ -82,10 +83,17 @@ ESCAPE_STEPS_MAX = 3
 # home (live 2K 2026-10-13: from the event stage page H did nothing on the
 # event hub and cost ~10 s of the 40 s way home).
 BACK_MOVES_BEFORE_HOME_KEY = 2
-# The game went back to its title screen (08:00 reset, disconnect, restart).
-TITLE_SCREEN_TEXTS = ("touchtostart",)
-# OCR misreads like "T0UCH TO STAR" missed the title: tolerant match.
-TITLE_SCREEN_FUZZY_RATIO = 0.8
+# 餐厅, 广场 and the fields have no top-left back arrow (the page title or
+# the channel button sits there); their way home is the house at the top
+# right.  Recovery never pressed it, so H was the only way out, and H needs
+# the game in front (player v0.3.2 2026-11-08: scheduled start, game not in
+# front, 5 top-left presses on 「格鲁菲餐厅」 did nothing, H never sent, the
+# rest of the daily skipped).  A press is posted to the game window, so it
+# works with the game behind other windows.  Twice at most: a house that did
+# nothing twice is not this button.
+TOP_RIGHT_HOME_PRESSES_MAX = 2
+# The game went back to its title screen (08:00 reset, disconnect, restart):
+# src/utils/title_screen.py, also with TOUCH TO START hidden (YES-BD2 #75).
 
 
 def _handle_dialog(task, vision: Vision) -> str:
@@ -96,12 +104,7 @@ def _handle_dialog(task, vision: Vision) -> str:
     frame = task.capture_frame()
     height, width = frame.shape[:2]
     boxes = vision.ocr_boxes(frame, "恢复主页弹窗")
-    text = "".join(normalize_ocr_text(getattr(box, "name", "")) for box in boxes)
-    alnum = normalize_ocr_text(text, alnum_only=True)
-    if any(
-        fuzzy_substring_match(alnum, title, TITLE_SCREEN_FUZZY_RATIO)
-        for title in TITLE_SCREEN_TEXTS
-    ):
+    if title_screen.shown(boxes, frame.shape):
         return "title"
     if getattr(task, "FIELD_BATTLE_ESCAPE", False) and field_battle.in_battle(boxes):
         # Back, H and Esc do nothing in a battle; Esc even ends the auto
@@ -329,6 +332,32 @@ def channel_button_at_back(vision, frame) -> bool:
     )
 
 
+def top_right_home_button(vision, frame):
+    """Where the top-right house (主页) is pressed, or None (the house or
+    the 「H」 badge under it: src/tasks/map_trade/home_house.py)."""
+    return find_house(vision, frame)
+
+
+def _press_top_right_home(task, navigator, frame, blind: bool = False) -> bool | None:
+    """Press the top-right house when one shows.  None: no house; True: home
+    reached; False: pressed, home not (yet) confirmed.  ``blind``: nothing
+    read, press where the house always sits (only on a page that has no
+    top-left back arrow, where that spot is the house)."""
+    found = top_right_home_button(navigator.vision, frame)
+    if found is not None:
+        task.log_info(
+            f"恢复主页：点击右上角主页按钮（认到{'小房子' if found.cue == 'house' else '下面的 H 字'}，"
+            f"{found.score:.2f}；用鼠标，游戏不在最前面也能点）。"
+        )
+        navigator.vision.click_client(found.center, frame.shape, after_sleep=0.5)  # 不用确认：下一行等主页，没到主页会再按一次
+    elif blind:
+        task.log_info("恢复主页：左上角没有返回、右上角小房子被挡住认不到，按小房子的固定位置。")
+        task.operate_click(*HOUSE_POINT, after_sleep=0.5)  # 不用确认：下一行等主页；只在没有左上返回的页面
+    else:
+        return None
+    return _wait_after_back(task, navigator, frame)
+
+
 def _recover_to_home(task, attempts: int) -> bool:
     vision = Vision(task)
     navigator = Navigator(task, vision)
@@ -341,6 +370,8 @@ def _recover_to_home(task, attempts: int) -> bool:
     back_moved = 0
     escape_presses = 0
     escape_stopped = False
+    house_presses = 0
+    house_blind_pressed = False
     for attempt in range(1, attempts + 1):
         if _home_now(navigator):
             return True
@@ -414,6 +445,26 @@ def _recover_to_home(task, attempts: int) -> bool:
         # after the last press must not get another back press.
         if attempt > 1 and _wait_home_briefly(task, navigator, 0.3):
             return True
+        if house_presses < TOP_RIGHT_HOME_PRESSES_MAX:
+            # Before back, H and Esc: a house at the top right is this page's
+            # own way home, and a mouse press needs no front.  Unread (guests
+            # walking behind it) on a page whose top-left press did nothing
+            # (餐厅: the page title sits there), that spot is the house: its
+            # fixed spot, once (4K live test 2026-11-09).  Not in a
+            # field (channel button): its HUD may be hidden and a press there
+            # walks the character.
+            blind = (
+                (back_did_nothing or back_moved >= BACK_MOVES_BEFORE_HOME_KEY)  # when H would come next
+                and not channel_seen
+                and not house_blind_pressed
+            )
+            pressed = _press_top_right_home(task, navigator, navigator.vision.capture(), blind=blind)  # 不用确认：没回主页最多再按一次，再走返回/H/Esc
+            if pressed:
+                return True
+            if pressed is not None:
+                house_presses += 1
+                house_blind_pressed = house_blind_pressed or blind
+                continue
         if (
             attempt > 1
             and not home_key_pressed

@@ -652,6 +652,11 @@ def _make_game_fullscreen() -> None:
     except Exception as exc:
         logger.debug(f"clone: bring game to front failed: {exc}")
     time.sleep(0.3)
+    if win32gui.GetForegroundWindow() != hwnd:
+        # Keys go to whatever is in front: never Alt+Enter another window.
+        # The next look tries again (FULLSCREEN_TRIES).
+        logger.info("clone: game not in front, Alt+Enter not sent")
+        return
     keybd_event = ctypes.windll.user32.keybd_event
     keybd_event(win32con.VK_MENU, 0, 0, 0)
     keybd_event(win32con.VK_RETURN, 0, 0, 0)

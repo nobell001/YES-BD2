@@ -56,7 +56,7 @@ from src.tasks.map_trade.models import (
     CollectionMapRole,
     MatchResult,
 )
-from src.tasks.map_trade import skill_layout
+from src.tasks.map_trade import other_skills, skill_layout
 from src.utils import ocr_count
 from src.utils.plain_text import DIAGNOSTIC_PREFIX
 from src.utils import ocr_size
@@ -97,6 +97,13 @@ PRESS_AGAIN_PAUSE_SECONDS = 1.5
 PRESS_TAKEN_WAIT_SECONDS = 3.0
 PRESS_TAKEN_POLL_SECONDS = 0.2
 # Slot count readers by icon name (the 压制 icon is named 制服).
+# Icon name -> skill name (the 压制 icon is named 制服).
+ICON_SKILL = {
+    SEARCH_ICON.name: "探查",
+    ABSORB_ICON.name: "吸收",
+    "召集": "召集",
+    "制服": "压制",
+}
 COUNT_ACTIONS_BY_ICON = {
     ABSORB_ACTION.icon.name: ABSORB_ACTION,
     SUMMON_ACTION.icon.name: SUMMON_ACTION,
@@ -239,7 +246,7 @@ class SkillExecutionMixin:
         observed_samples = 0
         for attempt in range(ACTION_ICON_DETECTION_SAMPLES):
             frame = self.vision.capture()
-            detection = self.action_icons.detect(frame, icon)
+            detection = self._detect(frame, icon)
             observed_samples += 1
             if (
                 best_detection is None
@@ -308,7 +315,7 @@ class SkillExecutionMixin:
         allow_group_one_recovery: bool = False,
     ) -> bool:
         def inspect(frame):
-            detections = tuple(self.action_icons.detect(frame, icon) for icon in expected_icons)
+            detections = tuple(self._detect(frame, icon) for icon in expected_icons)
             return detections, all(
                 value.state not in {ActionIconState.ABSENT, ActionIconState.UNKNOWN}
                 for value in detections
@@ -343,8 +350,14 @@ class SkillExecutionMixin:
                 for value in best_detections
             )
 
+        self._menu_missing_icons = frozenset()
+        if self._proven_bar_shows(expected_icons):
+            return True
         detections, opened = inspect_window()
         if opened or self._counts_prove_menu(expected_icons):
+            self._check_skill_layout()
+            return True
+        if self._siblings_prove_menu(expected_icons, detections):
             self._check_skill_layout()
             return True
 
@@ -399,7 +412,12 @@ class SkillExecutionMixin:
                 *SKILL_GROUP_RELATIVE_POINTS[group], after_sleep=SKILL_GROUP_SWITCH_SETTLE_SECONDS
             )
             detections, opened = inspect_window()
-            if opened or self._counts_prove_menu(expected_icons):
+            if (
+                opened
+                or self._proven_bar_shows(expected_icons)
+                or self._counts_prove_menu(expected_icons)
+                or self._siblings_prove_menu(expected_icons, detections)
+            ):
                 self._collection_skill_group = group
                 self._check_skill_layout()
                 return True
@@ -429,10 +447,274 @@ class SkillExecutionMixin:
             reads.append(layout)
             if attempt == 0:
                 self.task.sleep(ACTION_ICON_DETECTION_INTERVAL)
-        wrong = skill_layout.wrong_slots(reads[0])
-        if wrong and wrong == skill_layout.wrong_slots(reads[1]):
+        moved, wrong = skill_layout.placement(reads)
+        if wrong:
             raise skill_layout.SkillLayoutWrong(skill_layout.message(wrong))
+        for skill, slot in moved.items():
+            self._place(skill, slot)
         self._skill_layout_checked = True
+
+    # Leo 2026-11-09 (option A): a collection skill found in any of slots
+    # 1-5 is pressed where it is; its icon, count and countdown are read
+    # there.  Only one found nowhere stops the run.
+
+    def _place(self, skill: str, slot: str) -> None:
+        placed = getattr(self, "_placement", None)
+        if placed is None:
+            placed = self._placement = {}
+        if placed.get(skill) == slot:
+            return
+        placed[skill] = slot
+        (getattr(self, "_proven_points", None) or {}).pop(skill, None)
+        self._status(
+            "技能栏位置",
+            f"{skill}在第{skill_layout.slot_number_of(slot)}格，就在那格按",
+        )
+        self.task.log_info(
+            f"地图采集：{skill}放在技能栏第{skill_layout.slot_number_of(slot)}格，"
+            f"不是第{skill_layout.slot_number(skill)}格，就在那格按。"
+        )
+
+    def _slot_of(self, skill: str) -> str | None:
+        return (getattr(self, "_placement", None) or {}).get(skill)
+
+    def _slot_no(self, skill: str) -> int:
+        slot = self._slot_of(skill)
+        return skill_layout.slot_number_of(slot) if slot else skill_layout.slot_number(skill)
+
+    def _icon_here(self, icon: ActionIconSpec) -> ActionIconSpec:
+        skill = ICON_SKILL.get(icon.name)
+        slot = self._slot_of(skill) if skill else None
+        if slot is None or slot == icon.slot_name:
+            return icon
+        return skill_layout.icon_at_slot(icon, slot)
+
+    def _detect(self, frame, icon: ActionIconSpec):
+        return self.action_icons.detect(frame, self._icon_here(icon))
+
+    def _count_roi(self, action: SkillAction):
+        home = action.fixed_count_relative_roi
+        slot = self._slot_of(action.name)
+        if home is None or slot is None:
+            return home
+        return skill_layout.count_roi_at(home, action.name, slot)
+
+    def _countdown_roi(self):
+        slot = self._slot_of(SEARCH_ACTION.name)
+        if slot is None:
+            return SEARCH_COUNTDOWN_RELATIVE_ROI
+        return skill_layout.count_roi_at(SEARCH_COUNTDOWN_RELATIVE_ROI, SEARCH_ACTION.name, slot)
+
+    def _find_elsewhere(self, action: SkillAction):
+        """(frame, detection) of ``action``'s icon in another slot (1-5) on
+        two looks in a row, now placed there; else None."""
+        here = self._slot_of(action.name) or skill_layout.HOME_SLOT[action.name]
+        for _number, slot in skill_layout.ALL_SLOTS:
+            if slot == here:
+                continue
+            spec = skill_layout.icon_at_slot(action.icon, slot)
+            looks = []
+            for look in range(2):
+                frame = self.vision.capture()
+                looks.append((frame, self.action_icons.detect(frame, spec)))
+                if looks[-1][1].state not in {ActionIconState.AVAILABLE, ActionIconState.USED}:
+                    break
+                if look == 0:
+                    self.task.sleep(ACTION_ICON_DETECTION_INTERVAL)
+            if len(looks) == 2 and looks[0][1].state is looks[1][1].state:
+                self._place(action.name, slot)
+                frame, detection = looks[1]
+                return frame, replace(detection, stable=True, sample_count=2)
+        return None
+
+    # Leo 2026-11-09 「就算前面辨識失敗 就算照常按 有成功了 後面就不用再檢查
+    # 就點那個位置避免出錯」: once the game took a press of a skill this run,
+    # later maps press the same point without asking the icon matcher first.
+    # Guard (Leo 2026-11-09 「無論如何技能圖標下方都要有數字 沒數字 代表根本不
+    # 是 吸收召集壓制這三個」): a point is pressed blind only while a number
+    # shows under it (a shop, a dialogue or another skill group has none).
+    # The press is still judged by the game afterwards (grey, +1, toast), and
+    # a grey icon is still the game saying "used", so it is not pressed.
+
+    def _note_click_point(self, action: SkillAction, center, frame) -> None:
+        clicked = getattr(self, "_clicked_points", None)
+        if clicked is None:
+            clicked = self._clicked_points = {}
+        try:
+            height, width = frame.shape[:2]
+            clicked[action.name] = (center[0] / width, center[1] / height)
+        except (AttributeError, TypeError, ValueError, ZeroDivisionError):
+            return
+
+    def _prove_click_point(self, action: SkillAction) -> None:
+        noted = (getattr(self, "_clicked_points", None) or {}).get(action.name)
+        if noted is None:
+            return
+        proven = getattr(self, "_proven_points", None)
+        if proven is None:
+            proven = self._proven_points = {}
+        proven[action.name] = noted
+
+    def _slot_has_number(self, action: SkillAction) -> bool:
+        """Some digit shows in the skill's count box (read or not as a count)."""
+        if self._count_roi(action) is None:
+            return False
+        try:
+            if self._read_count(action) is not None:
+                return True
+        except AttributeError:  # vision without OCR (tests, probes)
+            return False
+        texts = getattr(getattr(self, "_last_count_read", None), "texts", ()) or ()
+        return any(re.search(r"\d", str(text)) for text in texts)
+
+    def _left_field_after_blind_press(self, action: SkillAction) -> bool:
+        """A press made without its icon seen opened another page (live 4K
+        2026-11-09: a potion skill in slot 4 opened 炼金术): the skill bar is
+        gone on two looks.  Then Esc once, and the slot is not pressed blind
+        again this run (Leo 2026-11-09 「修完 不要再有同類錯誤」)."""
+        for look in range(2):
+            if self._skill_bar_on_screen():
+                return False
+            if look == 0:
+                self.task.sleep(PIPELINE_RECHECK_SECONDS)
+        bad = getattr(self, "_bad_slots", None)
+        if bad is None:
+            bad = self._bad_slots = set()
+        bad.add(action.name)
+        (getattr(self, "_proven_points", None) or {}).pop(action.name, None)
+        self.task.log_warning(
+            f"地图采集：按{action.name}的固定栏位后技能栏不见了（打开了别的页面），按 Esc 退回。"
+        )
+        tap = getattr(self.task, "tap_escape", None)
+        if tap is not None:
+            tap(after_sleep=1.0)
+        return True
+
+    def _skill_bar_on_screen(self) -> bool:
+        frame = self.vision.capture()
+        if selected_skill_group(frame) is not None:
+            return True
+        return any(
+            self._detect(frame, icon).state
+            in {ActionIconState.AVAILABLE, ActionIconState.USED}
+            for icon in (SEARCH_ICON, ABSORB_ICON, SUMMON_ACTION.icon, SUPPRESS_ACTION.icon)
+        )
+
+    def _other_skill_in(self, action: SkillAction) -> str | None:
+        """A blacklisted (non-collection) skill clearly seen where ``action``
+        is pressed (other_skills: strict, a veto only)."""
+        slot = self._slot_of(action.name) or skill_layout.HOME_SLOT[action.name]
+        try:
+            return other_skills.other_skill_at(self.vision.capture(), slot)
+        except (AttributeError, TypeError, ValueError, IndexError):
+            return None
+
+    def _stop_if_not_on_bar(self, action: SkillAction) -> None:
+        """The other collection skills are on the bar but this one's slot
+        shows neither its icon nor a number: looked at once more, then the
+        run stops and says how to set the bar (a skill not equipped, or
+        another skill in its slot)."""
+        self.task.sleep(ACTION_ICON_DETECTION_INTERVAL)
+        _frame, detection = self._detect_action_icon(action.icon)
+        if detection.state in {ActionIconState.AVAILABLE, ActionIconState.USED}:
+            return
+        if self._slot_has_number(action):
+            return
+        other = self._other_skill_in(action)
+        if other is not None:
+            raise skill_layout.SkillLayoutWrong(
+                skill_layout.other_skill_message(action.name, other, self._slot_no(action.name))
+            )
+        raise skill_layout.SkillLayoutWrong(skill_layout.missing_message(action.name))
+
+    def _proven_bar_shows(self, expected_icons) -> bool:
+        proven = getattr(self, "_proven_points", None) or {}
+        actions = [
+            COUNT_ACTIONS_BY_ICON[icon.name]
+            for icon in expected_icons
+            if icon.name in COUNT_ACTIONS_BY_ICON
+        ]
+        known = [action for action in actions if action.name in proven]
+        # 有备案：没数字就照常认图标（下面 inspect_window）
+        if not known or not any(self._slot_has_number(action) for action in known):
+            return False
+        self._menu_missing_icons = frozenset(
+            action.icon.name for action in actions if action.name not in proven
+        )
+        self._status("技能栏确认", "技能下方有数字，之前按成功过，直接按")
+        self._check_skill_layout()
+        return True
+
+    def _proven_detection(self, action: SkillAction):
+        """(frame, detection) at the point a press of ``action`` worked
+        earlier this run, while a number shows under it."""
+        noted = (getattr(self, "_proven_points", None) or {}).get(action.name)
+        if action.name in getattr(self, "_bad_slots", ()):
+            return None
+        if noted is None or not self._slot_has_number(action):
+            return None
+        if self._other_skill_in(action) is not None:
+            return None
+        frame = self.vision.capture()
+        height, width = frame.shape[:2]
+        x, y = round(noted[0] * width), round(noted[1] * height)
+        side = max(4, round(SLOT_ICON_SIZE * height))
+        self._status(f"{action.name}图标", "没认出来，下方有数字，按之前按成功的位置")
+        return frame, ActionIconDetection(
+            ActionIconState.AVAILABLE,
+            MatchResult(0.0, (x - side // 2, y - side // 2), (side, side)),
+            reason=SLOT_REASON,
+            stable=True,
+        )
+
+    def _siblings_prove_menu(self, expected_icons, detections) -> bool:
+        """Some of the collection icons are seen in their fixed slots: that
+        is the collection group, whatever one icon reads.
+
+        A player's 2560x1440 run (2026-11-09, Q_sp1 战斗区域1/2) logged
+        「技能栏部分识别但未确认：吸收=available, 召集=available,
+        制服=absent」 on every battle map: one icon the matcher did not take
+        kept the two it did take unpressed, and only 探查 ran (the same
+        stop on 2026-10-11 had 召集=absent).  吸收/召集/压制 exist only in
+        the collection group, so two of them seen, or one seen with a count
+        readable under any of the expected slots, is enough (Leo 2026-11-06
+        「額外線索只幫忙，不能限制」).  Each skill is then judged by its own
+        icon or count; the unseen one is pressed at its fixed slot only
+        while a number shows under it (``_prepare_action``).
+        """
+        if len(expected_icons) < 2:
+            return False
+        seen = [
+            icon
+            for icon, value in zip(expected_icons, detections, strict=True)
+            if value.state in {ActionIconState.AVAILABLE, ActionIconState.USED}
+        ]
+        if not seen:
+            return False
+        if len(seen) < 2 and not self._any_count_readable(expected_icons):
+            return False
+        missing = [icon for icon in expected_icons if icon not in seen]
+        self._menu_missing_icons = frozenset(icon.name for icon in missing)
+        self._status(
+            "技能栏确认",
+            "、".join(icon.name for icon in seen)
+            + "在固定栏位，"
+            + "、".join(icon.name for icon in missing)
+            + "图标没认出来：下方有数字就按固定栏位，看游戏的反应",
+        )
+        return True
+
+    def _any_count_readable(self, expected_icons: tuple[ActionIconSpec, ...]) -> bool:
+        for icon in expected_icons:
+            action = COUNT_ACTIONS_BY_ICON.get(icon.name)
+            if action is None:
+                continue
+            try:
+                if self._read_count(action) is not None:
+                    return True
+            except AttributeError:  # vision without OCR (tests, probes)
+                return False
+        return False
 
     def _counts_prove_menu(self, expected_icons: tuple[ActionIconSpec, ...]) -> bool:
         """The skill group shows when every expected slot reads "used/limit".
@@ -702,13 +984,28 @@ class SkillExecutionMixin:
             else:
                 message = f"探查图标状态不可点击：{detection.state.value}"
             return SkillExecutionResult(False, message=message)
-        countdown_roi = SEARCH_COUNTDOWN_RELATIVE_ROI
+        countdown_roi = self._countdown_roi()
         if clear:
             center = detection.match.center
         else:
             # The icon is washed out by the ground (snow, bright stone): its
             # slot is fixed (the countdown appears over it), so the press goes
             # there and only the toast or countdown proves it started.
+            if search_action.name in getattr(self, "_bad_slots", ()):
+                return SkillExecutionResult(
+                    False,
+                    message="技能栏第1格上次按下去打开了别的页面，探查图标也没认出来，这次不再按",
+                )
+            other = self._other_skill_in(search_action)
+            if other is not None:
+                found = self._find_elsewhere(search_action)
+                if found is None:
+                    raise skill_layout.SkillLayoutWrong(
+                        skill_layout.other_skill_message(
+                            search_action.name, other, self._slot_no(search_action.name)
+                        )
+                    )
+                countdown_roi = self._countdown_roi()
             frame = self.vision.capture()
             center = relative_roi_center(countdown_roi, frame.shape)
             self._status("探查", "图标看不清，按固定栏位并以提示/倒计时确认")
@@ -722,6 +1019,16 @@ class SkillExecutionMixin:
         self._search_pressed_at = monotonic()
         self._dim_waited_at = None
         feedback = self._read_action_feedback(search_action)
+        if (
+            not clear
+            and feedback.outcome != "success"
+            and self._left_field_after_blind_press(search_action)
+        ):
+            return SkillExecutionResult(
+                False,
+                message="技能栏第1格按下去打开了别的页面（那格不是探查），已按 Esc 退回，"
+                f"跑图要把右下角技能按第 1→4 格放成：{skill_layout.LAYOUT_TEXT}",
+            )
         if feedback.outcome == "success":
             self._wait_after_feedback_match(search_action, feedback)
         elif not self._search_started_without_feedback():
@@ -835,7 +1142,7 @@ class SkillExecutionMixin:
         text = self.vision.ocr_text(
             frame,
             "探查倒计时",
-            relative_roi=SEARCH_COUNTDOWN_RELATIVE_ROI,
+            relative_roi=self._countdown_roi(),
             target_height=ocr_size.READ_HEIGHT,
             ocr_scale=SKILL_OCR_UPSCALE,
         )
@@ -863,7 +1170,7 @@ class SkillExecutionMixin:
         first = self._read_search_countdown(frame)
         if first is None:
             return None
-        detection = self.action_icons.detect(frame, SEARCH_ICON)
+        detection = self._detect(frame, SEARCH_ICON)
         if detection.state is not ActionIconState.AVAILABLE:
             return first
         self.task.sleep(SEARCH_TICK_CONFIRM_SECONDS)
@@ -1107,8 +1414,9 @@ class SkillExecutionMixin:
         count baseline, ARMED/CLICKED records and post-click proof (icon
         used + feedback or an exact +1 count) as ``_use_action``.  Only the
         order differs, and the 0.8 s pause after each toast is gone (a
-        hidden toast is covered by the +1 count proof).  The first action
-        that cannot be prepared stops the batch before any later click.
+        hidden toast is covered by the +1 count proof).  An action that
+        cannot be prepared is reported and the others still go; only one the
+        game showed used up stops the batch before any later click.
         """
         results: list[SkillExecutionResult] = []
         armed: list[tuple[SkillAction, object, ActionIconDetection, tuple[int, int] | None]] = []
@@ -1146,8 +1454,13 @@ class SkillExecutionMixin:
                 map_done = False
             if early is not None:
                 results.append(early)
-                if not early.completed:
+                if not early.completed and early.depleted:
+                    # Only a day the game showed used up holds the others back.
                     break
+                # One skill that could not be pressed no longer stops the
+                # map's others: each goes by its own icon (Leo 2026-10-15
+                # 「就算沒資源能吸收 也要按壓制」; 2026-11-09 a 吸收 left
+                # unpressed kept 召集/压制 unpressed too).
                 continue
             armed.append(prepared)
             if action.name in getattr(self, "_full_reads", ()):
@@ -1157,7 +1470,9 @@ class SkillExecutionMixin:
                 # 確實滿了」; 2026-10-05: at 吸收's limit 召集/压制 stay unpressed).
                 later = tuple(actions[position + 1 :])
                 break
-        stop_after = len(results) if results and not results[-1].completed else None
+        stop_after = (
+            len(results) if results and not results[-1].completed and results[-1].depleted else None
+        )
         clicked = []
         last_click_at = None
         for action, frame, detection, before in armed:
@@ -1196,7 +1511,20 @@ class SkillExecutionMixin:
                 after_sleep=ACTION_AFTER_CLICK_SECONDS,
             )
             self.progress.mark_action_clicked(card_id, map_role, action.name)
+            self._note_click_point(action, detection.match.center, frame)
             feedback = self._read_action_feedback(action)
+            if detection.reason == SLOT_REASON and self._left_field_after_blind_press(action):
+                self.progress.mark_action_void(
+                    card_id, map_role, action.name, "按下去打开了别的页面，已退回"
+                )
+                results.append(
+                    SkillExecutionResult(
+                        False,
+                        message=f"技能栏第{self._slot_no(action.name)}格按下去打开了"
+                        f"别的页面（那格不是{action.name}），已按 Esc 退回，这次不再按这一格",
+                    )
+                )
+                continue
             clicked.append((action, detection, before, feedback))
         if clicked:
             # Let the last icon finish greying before it is judged (live 2K
@@ -1241,6 +1569,8 @@ class SkillExecutionMixin:
                 self.progress.mark_action_seen_done(card_id, map_role, action.name)
                 self._status(f"{action.name}状态", "已补按一次，不再检查")
                 result = SkillExecutionResult(True, result.depleted, "已补按一次，不再检查")
+            if result.completed and not result.depleted:
+                self._prove_click_point(action)
             verified.append(result)
         if stop_after is not None:
             # Keep the order: verified clicks first, then the failure.
@@ -1270,7 +1600,7 @@ class SkillExecutionMixin:
         looks = 1 + max(0, round(timeout / PRESS_TAKEN_POLL_SECONDS))
         for look in range(looks):
             frame = self.vision.capture()
-            detection = self.action_icons.detect(frame, icon)
+            detection = self._detect(frame, icon)
             if detection.state is wanted:
                 return True, frame, detection
             if look + 1 < looks:
@@ -1377,8 +1707,49 @@ class SkillExecutionMixin:
         )
         if resumed is not None:
             return resumed, None
+        proven = None
+        if (
+            unsteady or detection.state in {ActionIconState.ABSENT, ActionIconState.UNKNOWN}
+        ) and action.name in getattr(self, "_bad_slots", ()):
+            return SkillExecutionResult(
+                False,
+                message=f"技能栏第{self._slot_no(action.name)}格上次按下去打开了"
+                f"别的页面，图标也没认出来，这次不再按",
+            ), None
         if unsteady or detection.state in {ActionIconState.ABSENT, ActionIconState.UNKNOWN}:
-            slot = self._slot_detection(action, seen_bright=unsteady)
+            proven = self._proven_detection(action)
+        if proven is not None:
+            frame, detection = proven
+        elif unsteady or detection.state in {ActionIconState.ABSENT, ActionIconState.UNKNOWN}:
+            # Its icon was not taken while the others proved the bar
+            # (_siblings_prove_menu): pressed at its slot like a bright one,
+            # the game's answer decides (a press on a used skill does nothing).
+            # Only with a number under it: no number, not one of the three.
+            other = self._other_skill_in(action)
+            by_siblings = (
+                action.icon.name in getattr(self, "_menu_missing_icons", ())
+                and action.name not in getattr(self, "_bad_slots", ())
+                and other is None
+                and self._slot_has_number(action)
+            )
+            elsewhere = None
+            if other is not None or (
+                action.icon.name in getattr(self, "_menu_missing_icons", ()) and not by_siblings
+            ):
+                # Its slot holds another skill (blacklist), or neither its
+                # icon nor a number: look in the other slots first.
+                elsewhere = self._find_elsewhere(action)
+                if elsewhere is None and other is not None:
+                    raise skill_layout.SkillLayoutWrong(
+                        skill_layout.other_skill_message(
+                            action.name, other, self._slot_no(action.name)
+                        )
+                    )
+                if elsewhere is None:
+                    self._stop_if_not_on_bar(action)
+            slot = elsewhere or self._slot_detection(
+                action, seen_bright=unsteady or by_siblings, by_siblings=by_siblings
+            )
             if slot is None:
                 if unsteady:
                     return SkillExecutionResult(
@@ -1415,7 +1786,9 @@ class SkillExecutionMixin:
             return failure, None
         return None, (action, frame, detection, before)
 
-    def _slot_detection(self, action: SkillAction, *, seen_bright: bool = False):
+    def _slot_detection(
+        self, action: SkillAction, *, seen_bright: bool = False, by_siblings: bool = False
+    ):
         """(frame, detection) at the action's fixed slot when its icon is
         washed out but the count under it reads steadily (Leo 2026-10-06:
         decide by the text), or when it was seen bright with no two looks in
@@ -1424,7 +1797,7 @@ class SkillExecutionMixin:
         then proven by an exact +1 on that count or the game's answer (the
         icon greying, its toast); a full count is pressed once and judged the
         same way (_finish_after_click)."""
-        if action.fixed_count_relative_roi is None:
+        if self._count_roi(action) is None:
             return None
         self._last_count_window_stable = False
         count = self._read_count_window(action)
@@ -1433,14 +1806,19 @@ class SkillExecutionMixin:
             return None
         frame = self.vision.capture()
         height, width = frame.shape[:2]
-        left, top, right, _bottom = action.fixed_count_relative_roi
+        left, top, right, _bottom = self._count_roi(action)
         # The button's face sits just above its count.
         x = round((left + right) / 2 * width)
         y = round((top - SLOT_ICON_ABOVE_COUNT) * height)
         side = max(4, round(SLOT_ICON_SIZE * height))
         match = MatchResult(0.0, (x - side // 2, y - side // 2), (side, side))
         by_count = f"以次数 {count[0]}/{count[1]} 为准" if steady else "次数没读稳，看游戏的反应"
-        seen = "是亮的，但连看几次都不一样" if seen_bright else "看不清"
+        if by_siblings:
+            seen = "图标没认出来（其他采集技能在栏上）"
+        elif seen_bright:
+            seen = "是亮的，但连看几次都不一样"
+        else:
+            seen = "看不清"
         self._status(f"{action.name}图标", f"{seen}，按固定栏位，{by_count}")
         detection = ActionIconDetection(
             ActionIconState.AVAILABLE,
@@ -1941,6 +2319,11 @@ class SkillExecutionMixin:
             and after[0] == before[0] + 1
             and (post_window_stable or exact_single_increment)
         )
+        # Its own count up by exactly one is the game taking the press, even
+        # on one read with another skill's toast still showing and the icon
+        # not read (live 4K 2026-11-09: 吸收 6->7 and 9->10 under 探查's
+        # toast came out "unknown").  While the icon still reads bright one
+        # read is not enough (a press that did not take stays bright).
         # The count is this action's own, so a stable exact +1 is the game
         # taking the press whatever the icon reads: on bright ground (towns in
         # snow or stone, live 2K 2026-09-29) the greyed icon fails its
@@ -1985,7 +2368,10 @@ class SkillExecutionMixin:
         toast_answered = full_read and feedback.outcome == "success"
         if toast_took or (
             icon_used and (feedback_success or count_proves or impossible_read)
-        ) or greyed_by_press or (count_proves and post_window_stable) or toast_answered:
+        ) or greyed_by_press or (
+            count_proves
+            and (post_window_stable or post_detection.state is not ActionIconState.AVAILABLE)
+        ) or toast_answered:
             # A valid absolute snapshot is settled immediately; any
             # dim/bare/invalid post OCR remains a durable pending action.
             trusted_post = post_window_stable or exact_single_increment
@@ -2261,7 +2647,7 @@ class SkillExecutionMixin:
         UI text beside it.  ``_last_count_read`` keeps what was read, for the
         skip reason."""
         name = f"{action.name}次数"
-        roi = action.fixed_count_relative_roi
+        roi = self._count_roi(action)
 
         def fixed_box(look: ocr_count.Look):
             return lambda: self._read_count_box(action, look)
@@ -2294,7 +2680,7 @@ class SkillExecutionMixin:
         return self.vision.ocr_text(
             self.vision.capture(),
             f"{action.name}次数",
-            relative_roi=action.fixed_count_relative_roi,
+            relative_roi=self._count_roi(action),
             target_height=ocr_size.READ_HEIGHT,
             ocr_scale=look.scale,
             **({"bordered": True} if look.bordered else {}),
@@ -2313,7 +2699,7 @@ class SkillExecutionMixin:
         True when it reads the same, False when another count, None when
         nothing (or the skill has no fixed box).  One way's misread ("2/2"
         for 2/21, its last digit lost) is then not enough."""
-        if action.fixed_count_relative_roi is None:
+        if self._count_roi(action) is None:
             return None
         again = self._read_count_again(action)
         self._status(

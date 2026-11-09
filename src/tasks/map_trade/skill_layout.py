@@ -34,6 +34,11 @@ FIXED_SLOTS = (
     (4, "subdue", "压制", SUBDUE_ICON),
 )
 LAYOUT_TEXT = "探查、吸收、召集、压制"
+# Every slot a skill may sit in: the four above and the fifth (the player's
+# own; Leo 2026-11-09 picked 「1～5 格都找，找到就在那格按」).
+ALL_SLOTS = ((1, "search"), (2, "absorb"), (3, "summon"), (4, "subdue"), (5, "teleport"))
+SLOT_NAMES = dict(ALL_SLOTS)
+HOME_SLOT = {skill: slot for _number, slot, skill, _icon in FIXED_SLOTS}
 # Two slots read: the collection group is on screen (else another group or
 # no skill bar, and nothing can be said yet).
 CONCLUSIVE_SLOTS = 2
@@ -63,7 +68,7 @@ def icon_at_slot(icon: ActionIconSpec, slot: str) -> ActionIconSpec:
 
 _SPECS = {
     (number, skill): icon_at_slot(icon, slot)
-    for number, slot, _expected, _icon in FIXED_SLOTS
+    for number, slot in ALL_SLOTS
     for _n, _s, skill, icon in FIXED_SLOTS
 }
 
@@ -71,7 +76,7 @@ _SPECS = {
 def read_layout(detector, frame) -> dict[int, str | None]:
     """Slot number -> the one collection skill seen there (None: not clear)."""
     layout: dict[int, str | None] = {}
-    for number, _slot, _expected, _icon in FIXED_SLOTS:
+    for number, _slot in ALL_SLOTS:
         seen = [
             skill
             for _n, _s, skill, _i in FIXED_SLOTS
@@ -91,8 +96,59 @@ def wrong_slots(layout: dict[int, str | None]) -> list[tuple[int, str, str]]:
     return [
         (number, seen, expected[number])
         for number, seen in sorted(layout.items())
-        if seen is not None and seen != expected[number]
+        if number in expected and seen is not None and seen != expected[number]
     ]
+
+
+def placement(reads) -> tuple[dict[str, str], list[tuple[int, str, str]]]:
+    """(skill -> slot name for each skill seen away from its own slot in
+    every read, wrong slots whose own skill is seen nowhere).
+
+    Leo 2026-11-09: a skill found in any of slots 1-5 is pressed where it
+    is; only one not found anywhere stops the run.  A skill also seen in its
+    own slot stays there."""
+    moved: dict[str, str] = {}
+    for _n, home, skill, _icon in FIXED_SLOTS:
+        places = [
+            {number for number, seen in layout.items() if seen == skill} for layout in reads
+        ]
+        common = set.intersection(*places) if places else set()
+        home_number = next(n for n, slot in ALL_SLOTS if slot == home)
+        if home_number in common or len(common) != 1:
+            continue
+        moved[skill] = SLOT_NAMES[next(iter(common))]
+    wrong = [
+        (number, seen, should)
+        for number, seen, should in wrong_slots(reads[0])
+        if (number, seen, should) in wrong_slots(reads[-1]) and should not in moved
+    ]
+    return moved, wrong
+
+
+def slot_number_of(slot_name: str) -> int:
+    return next(n for n, slot in ALL_SLOTS if slot == slot_name)
+
+
+def _box_at(home_box, home_slot: str, slot: str):
+    """``home_box`` (relative, measured under ``home_slot``) moved by the
+    distance from that slot's centre to ``slot``'s."""
+    from src.tasks.map_trade.action_icons import (
+        ACTION_SLOT_CENTERS_REFERENCE,
+        SKILL_REFERENCE_HEIGHT,
+        SKILL_REFERENCE_WIDTH,
+    )
+
+    hx, hy = ACTION_SLOT_CENTERS_REFERENCE[home_slot]
+    tx, ty = ACTION_SLOT_CENTERS_REFERENCE[slot]
+    dx, dy = (tx - hx) / SKILL_REFERENCE_WIDTH, (ty - hy) / SKILL_REFERENCE_HEIGHT
+    left, top, right, bottom = home_box
+    return (left + dx, top + dy, right + dx, bottom + dy)
+
+
+def count_roi_at(home_box, skill: str, slot: str):
+    """The skill's count box when it sits in ``slot``: where it sits under
+    its own icon, moved with the icon."""
+    return _box_at(home_box, HOME_SLOT[skill], slot)
 
 
 def message(wrong: list[tuple[int, str, str]]) -> str:
@@ -101,4 +157,31 @@ def message(wrong: list[tuple[int, str, str]]) -> str:
     return (
         f"技能栏放的位置不对：{slots}。跑图要把右下角技能按第 1→4 格放成：{LAYOUT_TEXT}"
         "（第5格随你放）。请在游戏里换好技能位置再开始，这次先不跑。"
+    )
+
+
+def slot_number(skill: str) -> int:
+    return next(n for n, _slot, name, _icon in FIXED_SLOTS if name == skill)
+
+
+def missing_message(skill: str) -> str:
+    """The skill is not on the bar: its slot shows neither its icon nor a
+    count (Leo 2026-11-09 「沒數字 代表根本不是 吸收召集壓制這三個」「玩家設定錯
+    …停下來 然後說…應該設定成怎麼樣 然後重試」)."""
+    number = slot_number(skill)
+    return (
+        f"技能栏第{number}格不是{skill}（认不出图标，下面也没有次数）。"
+        f"跑图要把右下角技能按第 1→4 格放成：{LAYOUT_TEXT}"
+        "（第5格随你放）。请在游戏里换好技能位置后重新开始跑图，这次先不跑。"
+    )
+
+
+def other_skill_message(skill: str, other: str, number: int | None = None) -> str:
+    """A skill that is not a collection one sits where ``skill`` belongs and
+    ``skill`` is found in no other slot."""
+    number = number or slot_number(skill)
+    return (
+        f"技能栏第{number}格是{other}，不是{skill}，其他格也没找到{skill}。"
+        f"跑图要把右下角技能按第 1→4 格放成：{LAYOUT_TEXT}"
+        "（第5格随你放）。请在游戏里换好技能位置后重新开始跑图，这次先不跑。"
     )

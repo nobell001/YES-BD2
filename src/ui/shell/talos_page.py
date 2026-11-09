@@ -1,6 +1,6 @@
 """塔洛斯教材: this month's nine stages (cleared or not) and one start button.
 
-Leo 2026-10-28 「放側邊欄 把放魔獸追蹤者上面」: its own page above 魔兽追踪者.
+Leo 2026-10-28 「放側邊欄」: its own page in the sidebar.
 The nine tiles are laid out like the game's stage list (1 2 3 / 4 5 6 /
 7 8 9); a tile says cleared, not played, failed last time (why on hover) or
 being played now.  Leo 2026-10-28 「要可以選擇關卡 預設全選排除打過的」: a

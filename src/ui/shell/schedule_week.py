@@ -845,13 +845,13 @@ class ScheduleDialog(Floating):
         head.addWidget(HeroIcon("clock", 44))
         titles = vbox(None, (0, 0, 0, 0), 2)
         titles.addWidget(Text("定时启动", "h2"))
-        titles.addWidget(
-            Text(
-                "时间到自动打开游戏，跑今天还没做的。点空格或右上角 ＋ 新增，点色块修改",
-                "sub",
-                wrap=True,
-            )
-        )
+        about = t("时间到自动打开游戏，跑今天还没做的。点空格或右上角 ＋ 新增，点色块修改")
+        if len(self.known) > 1:
+            # The spacing rule rides on this line: beside four long account
+            # names it was squeezed into a column one or two words wide, and
+            # a line of its own cost the hours their room (2026-11-09).
+            about += " · " + t("同一个账号隔 1 小时，不同账号隔半小时")
+        titles.addWidget(Text(about, "sub", wrap=True))
         head.addLayout(titles, 1)
         self.master = Toggle(self.working.enabled)
         self.master.setToolTip(t("关掉就完全取消，Windows 里也不留"))
@@ -874,10 +874,6 @@ class ScheduleDialog(Floating):
                 legend.addWidget(chip)
                 self.legend.append(chip)
         legend.addStretch(1)
-        if len(self.known) > 1:
-            hint = Text("同一个账号隔 1 小时，不同账号隔半小时", "muted", wrap=True)
-            hint.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            legend.addWidget(hint, 1)
         # Leo 2026-10-29 「加號挪到右上角」.
         self.add_button = AddButton(self._add_now)
         legend.addWidget(self.add_button, 0, Qt.AlignVCenter)

@@ -26,6 +26,7 @@ from src.ui.shell.widgets import (
     StateIcon,
     Text,
     clear_layout,
+    empty_state,
     hbox,
     t,
     tf,
@@ -379,10 +380,11 @@ class ProblemPage(Page):
         self._rows: list[RunRow] = []
 
         self.empty = Card()
-        empty_layout = vbox(self.empty, (20, 18, 20, 18), 4)
-        empty_layout.addWidget(Text("还没有运行记录", "h3"))
-        empty_layout.addWidget(
-            Text("跑过一键日常、周常或单独执行后，这里就能复制那一次的情况。", "muted")
+        empty_state(
+            self.empty,
+            "message-circle-warning",
+            "还没有运行记录",
+            "跑过一键日常、周常或单独执行后，这里就能复制那一次的情况。",
         )
         self.body.addWidget(self.empty)
 

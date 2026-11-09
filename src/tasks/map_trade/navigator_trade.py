@@ -84,6 +84,7 @@ from src.tasks.map_trade.trader_constants import (
     SALE_OCR_INTERVAL,
     SALE_OWNED_PATTERN,
 )
+from src.tasks.map_trade.home_house import find_house
 from src.tasks.map_trade.vision import normalize_text
 from src.utils.cartridge_quick_switch import FIXED_CARTRIDGE_SLOT_PRE_CLICK_DELAY_SECONDS
 from src.utils.fantasia_square import (
@@ -94,7 +95,7 @@ from src.utils.fantasia_square import (
 from src.utils.field_followers import dismiss_once_per_run
 from src.utils.press_confirm import wait_for
 from src.utils.press_next import Next, per_frame, press_next
-from src.utils.wait_limits import STUCK_SECONDS, ProgressWait, StillTimer, scene_at_press
+from src.utils.wait_limits import STUCK_SECONDS, HeldFor, ProgressWait, StillTimer, scene_at_press
 
 # After closing a shop with no discount-close dialog, how long the merchant
 # menu (or the field) is looked for.
@@ -576,7 +577,8 @@ class TradeNavigationMixin:
         config = getattr(self.task, "config", None)
         wait = ProgressWait(monotonic(), before=scene_at_press(self.task))
         square_hits = 0
-        field_since = None
+        # One misread look does not start the count over (HeldFor).
+        field_held = HeldFor()
         while True:
             frame = self.vision.capture()
             if square_shown(frame, config, cache):
@@ -588,12 +590,9 @@ class TradeNavigationMixin:
             loading = self._black_frame(frame)
             state = ScreenState.LOADING if loading else self.classify(frame)
             now = monotonic()
-            if state == ScreenState.SANDBOX:
-                field_since = now if field_since is None else field_since
-                if now - field_since >= SQUARE_ICON_GRACE_SECONDS:
-                    return SQUARE_OTHER_FIELD
-            else:
-                field_since = None
+            field_for = field_held.look(state == ScreenState.SANDBOX, now)
+            if state == ScreenState.SANDBOX and field_for >= SQUARE_ICON_GRACE_SECONDS:
+                return SQUARE_OTHER_FIELD
             if wait.over(frame, now, loading=loading):
                 return None
             self.task.sleep(0.5)
@@ -1051,6 +1050,13 @@ class TradeNavigationMixin:
 
         for attempt in range(1, SHOP_CLOSE_CLICK_RETRIES + 1):
             frame = self.vision.capture()
+            house = find_house(self.vision, frame)
+            if house is not None and house.cue == "H":
+                # The see-through house unread (things walking behind it);
+                # its solid 「H」 badge reads (#518 4K live test 2026-11-09).
+                self._status("箱庭主页按钮", f"认到 H 字，center=({house.center[0]},{house.center[1]})")
+                self.vision.click_client(house.center, frame.shape, after_sleep=after_sleep)  # 不用确认：调用处等主页
+                return
             for spec in CHAPTER_HOME_TEMPLATES:
                 result = self.vision.match(frame, spec)
                 passed = self.vision.passes(result, spec)

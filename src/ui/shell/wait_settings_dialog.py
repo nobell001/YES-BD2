@@ -8,15 +8,15 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
-from qfluentwidgets import SpinBox
 
+from src.ui.shell import theme
 from src.ui.shell.floating import Floating, Panel
 from src.ui.shell.run_confirm import HeroIcon
-from src.ui.shell.widgets import Button, Text, hbox, t, tf, vbox
+from src.ui.shell.widgets import Button, Slider, Text, hbox, t, tf, vbox
 from src.utils import wait_settings
 
 PANEL_WIDTH = 520
-SPIN_WIDTH = 132
+SPIN_WIDTH = theme.size("control_md") * 7  # the Slider width
 
 
 class WaitSettingsDialog(Floating):
@@ -42,7 +42,7 @@ class WaitSettingsDialog(Floating):
         head.addLayout(titles, 1)
         column.addLayout(head)
 
-        self.spins: dict[wait_settings.Setting, SpinBox] = {}
+        self.spins: dict[wait_settings.Setting, Slider] = {}
         for setting in wait_settings.SETTINGS:
             row = hbox(None, (0, 4, 0, 4), 12)
             texts = vbox(None, (0, 0, 0, 0), 1)
@@ -62,8 +62,9 @@ class WaitSettingsDialog(Floating):
                 )
             )
             row.addLayout(texts, 1)
-            spin = SpinBox()
+            spin = Slider()  # oink-ui Slider + the number (Leo 2026-11-09)
             spin.setRange(setting.low, setting.high)
+            spin.setSuffix(setting.unit)
             spin.setFixedWidth(SPIN_WIDTH)  # the four boxes line up
             spin.setSingleStep(10 if setting.unit == "秒" else 1)
             spin.setValue(values.get(setting, setting.default))
@@ -71,6 +72,7 @@ class WaitSettingsDialog(Floating):
             column.addLayout(row)
             self.spins[setting] = spin
 
+        Slider.same_box_width(self.spins.values())
         buttons = hbox(None, (0, 6, 0, 0), 8)
         buttons.addWidget(Button("恢复默认", "ghost", size="sm", on_click=self._reset))
         buttons.addStretch(1)

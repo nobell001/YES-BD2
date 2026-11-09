@@ -297,6 +297,7 @@ class QuickBattleTest(unittest.TestCase):
         task._click_reference = lambda x, y, after_sleep=0: task.clicks.append((x, y))
         task._click_box = lambda box, after_sleep=0: task.clicks.append(box.name)
         task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
         task._stable_stage_state = lambda mode: {
             "stage": 15, "free_ap": free_ap, "bonus_ap": 0, "auto": False, "quick": True
         }
@@ -396,6 +397,7 @@ class FailReasonTest(unittest.TestCase):
         task._open_quick_dialog = lambda: False
         task._sleep_after_recognition = lambda: None
         task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
         task._stable_stage_state = lambda mode: {
             "stage": 15,
             "free_ap": None,
@@ -415,19 +417,30 @@ class FailReasonTest(unittest.TestCase):
         task = self._task()
         task._wait_for_hub = lambda timeout=0: False
         task._wait_for_stage_page = lambda mode, timeout=0, quiet=False: False
-        homes = iter([True, False])
+        import itertools
+
+        homes = itertools.cycle([True, False])
         task._wait_for_home_confirmation = lambda *a, **k: next(homes)
         task._find_stable_banner = lambda keywords: box("活动")
         task._sleep_after_recognition = lambda: None
         task._click_box = lambda *a, **k: None
+        # Leo 2026-11-09: home is gone after the banner, so both modes are
+        # still looked for; neither found → the reason names both.
+        task._mode_button = lambda mode: None
+        task._usual_mode_button = lambda frame, mode: None
+        task.capture_frame = lambda *a, **k: None
         self.assertFalse(task.run_claim())
         self.assertEqual(
-            "普通战斗失败：点了活动横幅后，活动页一直没出来", self._summary_stage(task)
+            "挑战战斗失败：普通战斗：点了活动横幅后没认出活动页，照样试了：活动页里没找到「普通战斗」"
+            "（下方读到：-）；挑战战斗：点了活动横幅后没认出活动页，照样试了：活动页里没找到「挑战战斗」"
+            "（下方读到：-）"[:60],
+            self._summary_stage(task),
         )
 
     def test_count_check_names_the_numbers(self):
         task = self._task()
         task._open_mode = lambda mode: "ok"
+        task._where_in_event = lambda grace=0: ""  # not already on the page
         task._stable_stage_state = lambda mode: {
             "stage": 3,
             "free_ap": 2,

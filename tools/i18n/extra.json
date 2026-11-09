@@ -1868,5 +1868,25 @@
   "en": "Clicking didn't move the screen, so it walked there with WASD. Your movement setting may be wrong: set Settings → Movement to WASD",
   "ja": "クリックしても画面が動かなかったため、WASD で移動しました。移動方法の設定が違うかもしれません。「設定 → 移動方法」を WASD に変更してください",
   "ko": "클릭해도 화면이 움직이지 않아 WASD로 이동했습니다. 이동 방식 설정이 잘못되었을 수 있습니다. 「설정 → 이동 방식」을 WASD로 바꿔 주세요"
+ },
+ "派遣：已领": {
+  "en": "Dispatch: claimed",
+  "ja": "派遣：受け取り済み",
+  "ko": "파견: 수령 완료"
+ },
+ "派遣：按了「!」没消失，可能没领到": {
+  "en": "Dispatch: pressed \"!\" but it stayed, maybe not claimed",
+  "ja": "派遣：「!」を押しても消えず、受け取れていない可能性あり",
+  "ko": "파견: 「!」를 눌렀지만 사라지지 않아 수령하지 못했을 수 있음"
+ },
+ "派遣：没看到「!」，照样按了一次 F": {
+  "en": "Dispatch: no \"!\" seen, pressed F once anyway",
+  "ja": "派遣：「!」が見えず、念のため F を 1 回押した",
+  "ko": "파견: 「!」가 보이지 않아 F를 한 번 눌렀음"
+ },
+ "派遣：没看到「!」": {
+  "en": "Dispatch: no \"!\" seen",
+  "ja": "派遣：「!」は見えなかった",
+  "ko": "파견: 「!」가 보이지 않음"
  }
 }

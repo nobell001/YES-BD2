@@ -352,13 +352,13 @@ class BuildWorkflowTest(unittest.TestCase):
                 ("YES-BD2", "v0.1.1"),
                 (maintenance, None),
                 (maintenance, None),
-                ("修好跑商；魔兽追踪者角色名单新增：乙", "v0.1.2"),
+                ("修好跑商；角色名单新增：乙", "v0.1.2"),
             ],
             "v0.1.2",
         )
 
         self.assertNotIn(maintenance, notes)
-        self.assertIn("- 修好跑商\n- 魔兽追踪者角色名单新增：乙", notes)
+        self.assertIn("- 修好跑商\n- 角色名单新增：乙", notes)
 
 
 if __name__ == "__main__":

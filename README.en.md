@@ -41,7 +41,6 @@
 - **Weekly Farming**: uses Absorb, Assemble and Overpower on the Story Packs for you, spread over the days of the week.
 - **Daily Trade Run**: buys, cooks and sells by the sale calendar; you choose how much to keep.
 - **Talos textbook**: the month's 9 stages, fought with built-in plans; cleared ones are skipped.
-- **Fiend Hunter**: record your own fight once with F8; after that the tool sets each turn's order, positions and skills the same way, then fights.
 - **Scheduled Start**: pick a time and the dailies run by themselves, even if the tool was closed.
 - **Clone Desktop**: the game runs on a separate desktop in its own window, so your mouse and keyboard stay yours.
 - **Run status in the game**: a bar over the game shows what is running, with Pause and Stop; clicks go through it.
@@ -78,12 +77,10 @@
   </tr>
   <tr>
     <td><img src="docs/images/talos.jpg" alt="Talos textbook"></td>
-    <td><img src="docs/images/fiend.jpg" alt="Fiend Hunter"></td>
     <td><img src="docs/images/clone.jpg" alt="Clone Desktop"></td>
   </tr>
   <tr>
     <td align="center">Talos textbook: 9 stages in one press</td>
-    <td align="center">Fiend Hunter: follows your own recording</td>
     <td align="center">Clone Desktop: use your PC while it runs</td>
   </tr>
 </table>

@@ -16,6 +16,7 @@ from PySide6.QtCore import (
     Property,
     QEasingCurve,
     QEvent,
+    QPoint,
     QPointF,
     QPropertyAnimation,
     QRect,
@@ -72,6 +73,14 @@ def repolish(widget: QWidget) -> None:
     style = widget.style()
     style.unpolish(widget)
     style.polish(widget)
+    # A re-polish alone keeps the old padding (the contents margins) of a
+    # sheet set on a parent: a toned pill kept 10 px on the left, so its dot
+    # sat on the first word (2026-11-09 跑图 「一键日常里会跑」).  Setting the
+    # widget's own sheet again makes Qt work the padding out anew.
+    own = widget.styleSheet()
+    widget.setStyleSheet(own + " ")
+    widget.setStyleSheet(own)
+    widget.updateGeometry()
     widget.update()
 
 
@@ -155,10 +164,36 @@ class Inset(QFrame):
 
 
 class Separator(QFrame):
-    def __init__(self, parent=None):
+    """A hairline.  ``indent`` starts it that far in from the left, so rows
+    with an icon are split under their text only (oink-ui Group, 2026-11-09)."""
+
+    def __init__(self, parent=None, indent: int = 0):
         super().__init__(parent)
-        self.setProperty("sep", True)
-        self.setFixedHeight(1)
+        self._indent = indent
+        if indent:
+            self.setFixedHeight(1)
+        else:
+            self.setProperty("sep", True)
+            self.setFixedHeight(1)
+
+    def paintEvent(self, event):
+        if not self._indent:
+            super().paintEvent(event)
+            return
+        painter = QPainter(self)
+        painter.fillRect(
+            QRectF(self._indent, 0, self.width() - self._indent, 1), theme.color("line")
+        )
+
+
+class Alert(QFrame):
+    """A soft coloured box for a notice: ``tone`` is warn, bad, ok or info
+    (oink-ui Alert, Leo 2026-11-09)."""
+
+    def __init__(self, tone: str = "info", parent=None):
+        super().__init__(parent)
+        self.setProperty("alert", tone)
+        self.setAttribute(Qt.WA_StyledBackground, True)
 
 
 def vbox(widget: QWidget | None = None, margins=(0, 0, 0, 0), spacing: int = 0) -> QVBoxLayout:
@@ -259,6 +294,22 @@ class Text(QLabel):
         effect.progress = float(self._rise.value)
         effect.update()
 
+    _DOT = {"ok": "ok", "run": "pill_run_ink", "warn": "warn", "bad": "bad"}
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.property("role") != "pill":
+            return
+        colour = self._DOT.get(str(self.property("tone") or ""))
+        if colour is None or not self.text():
+            return
+        # oink-ui Badge: a small dot before the words (2026-11-09).
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(theme.color(colour))
+        painter.drawEllipse(QPointF(11.5, self.height() / 2), 3.5, 3.5)
+
     def _apply_elide(self) -> None:
         metrics = QFontMetrics(self.font())
         width = max(0, self.width())
@@ -296,6 +347,8 @@ _ICON_COLOUR = {
     "icon": "ink2",
     "flat": "ink2",
     "chip": "ink2",
+    "stepper": "ink",
+    "select": "ink2",
 }
 
 
@@ -322,9 +375,10 @@ class Button(QPushButton):
             self.setProperty("size", size)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
-        # The hover colour eases in and out; a press dips the button to 97 %.
+        # The hover colour eases in and out; a press dips the button to 95.5 %
+        # and it springs back a little past its size (oink-ui, 2026-11-09).
         self._hover = motion.HoverFade(self, self.update)
-        self._press = motion.Tween(self, self.update, 110, 0.0)
+        self._press = motion.Tween(self, self.update, 260, 0.0, QEasingCurve.OutBack)
         self.pressed.connect(lambda: self._press.go(1.0))
         self.released.connect(lambda: self._press.go(0.0))
         self._refresh_icon()
@@ -341,9 +395,9 @@ class Button(QPushButton):
         hover = self._hover.value if self.isEnabled() else 0.0
         painter = QStylePainter(self)
         press = float(self._press.value)
-        if press > 0:
+        if press != 0:
             centre = QRectF(self.rect()).center()
-            scale = 1.0 - 0.03 * press
+            scale = 1.0 - 0.045 * press
             painter.translate(centre)
             painter.scale(scale, scale)
             painter.translate(-centre)
@@ -678,19 +732,32 @@ class Spinner(StateIcon):
 class Toggle(QAbstractButton):
     """An on/off switch (the primary colour when on)."""
 
+    PAD = 1
+
     def __init__(self, checked: bool = False, parent=None, small: bool = False):
         super().__init__(parent)
         self.setCheckable(True)
         self.setChecked(checked)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
-        self._w, self._h = (32, 18) if small else (38, 22)
-        self.setFixedSize(self._w, self._h)
+        # oink-ui switch (Leo 2026-11-09): a wider track, a pill thumb that
+        # stretches while held, and a small spring when it lands.
+        prefix = "toggle_sm" if small else "toggle"
+        self._w, self._h = theme.size(f"{prefix}_w"), theme.size(f"{prefix}_h")
+        # One spare pixel on every side: at 125 % / 150 % the track's
+        # rounded ends fell on a part pixel and its left edge looked cut
+        # (Leo 2026-11-09 「膠囊開關外側最左邊 也統一都被切到」).
+        self.setFixedSize(self._w + 2 * self.PAD, self._h + 2 * self.PAD)
         self._pos = 1.0 if checked else 0.0
         self._anim = QPropertyAnimation(self, b"knob", self)
-        self._anim.setDuration(140)
-        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.setDuration(300)
+        spring = QEasingCurve(QEasingCurve.OutBack)
+        spring.setOvershoot(1.2)
+        self._anim.setEasingCurve(spring)
         self.toggled.connect(self._animate)
+        self._held = motion.Tween(self, self.update, 120, 0.0)
+        self.pressed.connect(lambda: self._held.go(1.0))
+        self.released.connect(lambda: self._held.go(0.0))
 
     def _get_knob(self) -> float:
         return self._pos
@@ -718,14 +785,15 @@ class Toggle(QAbstractButton):
         self._anim.start()
 
     def sizeHint(self) -> QSize:
-        return QSize(self._w, self._h)
+        return QSize(self._w + 2 * self.PAD, self._h + 2 * self.PAD)
 
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+        painter.translate(self.PAD, self.PAD)
         on = theme.color("primary")
-        off = theme.color("line2")
-        mix = self._pos
+        off = theme.color("well2")
+        mix = max(0.0, min(1.0, self._pos))
         track = QColor(
             round(off.red() + (on.red() - off.red()) * mix),
             round(off.green() + (on.green() - off.green()) * mix),
@@ -737,10 +805,16 @@ class Toggle(QAbstractButton):
         painter.setBrush(track)
         radius = self._h / 2
         painter.drawRoundedRect(QRectF(0, 0, self._w, self._h), radius, radius)
-        knob = self._h - 6
-        x = 3 + (self._w - knob - 6) * self._pos
-        painter.setBrush(theme.color("on_primary") if mix > 0.5 else QColor("#FFFFFF"))
-        painter.drawEllipse(QRectF(x, 3, knob, knob))
+        # A thumb with room around it (Leo 2026-11-09: the first one, 3 px in
+        # from the edge, 「裡面那顆太大」).
+        inset = 4
+        knob_h = self._h - inset * 2
+        knob_w = knob_h  # round at rest, stretches into a pill while held
+        held = float(self._held.value) * 4
+        travel = self._w - knob_w - inset * 2 - held
+        x = inset + travel * self._pos
+        painter.setBrush(theme.color("knob" if self.isEnabled() else "raised"))
+        painter.drawRoundedRect(QRectF(x, inset, knob_w + held, knob_h), knob_h / 2, knob_h / 2)
 
 
 class OptionSwitch(Button):
@@ -787,6 +861,646 @@ class OptionSwitch(Button):
         self.set_value(value)
 
 
+class KeyCap(QAbstractButton):
+    """A key drawn as a keyboard key (oink-ui Kbd, Leo 2026-11-09); a click
+    opens a menu of ``options``.  Same calls as a ComboBox picker:
+    ``value``, ``set_value`` and ``changed``.  ``labels`` maps a stored value
+    to the words shown (e.g. 「无」 in the UI language)."""
+
+    changed = Signal(str)
+
+    def __init__(self, options: Iterable[str], current: str, parent=None, labels=None):
+        super().__init__(parent)
+        self._options = list(options)
+        self._labels = dict(labels or {})
+        self._value = current if current in self._options else self._options[0]
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setAttribute(Qt.WA_Hover, True)
+        self._press = motion.Tween(self, self.update, 160, 0.0)
+        self.pressed.connect(lambda: self._press.go(1.0))
+        self.released.connect(lambda: self._press.go(0.0))
+        self.clicked.connect(self._open_menu)
+        font = QFont(self.font())
+        font.setPixelSize(theme.size("text_lg"))
+        self.setFont(font)
+        self._refresh()
+
+    def _label(self, value: str) -> str:
+        return t(self._labels.get(value, value))
+
+    def _refresh(self) -> None:
+        self.setText(self._label(self._value))
+        self.setFixedSize(self.sizeHint())
+        self.update()
+
+    def value(self) -> str:
+        return self._value
+
+    def options(self) -> list[str]:
+        return list(self._options)
+
+    def set_value(self, value: str, quiet: bool = True) -> None:
+        if value not in self._options or value == self._value:
+            return
+        self._value = value
+        self._refresh()
+        if not quiet:
+            self.changed.emit(value)
+
+    def _open_menu(self) -> None:
+        from qfluentwidgets import Action, RoundMenu
+
+        menu = RoundMenu(parent=self)
+        for option in self._options:
+            action = Action(self._label(option), menu)
+            action.setCheckable(True)
+            action.setChecked(option == self._value)
+            action.triggered.connect(lambda _on=False, o=option: self.set_value(o, quiet=False))
+            menu.addAction(action)
+        menu.exec(self.mapToGlobal(QPoint(0, self.height() + 4)))
+
+    def sizeHint(self) -> QSize:
+        metrics = QFontMetrics(self.font())
+        widest = max(metrics.horizontalAdvance(self._label(o)) for o in self._options)
+        height = theme.size("control_sm")
+        return QSize(max(height + 6, widest + 22), height)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -1.5)
+        drop = 1.0 * float(self._press.value)
+        rect.translate(0, drop)
+        corner = float(theme.size("corner_small"))
+        # The key's lower edge: a darker line under it, gone while pressed.
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(theme.color("hair2"))
+        painter.drawRoundedRect(rect.translated(0, 1.5 - drop), corner, corner)
+        hot = self.underMouse() and self.isEnabled()
+        painter.setPen(QPen(theme.color("primary" if hot else "hair"), 1))
+        painter.setBrush(theme.color("well"))
+        painter.drawRoundedRect(rect, corner, corner)
+        painter.setPen(theme.color("ink" if self.isEnabled() else "ink3"))
+        painter.setFont(theme.body_font(self.font()))
+        painter.drawText(rect, Qt.AlignCenter, self.text())
+
+
+class Stepper(QFrame):
+    """A number between a − and a + on one rounded well (oink-ui NumberInput,
+    Leo 2026-11-09); the number itself can also be typed.  Takes the calls
+    the pages used on Fluent's SpinBox: ``setRange``, ``setSingleStep``,
+    ``setValue``, ``value``, ``setSpecialValueText`` and ``valueChanged``."""
+
+    valueChanged = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setProperty("stepper", True)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self._low, self._high, self._step, self._value = 0, 99, 1, 0
+        self._special = ""
+        layout = hbox(self, (3, 3, 3, 3), 0)
+        self._minus = Button("", "stepper", "minus", "sm", self, on_click=lambda: self._nudge(-1))
+        self._plus = Button("", "stepper", "plus", "sm", self, on_click=lambda: self._nudge(1))
+        from PySide6.QtWidgets import QLineEdit
+
+        self._edit = QLineEdit(self)
+        self._edit.setObjectName("stepperEdit")
+        self._edit.setAlignment(Qt.AlignCenter)
+        self._edit.setFrame(False)
+        self._edit.editingFinished.connect(self._typed)
+        layout.addWidget(self._minus)
+        layout.addWidget(self._edit, 1)
+        layout.addWidget(self._plus)
+        self.setFixedHeight(theme.size("control_md"))
+        self.setFixedWidth(theme.size("control_md") * 4)
+        self._show()
+
+    def setRange(self, low: int, high: int) -> None:
+        self._low, self._high = int(low), int(high)
+        self.setValue(self._value)
+
+    def setMinimum(self, low: int) -> None:
+        self.setRange(low, self._high)
+
+    def setMaximum(self, high: int) -> None:
+        self.setRange(self._low, high)
+
+    def setSingleStep(self, step: int) -> None:
+        self._step = max(1, int(step))
+
+    def setSpecialValueText(self, text: str) -> None:
+        self._special = text
+        self._show()
+
+    def value(self) -> int:
+        return self._value
+
+    def setValue(self, value: int) -> None:
+        value = max(self._low, min(self._high, int(value)))
+        changed = value != self._value
+        self._value = value
+        self._show()
+        if changed and not self.signalsBlocked():
+            self.valueChanged.emit(value)
+
+    def _nudge(self, direction: int) -> None:
+        self.setValue(self._value + direction * self._step)
+
+    def _typed(self) -> None:
+        text = self._edit.text().strip()
+        if self._special and text == self._special:
+            self.setValue(self._low)
+            return
+        try:
+            self.setValue(int(text))
+        except ValueError:
+            self._show()
+
+    def _show(self) -> None:
+        shown = self._special if self._special and self._value == self._low else str(self._value)
+        if self._edit.text() != shown:
+            self._edit.setText(shown)
+        self._minus.setEnabled(self._value > self._low)
+        self._plus.setEnabled(self._value < self._high)
+
+
+class _SliderTrack(QWidget):
+    """The bar of ``Slider``: a well with the primary colour up to a round
+    knob.  Click anywhere to jump there, drag, arrow keys step; the wheel
+    only moves it once it has focus, so scrolling a page never changes a
+    setting by accident."""
+
+    def __init__(self, owner: "Slider"):
+        super().__init__(owner)
+        self._owner = owner
+        knob = theme.size("slider_knob")
+        # Room for the knob (and its grown, hovered size) at both ends.
+        self.PAD = knob // 2 + 3
+        self.setMinimumWidth(120)
+        self.setFixedHeight(theme.size("control_md"))
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAttribute(Qt.WA_Hover, True)
+        self._hover = motion.HoverFade(self, self.update)
+        self._held = motion.Tween(self, self.update, 260, 0.0, QEasingCurve.OutBack)
+        self._pos = motion.Tween(self, self.update, 180, 0.0)
+        self._drag = False
+        self._key_focus = False  # the ring shows for Tab focus, not a click
+
+    def sizeHint(self) -> QSize:
+        return QSize(180, theme.size("control_md"))
+
+    def _span(self) -> tuple[float, float]:
+        return self.PAD, max(1.0, self.width() - 2 * self.PAD)
+
+    def _fraction_at(self, x: float) -> float:
+        left, width = self._span()
+        return max(0.0, min(1.0, (x - left) / width))
+
+    def show_fraction(self, fraction: float, animate: bool) -> None:
+        self._pos.go(fraction, animate=animate and not self._drag)
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.LeftButton:
+            return super().mousePressEvent(event)
+        self._drag = True
+        self._held.go(1.0)
+        self._owner._slide_to(self._fraction_at(event.position().x()), jump=True)
+
+    def mouseMoveEvent(self, event):
+        if self._drag:
+            self._owner._slide_to(self._fraction_at(event.position().x()), jump=False)
+
+    def mouseReleaseEvent(self, event):
+        if self._drag:
+            self._drag = False
+            self._held.go(0.0)
+            self._owner._settle()
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event):
+        if not self.hasFocus():
+            event.ignore()  # let the page scroll
+            return
+        steps = 1 if event.angleDelta().y() > 0 else -1 if event.angleDelta().y() < 0 else 0
+        self._owner._nudge(steps)
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        moves = {
+            Qt.Key_Left: -1,
+            Qt.Key_Down: -1,
+            Qt.Key_Right: 1,
+            Qt.Key_Up: 1,
+            Qt.Key_PageDown: -10,
+            Qt.Key_PageUp: 10,
+        }
+        if key in moves:
+            self._owner._nudge(moves[key])
+        elif key == Qt.Key_Home:
+            self._owner.setValue(self._owner.minimum())
+        elif key == Qt.Key_End:
+            self._owner.setValue(self._owner.maximum())
+        else:
+            super().keyPressEvent(event)
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self._key_focus = event.reason() in (Qt.TabFocusReason, Qt.BacktabFocusReason)
+        self.update()
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self.update()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        enabled = self.isEnabled()
+        left, width = self._span()
+        mid = self.height() / 2
+        bar = theme.size("slider_track")
+        fraction = max(0.0, min(1.0, float(self._pos.value)))
+        x = left + width * fraction
+        well = theme.color("well2")
+        on = theme.color("primary")
+        if not enabled:
+            well.setAlphaF(0.6)
+            on = theme.color("ink3")
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(well)
+        top = mid - bar / 2
+        painter.drawRoundedRect(QRectF(left - bar / 2, top, width + bar, bar), bar / 2, bar / 2)
+        painter.setBrush(on)
+        painter.drawRoundedRect(QRectF(left - bar / 2, top, x - left + bar, bar), bar / 2, bar / 2)
+        # The fixed stops (倍数's 1 2 4 5 8 10 20 40) as small dots.
+        stops = self._owner._stop_fractions()
+        if len(stops) > 1:
+            for stop in stops:
+                dot = theme.color("on_accent" if stop <= fraction else "ink3")
+                dot.setAlphaF(0.55)
+                painter.setBrush(dot)
+                painter.drawEllipse(QPointF(left + width * stop, mid), 1.5, 1.5)
+        knob = theme.size("slider_knob")
+        hover = 0.5 * float(self._hover.value) if enabled else 0.0
+        grow = 1.0 + 0.12 * max(float(self._held.value), hover)
+        radius = knob / 2 * grow
+        centre = QPointF(x, mid)
+        if self.hasFocus() and self._key_focus and enabled:
+            ring = theme.color("primary")
+            ring.setAlphaF(0.28)
+            painter.setBrush(ring)
+            painter.drawEllipse(centre, radius + 4, radius + 4)
+        shade = QColor(0, 0, 0, 46 if enabled else 20)
+        painter.setBrush(shade)
+        painter.drawEllipse(QPointF(x, mid + 1), radius, radius)
+        painter.setBrush(theme.color("knob" if enabled else "raised"))
+        painter.setPen(QPen(theme.color("hair2"), 1))
+        painter.drawEllipse(centre, radius - 0.5, radius - 0.5)
+
+
+class Slider(QWidget):
+    """A number set by sliding, with the number shown (and typeable) in a
+    small box at the right (oink-ui Slider, Leo 2026-11-09 「數字類可以用
+    SLIDER 加顯示數字」).  Takes the calls of ``Stepper``: ``setRange``,
+    ``setSingleStep``, ``setValue``, ``value``, ``setSpecialValueText`` and
+    ``valueChanged``; plus ``setSuffix`` (the unit after the number),
+    ``setStops`` (the knob snaps to these values only) and ``setDecimals``
+    (a float setting).  ``valueChanged`` carries an int unless decimals > 0.
+    """
+
+    valueChanged = Signal(object)
+
+    def __init__(self, parent=None, decimals: int = 0):
+        super().__init__(parent)
+        self._decimals = max(0, int(decimals))
+        self._low, self._high = 0, 99
+        self._step = 1 if not self._decimals else 10 ** -self._decimals
+        self._value = self._low
+        self._special = ""
+        self._suffix = ""
+        self._stops: list = []
+        self._box_width = 0
+        self._box_floor = 0  # same_box_width()
+        layout = hbox(self, (0, 0, 0, 0), theme.size("gap_sm"))
+        self.track = _SliderTrack(self)
+        layout.addWidget(self.track, 1)
+        self.box = QFrame(self)
+        self.box.setProperty("stepper", True)
+        self.box.setAttribute(Qt.WA_StyledBackground, True)
+        self.box.setFixedHeight(theme.size("control_md"))
+        inner = hbox(self.box, (10, 0, 10, 0), theme.size("gap_xs"))
+        from PySide6.QtWidgets import QLineEdit
+
+        self._edit = QLineEdit(self.box)
+        self._edit.setObjectName("stepperEdit")
+        self._edit.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._edit.setFrame(False)
+        self._edit.setFocusPolicy(Qt.ClickFocus)
+        self._edit.editingFinished.connect(self._typed)
+        self.edit = self._edit  # the number box, typeable
+        self._unit = Text("", "muted", self.box)
+        self._unit.hide()
+        inner.addWidget(self._edit, 1)
+        inner.addWidget(self._unit)
+        layout.addWidget(self.box)
+        self.setFixedHeight(theme.size("control_md"))
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self._fit_box()
+        self._show(animate=False)
+
+    # ---------------------------------------------------------------- API
+    def setRange(self, low, high) -> None:
+        self._low, self._high = self._cast(low), self._cast(max(low, high))
+        self._fit_box()
+        self.setValue(self._value)
+        self._show(animate=False)
+
+    def setMinimum(self, low) -> None:
+        self.setRange(low, self._high)
+
+    def setMaximum(self, high) -> None:
+        self.setRange(self._low, high)
+
+    def minimum(self):
+        return self._low
+
+    def maximum(self):
+        return self._high
+
+    def setSingleStep(self, step) -> None:
+        if self._decimals:
+            self._step = max(float(step), 10**-self._decimals)
+        else:
+            self._step = max(1, int(step))
+
+    def setDecimals(self, decimals: int) -> None:
+        self._decimals = max(0, int(decimals))
+        self._fit_box()
+        self._show(animate=False)
+
+    def setSpecialValueText(self, text: str) -> None:
+        self._special = t(text) if text else ""
+        self._fit_box()
+        self._show(animate=False)
+
+    def setSuffix(self, unit: str) -> None:
+        self._suffix = unit
+        self._unit.set_text(unit)
+        self._unit.setVisible(bool(unit))
+        self._fit_box()
+        self._show(animate=False)
+
+    def setStops(self, values) -> None:
+        self._stops = sorted({self._cast(v) for v in values if self._low <= v <= self._high})
+        self.track.update()
+
+    def value(self):
+        return self._value
+
+    @staticmethod
+    def same_box_width(sliders) -> None:
+        """Sliders stacked in one panel get one number-box width, so their
+        bars start and end on the same lines."""
+        sliders = list(sliders)
+        if not sliders:
+            return
+        widest = max(slider._box_width for slider in sliders)
+        for slider in sliders:
+            slider._box_floor = widest
+            slider._fit_box()
+
+    def setValue(self, value) -> None:
+        value = self._cast(max(self._low, min(self._high, value)))
+        changed = value != self._value
+        self._value = value
+        self._show(animate=True)
+        if changed and not self.signalsBlocked():
+            self.valueChanged.emit(value)
+
+    # ------------------------------------------------------------ inside
+    def _cast(self, value):
+        if self._decimals:
+            return round(float(value), self._decimals)
+        return int(round(float(value)))
+
+    def _text(self, value) -> str:
+        if self._special and value == self._low:
+            return self._special
+        if self._decimals:
+            return f"{value:.{self._decimals}f}"
+        return str(value)
+
+    def _fit_box(self) -> None:
+        """Wide enough for the longest value, so the box never jumps or cuts."""
+        font = QFont(self.font())
+        font.setPixelSize(theme.size("text_lg"))
+        metrics = QFontMetrics(font)
+        samples = [self._text(self._low), self._text(self._high)]
+        if self._special:
+            samples.append(self._special)
+        widest = max(metrics.horizontalAdvance(sample) for sample in samples) + 6
+        self._edit.setMinimumWidth(widest)
+        unit = 0
+        if self._suffix:
+            unit_font = QFont(self.font())
+            unit_font.setPixelSize(theme.size("text_sm"))
+            unit = QFontMetrics(unit_font).horizontalAdvance(t(self._suffix))
+            unit += theme.size("gap_xs") + 2
+        self._box_width = max(theme.size("control_md") + 8, widest + unit + 20 + 2)
+        self.box.setFixedWidth(max(self._box_width, self._box_floor))
+
+    def _range(self) -> float:
+        return float(self._high - self._low) or 1.0
+
+    def _fraction_of(self, value) -> float:
+        stops = self._stops
+        if len(stops) > 1:
+            if value <= stops[0]:
+                return 0.0
+            for index in range(1, len(stops)):
+                if value <= stops[index]:
+                    a, b = stops[index - 1], stops[index]
+                    part = (value - a) / (b - a) if b != a else 0.0
+                    return (index - 1 + part) / (len(stops) - 1)
+            return 1.0
+        return (value - self._low) / self._range()
+
+    def _stop_fractions(self) -> list[float]:
+        stops = self._stops
+        if len(stops) > 1:
+            return [index / (len(stops) - 1) for index in range(len(stops))]
+        return []
+
+    def _value_at(self, fraction: float):
+        stops = self._stops
+        if len(stops) > 1:
+            return stops[round(fraction * (len(stops) - 1))]
+        raw = self._low + fraction * self._range()
+        steps = round((raw - self._low) / self._step)
+        return self._low + steps * self._step
+
+    def _slide_to(self, fraction: float, jump: bool) -> None:
+        self.setValue(self._value_at(fraction))
+        if not jump:
+            self.track.show_fraction(self._fraction_of(self._value), animate=False)
+
+    def _settle(self) -> None:
+        self.track.show_fraction(self._fraction_of(self._value), animate=True)
+
+    def _nudge(self, steps: int) -> None:
+        if not steps:
+            return
+        stops = self._stops
+        if len(stops) > 1:
+            if steps > 0:
+                ahead = [v for v in stops if v > self._value]
+                target = ahead[min(len(ahead), steps) - 1] if ahead else stops[-1]
+            else:
+                behind = [v for v in stops if v < self._value]
+                target = behind[max(-len(behind), steps)] if behind else stops[0]
+            self.setValue(target)
+            return
+        if abs(steps) >= 10:
+            size = max(self._step, self._range() / 10)
+            if not self._decimals:
+                size = max(self._step, int(round(size / self._step)) * self._step)
+            self.setValue(self._value + (1 if steps > 0 else -1) * size)
+            return
+        self.setValue(self._value + steps * self._step)
+
+    def _typed(self) -> None:
+        text = self._edit.text().strip()
+        if self._special and text == self._special:
+            self.setValue(self._low)
+            return
+        try:
+            self.setValue(float(text) if self._decimals else int(float(text)))
+        except ValueError:
+            pass
+        # Too big, too small or not a number: show what was kept.
+        self._edit.setText(self._text(self._value))
+
+    def _show(self, animate: bool) -> None:
+        shown = self._text(self._value)
+        if self._edit.text() != shown and not self._edit.hasFocus():
+            self._edit.setText(shown)
+        elif self._edit.hasFocus() and self._edit.text() != shown and not self._edit.isModified():
+            self._edit.setText(shown)
+        special = bool(self._special) and self._value == self._low
+        self._unit.setVisible(bool(self._suffix) and not special)
+        self.track.show_fraction(self._fraction_of(self._value), animate=animate)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.EnabledChange:
+            self.track.update()
+
+
+class Select(Button):
+    """A rounded button that shows the chosen option with a chevron; a click
+    opens the list (oink-ui Select, Leo 2026-11-09).  Takes the calls the
+    pages used on Fluent's ComboBox: ``addItem``, ``currentIndex``,
+    ``setCurrentIndex``, ``currentText``, ``itemData`` and
+    ``currentIndexChanged``."""
+
+    currentIndexChanged = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__("", "select", None, None, parent)
+        self._items: list[tuple[str, object]] = []
+        self._index = -1
+        self.setAttribute(Qt.WA_Hover, True)
+        self.clicked.connect(self._open_menu)
+
+    def paintEvent(self, _event):
+        # Drawn here: the words at the left, the chevron at the right end.
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        hot = self.underMouse() and self.isEnabled()
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(theme.color("fill_hover" if hot else "fill"))
+        body = QRectF(self.rect())
+        painter.drawRoundedRect(body, body.height() / 2, body.height() / 2)
+        painter.setPen(theme.color("ink" if self.isEnabled() else "ink3"))
+        painter.setFont(theme.body_font(self.font()))
+        painter.drawText(
+            body.adjusted(14, 0, -36, 0), Qt.AlignVCenter | Qt.AlignLeft, self.text()
+        )
+        size = 14
+        rect = QRectF(self.width() - size - 14, (self.height() - size) / 2, size, size)
+        icons.paint(painter, rect, "chevron-down", theme.color("ink2"), 2.2)
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        metrics = self.fontMetrics()
+        widest = max((metrics.horizontalAdvance(text) for text, _ in self._items), default=0)
+        return QSize(max(hint.width(), widest + 14 + 40), hint.height())
+
+    def addItem(self, text: str, userData=None) -> None:
+        self._items.append((text, userData))
+        if self._index < 0:
+            self.setCurrentIndex(0)
+
+    def addItems(self, texts) -> None:
+        for text in texts:
+            self.addItem(text)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemData(self, index: int):
+        return self._items[index][1] if 0 <= index < len(self._items) else None
+
+    def currentIndex(self) -> int:
+        return self._index
+
+    def currentText(self) -> str:
+        return self._items[self._index][0] if 0 <= self._index < len(self._items) else ""
+
+    def currentData(self):
+        return self.itemData(self._index)
+
+    def setCurrentIndex(self, index: int) -> None:
+        if not 0 <= index < len(self._items) or index == self._index:
+            return
+        self._index = index
+        self.setText(self._items[index][0])
+        if not self.signalsBlocked():
+            self.currentIndexChanged.emit(index)
+
+    def _open_menu(self) -> None:
+        from qfluentwidgets import Action, RoundMenu
+
+        menu = RoundMenu(parent=self)
+        for index, (text, _data) in enumerate(self._items):
+            action = Action(text, menu)
+            action.setCheckable(True)
+            action.setChecked(index == self._index)
+            action.triggered.connect(lambda _on=False, i=index: self.setCurrentIndex(i))
+            menu.addAction(action)
+        menu.setMinimumWidth(self.width())
+        menu.exec(self.mapToGlobal(QPoint(0, self.height() + 4)))
+
+
+def empty_state(card: QWidget, icon_name: str, title: str, desc: str = "") -> None:
+    """Fill ``card`` with an empty page's look: a large round icon, a title
+    and one line, centred (oink-ui EmptyState, Leo 2026-11-09)."""
+    layout = vbox(card, (20, 26, 20, 26), 6)
+    tile = IconTile(icon_name, 56, 24)
+    layout.addWidget(tile, 0, Qt.AlignHCenter)
+    layout.addSpacing(4)
+    head = Text(title, "h3")
+    head.setAlignment(Qt.AlignCenter)
+    layout.addWidget(head)
+    if desc:
+        line = Text(desc, "muted", wrap=True)
+        line.setAlignment(Qt.AlignCenter)
+        layout.addWidget(line)
+
+
 # ---------------------------------------------------------------- segmented
 
 
@@ -817,6 +1531,13 @@ class Segmented(QFrame):
             button = QPushButton(t((labels or {}).get(option, option)), self)
             button.setProperty("seg", True)
             button.setProperty("segAccent", accent)
+            if accent:
+                # White text on violet: Windows' ClearType colours the edges
+                # for a light ground and the right side of 「10」 looked cut
+                # (Leo 2026-11-09), so these use plain grey smoothing.
+                font = QFont(button.font())
+                font.setStyleStrategy(QFont.NoSubpixelAntialias)
+                button.setFont(font)
             button.setCheckable(True)
             button.setCursor(Qt.PointingHandCursor)
             button.setFocusPolicy(Qt.NoFocus)
@@ -826,7 +1547,7 @@ class Segmented(QFrame):
             self._buttons[option] = button
             button.toggled.connect(lambda on, b=button: on and self._slide_to(b))
         # The chosen option's pill is painted here and slides between options.
-        self._pill = motion.Tween(self, self.update, 220, QRectF())
+        self._pill = motion.Tween(self, self.update, 380, QRectF(), QEasingCurve.OutBack)
         self.set_value(current)
         self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
 
@@ -857,8 +1578,8 @@ class Segmented(QFrame):
             painter.setPen(Qt.NoPen)
             painter.setBrush(theme.color("accent"))
         else:
-            painter.setPen(QPen(theme.color("line"), 1))
-            painter.setBrush(theme.color("card"))
+            painter.setPen(QPen(theme.color("hair"), 1))
+            painter.setBrush(theme.color("raised"))
         corner = theme.seg_item_radius(rect.height())
         painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), corner, corner)
 
@@ -890,18 +1611,24 @@ class Segmented(QFrame):
 class CheckBox(QAbstractButton):
     """A square check box with an optional text label to its right."""
 
-    def __init__(self, text: str = "", checked: bool = False, parent=None, box: int = 16):
+    def __init__(self, text: str = "", checked: bool = False, parent=None, box: int | None = None):
         super().__init__(parent)
         self.setCheckable(True)
         self.setChecked(checked)
         self.setText(t(text))
-        self._box = box
+        self._box = box or theme.size("check")
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
         self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         # Checking fills the box and draws the tick in from the left.
         self._on = motion.Tween(self, self.update, 200, 1.0 if checked else 0.0)
         self.toggled.connect(lambda on: self._on.go(1.0 if on else 0.0))
+        # oink-ui (2026-11-09): the box dips while pressed and its edge turns
+        # violet under the mouse.
+        self._press = motion.Tween(self, self.update, 220, 0.0, QEasingCurve.OutBack)
+        self.pressed.connect(lambda: self._press.go(1.0))
+        self.released.connect(lambda: self._press.go(0.0))
+        self.setAttribute(Qt.WA_Hover, True)
 
     def set_checked_quietly(self, checked: bool) -> None:
         if self.isChecked() != checked:
@@ -913,24 +1640,34 @@ class CheckBox(QAbstractButton):
     def sizeHint(self) -> QSize:
         metrics = QFontMetrics(self.font())
         width = self._box + (8 + metrics.horizontalAdvance(self.text()) if self.text() else 0)
-        return QSize(width + 2, max(self._box, metrics.height()) + 4)
+        return QSize(width + 2, max(self._box, metrics.height() + 4))
 
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         y = (self.height() - self._box) / 2
-        rect = QRectF(0.5, y + 0.5, self._box - 1, self._box - 1)
+        rect = QRectF(0.75, y + 0.75, self._box - 1.5, self._box - 1.5)
+        corner = min(float(theme.size("corner_small")), self._box * 0.32)
         on = float(self._on.value)
+        painter.save()
+        press = float(self._press.value)
+        if press:
+            centre = rect.center()
+            scale = 1.0 - 0.14 * press
+            painter.translate(centre)
+            painter.scale(scale, scale)
+            painter.translate(-centre)
         if on < 1.0:
-            painter.setPen(QPen(theme.color("line2"), 1.2))
-            painter.setBrush(theme.color("card"))
-            painter.drawRoundedRect(rect, theme.corner(4, 6), theme.corner(4, 6))
+            hot = self.underMouse() and self.isEnabled()
+            painter.setPen(QPen(theme.color("primary" if hot else "hair2"), 1.5))
+            painter.setBrush(theme.color("raised"))
+            painter.drawRoundedRect(rect, corner, corner)
         if on > 0.0:
             painter.save()
             painter.setOpacity(min(1.0, on * 1.6))
             painter.setPen(Qt.NoPen)
             painter.setBrush(theme.color("primary"))
-            painter.drawRoundedRect(rect, theme.corner(4, 6), theme.corner(4, 6))
+            painter.drawRoundedRect(rect, corner, corner)
             inner = self._box - 4
             if self._on.target == 1.0 and on < 1.0:
                 # Being checked: the tick is drawn in from the left.
@@ -939,10 +1676,21 @@ class CheckBox(QAbstractButton):
                 painter.setClipRect(QRectF(0, 0, 2 + inner * reveal, self.height()))
             else:
                 painter.setOpacity(on)
-            icons.paint(
-                painter, QRectF(2, y + 2, inner, inner), "check", theme.color("on_primary"), 3.2
-            )
+            # The tick is one stroked path drawn at screen resolution, so its
+            # corner stays as thick as its arms (Leo 2026-11-09: the scaled
+            # icon's tick 「感覺像斷掉」 at its corner).
+            box = rect.width()
+            tick = QPainterPath(QPointF(rect.x() + box * 0.25, rect.y() + box * 0.52))
+            tick.lineTo(rect.x() + box * 0.43, rect.y() + box * 0.70)
+            tick.lineTo(rect.x() + box * 0.76, rect.y() + box * 0.32)
+            pen = QPen(theme.color("on_primary"), max(1.6, box * 0.12))
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(tick)
             painter.restore()
+        painter.restore()
         if self.text():
             painter.setPen(theme.color("ink" if self.isEnabled() else "ink3"))
             painter.setFont(theme.body_font(self.font()))
@@ -1060,7 +1808,7 @@ class SegBar(QWidget):
 class Bar(QWidget):
     """A thin progress bar."""
 
-    def __init__(self, parent=None, height: int = 6, colour: str = "primary"):
+    def __init__(self, parent=None, height: int = 8, colour: str = "primary"):
         super().__init__(parent)
         self._value = 0.0
         self._colour = colour
@@ -1083,11 +1831,13 @@ class Bar(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         radius = self.height() / 2
         painter.setPen(Qt.NoPen)
-        painter.setBrush(theme.color("track"))
+        painter.setBrush(theme.color("well2"))
         painter.drawRoundedRect(QRectF(0, 0, self.width(), self.height()), radius, radius)
         shown = float(self._shown.value)
         if shown > 0:
-            painter.setBrush(theme.color(self._colour))
+            # oink-ui (2026-11-09): a violet bar turns green once it is full.
+            full = self._colour == "primary" and self._value >= 1.0 and shown >= 0.999
+            painter.setBrush(theme.color("ok" if full else self._colour))
             width = max(self.height(), self.width() * shown)
             painter.drawRoundedRect(QRectF(0, 0, width, self.height()), radius, radius)
 

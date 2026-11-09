@@ -54,15 +54,15 @@ class SidebarSlideTest(unittest.TestCase):
         self.side.show()
         self.settle()
         self.side.select("home")
-        self.side.select("fiend")
+        self.side.select("talos")
         self.assertTrue(self.side._slide.running())
         self.side._slide.stop()
         self.side._slide.value = 0.0
         self.assertEqual(self.row("home"), self.side._pill_rect())
         self.side._slide.value = 1.0
         self.side._slide_step()
-        self.assertEqual(self.row("fiend"), self.side._pill_rect())
-        self.assertEqual(1.0, self.side.items["fiend"]._on)
+        self.assertEqual(self.row("talos"), self.side._pill_rect())
+        self.assertEqual(1.0, self.side.items["talos"]._on)
         self.assertEqual(0.0, self.side.items["home"]._on)
 
     def test_a_quick_second_click_turns_around_mid_way(self):
@@ -107,7 +107,7 @@ class SidebarSlideTest(unittest.TestCase):
         self.side.show()
         self.settle()
         self.side.select("home")
-        self.side.select("fiend")
+        self.side.select("talos")
         slide = self.side._slide
         with mock.patch.object(slide._clock, "restart", return_value=150):
             slide._tick()
@@ -118,21 +118,21 @@ class SidebarSlideTest(unittest.TestCase):
     def test_the_shade_hugs_the_words_and_its_width_follows_them(self):
         self.side.show()
         self.settle()
-        short, long = self.side.items["home"], self.side.items["fiend"]
+        short, long = self.side.items["home"], self.side.items["talos"]
         self.assertLess(short.pill_width(), long.pill_width())
         self.assertLess(long.pill_width(), long.width())
         self.side.select("home")
-        self.side.select("fiend")
+        self.side.select("talos")
         self.side._slide.stop()
         self.side._slide.value = 0.5
         width = self.side._pill_rect().width()
-        self.assertTrue(self.row("home").width() < width < self.row("fiend").width())
+        self.assertTrue(self.row("home").width() < width < self.row("talos").width())
 
     def test_the_landing_bounces_a_little_past_the_target_and_settles(self):
         self.side.show()
         self.settle()
         self.side.select("home")
-        self.side.select("fiend")
+        self.side.select("talos")
         slide = self.side._slide
         seen = []
         with mock.patch.object(slide._clock, "restart", return_value=16):
@@ -142,7 +142,7 @@ class SidebarSlideTest(unittest.TestCase):
         self.assertGreater(max(seen), 1.0)
         self.assertLess(max(seen), 1.08)
         self.assertEqual(1.0, seen[-1])
-        self.assertEqual(self.row("fiend"), self.side._pill_rect())
+        self.assertEqual(self.row("talos"), self.side._pill_rect())
 
     def test_no_page_selected_draws_no_shade(self):
         self.side.show()

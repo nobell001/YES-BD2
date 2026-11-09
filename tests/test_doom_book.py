@@ -33,6 +33,27 @@ class MarkerTest(unittest.TestCase):
         cv2.line(frame, (240, 115), (260, 135), (20, 20, 220), 6)  # minimap marker
         self.assertIsNone(find_marker(frame))
 
+    def test_red_clothes_on_the_party_are_not_the_marker(self):
+        # Player 2560x1440 frame, 11-09: a red skirt beside the character
+        # (907, 521) was 3 px bigger than the marker (1443, 337); the walk went
+        # for the skirt, which moves with the character, and never arrived.
+        frame = load(Path(__file__).parent / "fixtures" / "doom" / "field_red_costume_1440_as_1080.png")
+        found = find_marker(frame)
+        self.assertIsNotNone(found)
+        self.assertLess(abs(found[0] - 1443) + abs(found[1] - 337), 6)
+
+    def test_red_clothes_alone_are_not_taken(self):
+        # Marker out of view: a plain red patch on the party is not a target.
+        frame = np.full((1080, 1920, 3), (70, 80, 90), dtype=np.uint8)
+        cv2.rectangle(frame, (889, 513), (923, 534), (20, 20, 220), -1)
+        self.assertIsNone(find_marker(frame))
+
+    def test_marker_shape_wins_over_a_bigger_red_patch(self):
+        frame = load(Path(__file__).parent / "fixtures" / "doom" / "field_red_costume_1440_as_1080.png")
+        cv2.rectangle(frame, (300, 700), (334, 728), (20, 20, 220), -1)  # bigger red box
+        found = find_marker(frame)
+        self.assertLess(abs(found[0] - 1443) + abs(found[1] - 337), 6)
+
     def test_walk_heads_for_the_marker(self):
         # Spawn: marker up-right of the character, so walk right first.
         self.assertEqual("d", plan_step((1477, 346), MARKER_TARGET).key)
@@ -101,6 +122,9 @@ class HoldKeyForegroundTest(unittest.TestCase):
         task = SimpleNamespace(
             operate=lambda fun, **_kwargs: fun(),
             _bring_game_to_foreground=lambda: foreground,
+            _game_in_foreground=lambda: foreground,
+            _wait_unlocked=lambda: True,
+            log_info=lambda *_args, **_kwargs: None,
             info_set=info.__setitem__,
             log_warning=lambda *_args, **_kwargs: None,
             sleep=lambda _seconds: None,
@@ -672,6 +696,69 @@ class ClickToMoveTest(unittest.TestCase):
                 found = find_marker(cv2.resize(frame, (1920, 1080), interpolation=cv2.INTER_AREA))
                 self.assertIsNotNone(found)
                 self.assertLess(abs(found[0] - 1561) + abs(found[1] - 313), 4)
+
+    def test_walk_nudges_when_the_marker_hides_under_the_feet(self):
+        # Seen once just short of the feet, then hidden by the character: the
+        # walk nudges around instead of giving up after 5 empty looks.
+        from src.utils.stage_walk import MARKER_TARGET
+
+        x, y = MARKER_TARGET
+        empty = np.full((1080, 1920, 3), (70, 80, 90), dtype=np.uint8)
+        task = self._task([field_with_marker((x + 200, y))] + [empty] * 40, page_after_clicks=99)
+        keys = []
+        task.hold_key = lambda key, seconds, after_sleep=0.0: keys.append(key) or True
+        task._doom_page_visible = lambda frame: len(keys) >= 4
+        self.assertTrue(task._walk_to_marker())
+        self.assertEqual("d", keys[0])
+
+    def test_walk_drops_a_red_spot_that_moves_with_the_character(self):
+        # Second cue: a plain red patch that stays put while the ground moves
+        # is on the party; the walk drops it and goes for the real marker.
+        rng = np.random.default_rng(1)
+        ground = rng.integers(40, 120, (1080, 2400, 3), dtype=np.uint8)
+        ground = cv2.GaussianBlur(ground, (9, 9), 0)
+
+        def frame(offset, with_marker):
+            view = np.ascontiguousarray(ground[:, offset : offset + 1920])
+            for cx, cy in [(1300, 545)] + ([(1600 - offset, 300)] if with_marker else []):
+                cv2.line(view, (cx - 14, cy - 13), (cx + 14, cy + 13), (20, 20, 220), 6)
+                cv2.line(view, (cx + 14, cy - 13), (cx - 14, cy + 13), (20, 20, 220), 6)
+            return view
+
+        # Costume X at (1300, 545) moves with the camera; after the first D
+        # step the ground slid 200 px; the marker shows a moment later.
+        frames = [frame(0, False), frame(200, False)] + [frame(200, True)] * 40
+        task = self._task(frames, page_after_clicks=99)
+        from unittest import mock
+
+        task.log_info = mock.Mock()
+        keys = []
+        task.hold_key = lambda key, seconds, after_sleep=0.0: keys.append(key) or True
+        task._doom_page_visible = lambda frame: len(keys) >= 2
+        self.assertTrue(task._walk_to_marker())
+        logged = " ".join(str(c) for c in task.log_info.call_args_list)
+        self.assertIn("跟着角色走", logged)
+
+    def test_a_still_view_keeps_the_spot(self):
+        # Walking into a wall: nothing moved, so the spot is not dropped.
+        frame = field_with_marker((1300, 545))
+        task = self._task([frame] * 40, page_after_clicks=99)
+        from unittest import mock
+
+        task.log_info = mock.Mock()
+        keys = []
+        task.hold_key = lambda key, seconds, after_sleep=0.0: keys.append(key) or True
+        task._doom_page_visible = lambda frame: len(keys) >= 3
+        self.assertTrue(task._walk_to_marker())
+        logged = " ".join(str(c) for c in task.log_info.call_args_list)
+        self.assertNotIn("跟着角色走", logged)
+
+    def test_follows_character(self):
+        from src.utils.stage_walk import WalkStep, follows_character
+
+        self.assertTrue(follows_character((1300, 545), (1302, 545), WalkStep("d", 0.3)))
+        self.assertFalse(follows_character((1300, 545), (1105, 545), WalkStep("d", 0.3)))
+        self.assertFalse(follows_character((1300, 545), (1300, 545), WalkStep("d", 0.02)))
 
     def test_click_lands_on_the_marker(self):
         task = self._task([field_with_marker((1561, 313))] * 3)

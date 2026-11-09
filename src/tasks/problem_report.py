@@ -51,6 +51,8 @@ PROBLEM_LOG_LINES = 12
 READ_LINES = 12
 READ_WINDOW = 120.0
 READ_CHARS = 100
+# A failure screenshot this soon after the stuck watch fired keeps its step.
+STUCK_KEEP_SECONDS = 5.0
 # Not readings: where the run is, already shown as 停在.
 _NOT_READS = frozenset({"状态", "当前阶段"})
 # Readings kept in memory, all threads (oldest dropped).
@@ -279,6 +281,51 @@ def _readings(current: dict, task_name: str, until: float) -> list[dict]:
     return found[-READ_LINES:]
 
 
+def last_check(task, within: float = READ_WINDOW, now: float | None = None) -> tuple[str, str] | None:
+    """(check, what it read) of the last check this task made on this thread.
+
+    Where a run really stopped (Leo 2026-11-09 「報告要寫出真正卡在哪」): a
+    player's 活动每日战斗 said only 「卡在「启动活动每日战斗」」, its task
+    status, because no 当前阶段 was set yet; the check it was making when
+    it stuck (「活动页 OCR」 and what it read) names the screen it waited for.
+    """
+    now = time.time() if now is None else now
+    name = str(getattr(task, "name", "") or "")
+    thread = threading.get_ident()
+    best = None
+    with _lock:
+        for (ident, task_name, key), (at, text) in _reads.items():
+            if ident != thread or task_name != name or at < now - within:
+                continue
+            if best is None or at >= best[0]:
+                best = (at, key, text)
+    return None if best is None else (best[1], best[2])
+
+
+def check_place(key: str) -> str:
+    """「活动页 OCR」 -> 「活动页」: the screen or thing a check looks at."""
+    text = re.sub(r"\s*(OCR|关键字|关键词|分数|亮度p95)$", "", str(key or "").strip(), flags=re.I)
+    return text.strip() or str(key or "").strip()
+
+
+def note_stuck(task, step: str = "", now: float | None = None) -> None:
+    """The stuck watch fired: keep this very moment (frame, reads, step).
+
+    The record used to be taken after the Esc and the trip home, so its
+    frame, its 读到 and its 停在 showed 主页 (player v0.3.5 2026-11-09:
+    读到 主页亮度p95, 停在 启动活动每日战斗).  The last frame already seen is
+    used: a new look would raise the watch again.
+    """
+    note_give_up(task, _last_frame(getattr(task, "executor", None)), now)
+    step = plain(scrub(str(step or ""))).strip()[:READ_CHARS]
+    with _lock:
+        kept = _current.get("give_up") if _current is not None else None
+        if kept is not None and kept.get("task") == str(getattr(task, "name", "") or ""):
+            kept["stuck"] = True
+            if step:
+                kept["stage"] = step
+
+
 # ------------------------------------------------------------- the screen
 
 
@@ -467,6 +514,16 @@ def note_give_up(task, frame, now: float | None = None) -> None:
         current = _current
         if current is None or current.get("thread") != threading.get_ident():
             return  # another thread's task (a trigger) is not this run
+        earlier = current.get("give_up") or {}
+        stuck_stage = ""
+        if (
+            earlier.get("stuck")
+            and earlier.get("task") == str(getattr(task, "name", "") or "")
+            and now - float(earlier.get("at") or 0) <= STUCK_KEEP_SECONDS
+        ):
+            # The failure screenshot right after the stuck watch fired: the
+            # step it stuck on stays the step (note_stuck).
+            stuck_stage = str(earlier.get("stage") or "")
         current["give_up"] = {
             "at": now,
             "task": str(getattr(task, "name", "") or ""),
@@ -475,6 +532,9 @@ def note_give_up(task, frame, now: float | None = None) -> None:
             "logs": _logs(current, now, PROBLEM_LOG_LINES),
             "reads": _readings(current, str(getattr(task, "name", "") or ""), now),
             "steps": _steps(current, now),
+            # Where it was then: after the trip home 当前阶段 may have moved on.
+            "stage": stuck_stage or _stage(task),
+            "stuck": bool(stuck_stage),
             # Not yet followed by the trip home (note_leaving_step).
             "recovered": False,
         }
@@ -919,7 +979,7 @@ def _capture(task, how: str, note: str, current: dict) -> dict:
         "at": give_up["at"] if give_up is not None else now,
         "how": how,
         "task": name,
-        "stage": _stage(task),
+        "stage": (give_up or {}).get("stage") or _stage(task),
         "note": plain(scrub(note))[:NOTE_CHARS],
         "env": environment(executor),
         "logs": (give_up or {}).get("logs") or _logs(current, now, PROBLEM_LOG_LINES),
@@ -1030,6 +1090,9 @@ def _end(task, current: dict, ended: str | None, error: str, ok: bool) -> dict:
     if ended is None:
         ended = DONE if ok else FAILED
     record["ended"] = ended
+    dispatch = _dispatch_today()
+    if dispatch:
+        record["dispatch"] = dispatch
     if ended in PROBLEM_ENDS and record["problem"] is None:
         how = {STOPPED: "stop", ERROR: "error"}.get(ended, "fail")
         record["problem"] = _capture(task, how, error, current)
@@ -1040,6 +1103,19 @@ def _end(task, current: dict, ended: str | None, error: str, ok: bool) -> dict:
         record["logs"] = _logs(current, now)
     _save(record, whole)
     return record
+
+
+def _dispatch_today() -> dict | None:
+    """Today's 派遣 for the summary (Leo 2026-11-09 「當天有沒有派遣 要記錄下來」)."""
+    try:
+        from src.utils import field_followers
+
+        record = field_followers.today_record()
+        if not record:
+            return None
+        return {"state": record.get("state"), "text": field_followers.record_text(record)}
+    except Exception:
+        return None
 
 
 def full_log_text(lines) -> str:

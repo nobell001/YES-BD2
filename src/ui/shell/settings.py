@@ -10,17 +10,18 @@ from collections.abc import Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
-from qfluentwidgets import ComboBox
 
 from src.ui.shell import actions, data, theme
 from src.ui.shell.page import Page
 from src.ui.shell.widgets import (
     Button,
-    OptionSwitch,
     Card,
     IconLabel,
     IconTile,
+    KeyCap,
+    OptionSwitch,
     Segmented,
+    Select,
     Separator,
     Text,
     Toggle,
@@ -136,6 +137,11 @@ def set_move_mode(mode: str) -> None:
         pvp.config[MOVE_KEY] = mode
 
 
+# Hairlines between settings rows start under the text, past the icon
+# (oink-ui Group, 2026-11-09): row margin 2 + icon 32 + gap 12.
+ROW_INDENT = 46
+
+
 class HubRow(QWidget):
     """Icon, title, one line under it, and a control or an arrow on the right."""
 
@@ -150,7 +156,8 @@ class HubRow(QWidget):
     ):
         super().__init__(parent)
         self._on_click = on_click
-        layout = hbox(self, (2, 8, 2, 8), 12)
+        layout = hbox(self, (2, 10, 2, 10), 12)
+        self.setMinimumHeight(56)
         tile = IconTile(icon_name, 32, 17)
         if on_click is not None and control is None:
             tile.follow_hover(self)
@@ -193,8 +200,8 @@ class SettingsPage(Page):
                 "sun-moon", "颜色", "淡紫、深色，或跟着 Windows 的设定", control=self.theme_switch
             )
         )
-        look.addWidget(Separator())
-        self.language_switch = ComboBox()
+        look.addWidget(Separator(indent=ROW_INDENT))
+        self.language_switch = Select()  # oink-ui Select (2026-11-09)
         for mode, label in LANGUAGE_LABELS.items():
             # Native names stay as written; only 跟随系统 follows the UI language.
             self.language_switch.addItem(t(label) if mode == "auto" else label, userData=mode)
@@ -217,7 +224,7 @@ class SettingsPage(Page):
                 control=self.notify_toggle,
             )
         )
-        notify.addWidget(Separator())
+        notify.addWidget(Separator(indent=ROW_INDENT))
         self._build_wechat(notify)
 
         self._build_hotkeys()
@@ -236,7 +243,7 @@ class SettingsPage(Page):
                     control=self.login_toggle,
                 )
             )
-            game.addWidget(Separator())
+            game.addWidget(Separator(indent=ROW_INDENT))
         self.move_switch = OptionSwitch(*_move_options(), move_mode(), labels=MOVE_LABELS)
         self.move_switch.changed.connect(set_move_mode)
         game.addWidget(
@@ -247,7 +254,7 @@ class SettingsPage(Page):
                 control=self.move_switch,
             )
         )
-        game.addWidget(Separator())
+        game.addWidget(Separator(indent=ROW_INDENT))
         # Leo 2026-10-09: the player chooses; off unless ticked here.
         self.mute_toggle = Toggle(game_sound.enabled())
         self.mute_toggle.toggled.connect(game_sound.set_enabled)
@@ -259,7 +266,7 @@ class SettingsPage(Page):
                 control=self.mute_toggle,
             )
         )
-        game.addWidget(Separator())
+        game.addWidget(Separator(indent=ROW_INDENT))
         # YES-BD2 #60 (Leo 2026-10-28): off unless the player turns it on;
         # read every half second, so turning it off mid-run hides it at once.
         self.status_bar_toggle = Toggle(game_status_bar.enabled())
@@ -271,7 +278,7 @@ class SettingsPage(Page):
             control=self.status_bar_toggle,
         )
         game.addWidget(self.status_bar_row)
-        game.addWidget(Separator())
+        game.addWidget(Separator(indent=ROW_INDENT))
         # YES-BD2 #56 (2026-10-26): the player sets how long opening the game
         # and logging in may take, and how often to try again.
         self.wait_row = HubRow(
@@ -281,7 +288,7 @@ class SettingsPage(Page):
             control=Button("设定", "secondary", size="sm", on_click=self._set_waits),
         )
         game.addWidget(self.wait_row)
-        game.addWidget(Separator())
+        game.addWidget(Separator(indent=ROW_INDENT))
         home_task = data.task_by_name("回到主页")
         if home_task is not None:
             self.home_button = Button(
@@ -315,7 +322,7 @@ class SettingsPage(Page):
                 on_click=actions.open_logs,
             )
         )
-        tools.addWidget(Separator())
+        tools.addWidget(Separator(indent=ROW_INDENT))
         tools.addWidget(
             HubRow(
                 "image",
@@ -382,7 +389,7 @@ class SettingsPage(Page):
         return True
 
     def _build_hotkeys(self) -> None:
-        """暂停、停止、魔兽录制三个键（Leo 2026-10-09，F6~F12，不能重复；
+        """暂停、停止两个键（Leo 2026-10-09，F6~F12，不能重复；
         2026-10-20 可选「无」关掉）。"""
         from src.ui.shell import hotkeys
 
@@ -390,21 +397,16 @@ class SettingsPage(Page):
         subs = {
             hotkeys.PAUSE: "跑的时候按一下暂停，再按一下继续",
             hotkeys.STOP: "跑的时候按一下停止",
-            hotkeys.RECORD: "魔兽追踪者录制时，每回合排好后按这个键",
         }
-        icons = {hotkeys.PAUSE: "pause", hotkeys.STOP: "square", hotkeys.RECORD: "circle-dot"}
-        self.hotkey_boxes: dict[str, ComboBox] = {}
+        icons = {hotkeys.PAUSE: "pause", hotkeys.STOP: "square"}
+        self.hotkey_boxes: dict[str, KeyCap] = {}
         current = hotkeys.keys()
         for index, action in enumerate(hotkeys.ACTIONS):
             if index:
-                column.addWidget(Separator())
-            box = ComboBox()
-            box.addItems([hotkeys.display(key) for key in hotkeys.OPTIONS])
-            box.setCurrentText(hotkeys.display(current[action]))
-            box.setFixedWidth(96)
-            box.currentTextChanged.connect(
-                lambda text, action=action: self._hotkey_picked(action, hotkeys.from_display(text))
-            )
+                column.addWidget(Separator(indent=ROW_INDENT))
+            # A key cap with a menu (oink-ui Kbd, Leo 2026-11-09).
+            box = KeyCap(hotkeys.OPTIONS, current[action])
+            box.changed.connect(lambda key, action=action: self._hotkey_picked(action, key))
             self.hotkey_boxes[action] = box
             row = HubRow(icons[action], hotkeys.LABELS[action], subs[action], control=box)
             column.addWidget(row)
@@ -421,11 +423,7 @@ class SettingsPage(Page):
 
         current = hotkeys.keys()
         for action, box in getattr(self, "hotkey_boxes", {}).items():
-            shown = hotkeys.display(current[action])
-            if box.currentText() != shown:
-                box.blockSignals(True)
-                box.setCurrentText(shown)
-                box.blockSignals(False)
+            box.set_value(current[action])
 
     def _build_clone(self) -> None:
         """Only 还原 lives here; 桌面分身 itself starts from 首页 (Leo, 2026-10-03)."""
@@ -547,5 +545,5 @@ class SettingsPage(Page):
             self.login_toggle.set_checked_quietly(bool(getattr(login, "enabled", False)))
         if self.home_button is not None:
             self.home_button.setEnabled(actions.can_start())
-        self._show_hotkeys()  # the 魔兽追踪者 page can change the record key
+        self._show_hotkeys()
         self._refresh_clone()

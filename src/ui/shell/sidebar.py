@@ -308,10 +308,8 @@ class Sidebar(QWidget):
         ("map", "跑图", "map"),
         # Leo 2026-11-06 推主线: a state, its switch 「放側邊欄」.
         ("story", "推剧情", "scroll-text"),
-        # Leo 2026-10-28 「放側邊欄 把放魔獸追蹤者上面」.
+        # Leo 2026-10-28 「放側邊欄」; 2026-11-08 魔兽追踪者 removed, 塔洛斯 kept.
         ("talos", "塔洛斯教材", "swords"),
-        # Leo 2026-10-06: 魔兽战 back, on a page of its own.
-        ("fiend", "魔兽追踪者", "skull"),
     )
     BOTTOM = (
         # Leo (2026-10-05): the guide sits where new players see it; 2026-10-22

@@ -42,7 +42,7 @@ from src.tasks.fiend_hunt.fight import ListGlance, ScreenReadError
 from src.tasks.fiend_hunt.names import settle_name, snap_name
 from src.tasks.fiend_hunt.planner import Cell, Drag
 from src.tasks.fiend_hunt.record import FightRecord, TurnState, TurnStateError
-from src.utils.wait_limits import STUCK_SECONDS
+from src.utils.wait_limits import STUCK_SECONDS, HeldFor
 
 # Timings measured on the 4K PC (2026-09-30, speed probe): a 0.15 s hold
 # selected 20/20 and the brackets were on the first capture after release
@@ -884,7 +884,8 @@ class GameFightScreen:
                 return None
             self.sleep(POLL)
         deadline = self.clock() + TURN_WAIT_SECONDS
-        steady_since = None
+        # One misread look does not start the steady count over (HeldFor).
+        steady = HeldFor()
         still, still_since = None, self.clock()
         read_word_at = self.clock() + END_WORD_EVERY
         while self.clock() <= deadline:
@@ -904,12 +905,12 @@ class GameFightScreen:
                     self.log(f"出现「{word}」：这场输了")
                     self._keep_picture(frame, "fiend-lost")
                     return "end"
-            if vision.planning_visible(frame) and vision.slot_count(frame) > 0:
-                steady_since = steady_since if steady_since is not None else self.clock()
-                if self.clock() - steady_since >= PLANNING_STEADY_SECONDS:
+            planning = vision.planning_visible(frame) and vision.slot_count(frame) > 0
+            steady_for = steady.look(planning, self.clock())
+            if planning:
+                if steady_for >= PLANNING_STEADY_SECONDS:
                     return "planning"
             else:
-                steady_since = None
                 picture = vision.still_picture(frame)
                 if still is None or not vision.same_still(still, picture):
                     still, still_since = picture, self.clock()

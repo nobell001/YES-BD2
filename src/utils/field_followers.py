@@ -50,8 +50,30 @@ FOLLOWERS_DISMISSED = "dismissed"
 FOLLOWERS_STILL_VISIBLE = "still_visible"
 FOLLOWERS_DONE_TODAY = "done_today"
 
-# Game day of the last successful press; kept for the life of the tool.
-_dismissed_game_day: str | None = None
+# Game day of the last successful press, per account (up to 5 accounts share
+# one tool life: account 2's crowd is its own).  Kept for the life of the tool.
+_dismissed_game_day: dict[str, str] = {}
+
+# What every look found today, per account (Leo 2026-11-09 「當天有沒有派遣 要記
+# 錄下來」): the run reports and the 问题摘要 say whether 派遣 was claimed.
+_day_records: dict[str, dict] = {}
+_record_file: Path | None = None
+RECORD_FILE_NAME = "field_followers_day.json"
+MAX_LOOKS = 12
+# The crowd seen walking over keeps a look going up to this long (walking is
+# not being stuck; Leo's 10 s rule is for a stuck screen).
+CROWD_WAIT_SECONDS = 15.0
+# After the press the balloons leave with the crowd within this long.
+CROWD_LEAVE_SECONDS = 3.0
+
+# How sure each outcome is that 派遣 was claimed; the day keeps the best.
+KEY_PRESSED_BLIND = "key_pressed_blind"
+_RANK = {
+    FOLLOWERS_DISMISSED: 3,
+    FOLLOWERS_STILL_VISIBLE: 2,
+    KEY_PRESSED_BLIND: 1,
+    FOLLOWERS_ABSENT: 0,
+}
 
 
 def _game_day(now: datetime | None = None) -> str:
@@ -59,18 +81,143 @@ def _game_day(now: datetime | None = None) -> str:
     return (local - timedelta(hours=DAILY_REFRESH_HOUR)).date().isoformat()
 
 
+def _account() -> str:
+    try:
+        from src.utils import accounts
+
+        return accounts.current_id()
+    except Exception:
+        return "1"
+
+
 def dismissed_today(now: datetime | None = None) -> bool:
-    return _dismissed_game_day == _game_day(now)
+    """派遣 claimed today on this account: this tool life, or a saved record
+    (a restarted tool does not wait again, Leo 2026-11-09 「如果有紀錄派遣成功，
+    就不用等」)."""
+    if _dismissed_game_day.get(_account()) == _game_day(now):
+        return True
+    return claimed(today_record(now))
 
 
 def mark_dismissed(now: datetime | None = None) -> None:
-    global _dismissed_game_day
-    _dismissed_game_day = _game_day(now)
+    _dismissed_game_day[_account()] = _game_day(now)
 
 
 def reset_dismissed() -> None:
-    global _dismissed_game_day
-    _dismissed_game_day = None
+    """Forget today's 派遣 (tests only): the memory, and the saved record moves
+    to a fresh temporary file so no test reads or writes the player's."""
+    import tempfile
+
+    _dismissed_game_day.clear()
+    _day_records.clear()
+    set_record_file(Path(tempfile.mkdtemp(prefix="bd2-followers-")) / RECORD_FILE_NAME)
+
+
+def set_record_file(path: Path | str | None) -> None:
+    """Tests point the day record somewhere else (None: the account's file)."""
+    global _record_file
+    _record_file = Path(path) if path else None
+
+
+def _record_path() -> Path:
+    if _record_file is not None:
+        return _record_file
+    from src.utils import accounts
+
+    return accounts.path(RECORD_FILE_NAME)
+
+
+def _read_file() -> dict | None:
+    import json
+
+    try:
+        data = json.loads(_record_path().read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _write_file(record: dict) -> None:
+    import json
+
+    try:
+        path = _record_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass  # a record that cannot be saved never stops a run
+
+
+def today_record(now: datetime | None = None) -> dict | None:
+    """Today's 派遣 record of the current account, or None when nothing looked."""
+    day = _game_day(now)
+    record = _day_records.get(_account())
+    if record is None or record.get("day") != day:
+        record = _read_file()
+    if not record or record.get("day") != day:
+        return None
+    return record
+
+
+def note_look(
+    outcome: str,
+    where: str,
+    *,
+    waited: float = 0.0,
+    now: datetime | None = None,
+    stamp: float | None = None,
+) -> dict | None:
+    """Keep what one look at the F slot found (DONE_TODAY looked at nothing)."""
+    if outcome not in _RANK:
+        return None
+    import time as _time
+
+    day = _game_day(now)
+    record = today_record(now)
+    if record is None:
+        record = {"day": day, "state": outcome, "where": where, "at": None, "looks": []}
+    at = float(_time.time() if stamp is None else stamp)
+    record["looks"] = (list(record.get("looks") or []) + [
+        {"where": where, "outcome": outcome, "waited": round(float(waited), 1), "at": at}
+    ])[-MAX_LOOKS:]
+    # The day keeps its best outcome, the first time it was reached.
+    if record.get("at") is None or _RANK[outcome] > _RANK.get(record.get("state"), -1):
+        record.update(state=outcome, where=where, at=at)
+    _day_records[_account()] = record
+    _write_file(record)
+    return record
+
+
+_STATE_TEXT = {
+    FOLLOWERS_DISMISSED: "已领",
+    FOLLOWERS_STILL_VISIBLE: "按了「!」没消失",
+    KEY_PRESSED_BLIND: "没看到「!」，照样按了一次 F",
+    FOLLOWERS_ABSENT: "没看到「!」",
+}
+
+
+def claimed(record: dict | None) -> bool:
+    return bool(record) and record.get("state") == FOLLOWERS_DISMISSED
+
+
+def record_text(record: dict | None) -> str:
+    """'已领（镜中之战 08:12）' / '没看到「!」（找过：镜中之战 5 秒、广场 10 秒）'."""
+    if not record:
+        return "今天还没找过"
+    state = _STATE_TEXT.get(record.get("state"), "")
+    if record.get("state") == FOLLOWERS_DISMISSED:
+        at = record.get("at")
+        when = datetime.fromtimestamp(float(at)).strftime("%H:%M") if at else ""
+        return f"{state}（{record.get('where') or ''} {when}）".replace(" ）", "）")
+    looked = []
+    for look in record.get("looks") or []:
+        part = f"{look.get('where') or ''} {float(look.get('waited') or 0):g} 秒"
+        if look.get("outcome") == FOLLOWERS_STILL_VISIBLE:
+            part += " 按了没消失"
+        elif look.get("outcome") == KEY_PRESSED_BLIND:
+            part += " 按了 F"
+        looked.append(part.strip())
+    return f"{state}（找过：{'、'.join(dict.fromkeys(looked))}）" if looked else state
 
 
 def dismiss_once_per_run(navigator) -> None:
@@ -78,7 +225,12 @@ def dismiss_once_per_run(navigator) -> None:
     if getattr(navigator, "_field_followers_checked", False):
         return
     navigator._field_followers_checked = True
-    dismiss = getattr(navigator.task, "dismiss_field_followers", None)
+    # Same as the square (Leo 2026-11-09 「如果在鏡中之戰沒有派遣紀錄 那麼在廣場
+    # (女神像，跑商)，也要等」): no 派遣 yet today → wait for the crowd to come.
+    task = navigator.task
+    dismiss = getattr(task, "clear_field_followers", None)
+    if not callable(dismiss):
+        dismiss = getattr(task, "dismiss_field_followers", None)
     if callable(dismiss):
         dismiss()
 
@@ -184,6 +336,9 @@ def dismiss_field_followers(
     gather_seconds: float = 0.0,
     press_key: Callable[[], None] | None = None,
     clock: Callable[[], float] = monotonic,
+    crowd: Callable[[], bool] | None = None,
+    crowd_wait_seconds: float = CROWD_WAIT_SECONDS,
+    crowd_leave_seconds: float = CROWD_LEAVE_SECONDS,
 ) -> str:
     """Press the F "!" button until the followers are gone.
 
@@ -195,7 +350,14 @@ def dismiss_field_followers(
     ``FOLLOWERS_ABSENT`` when the icon never showed on two frames in a row,
     ``FOLLOWERS_DISMISSED`` when a press made it go away, or
     ``FOLLOWERS_STILL_VISIBLE`` after every press was used.
+
+    ``crowd`` (the "!" balloons over their heads, follower_balloons) only
+    adds: while it is on screen and the F "!" has not shown yet, the look goes
+    on up to ``crowd_wait_seconds`` from the start (a slow PC's crowd still
+    walking over, Leo 2026-11-09).  After a press, balloons still up once the
+    F "!" went (the HUD hides while moving) get the F key once more.
     """
+    started = clock()
     presses = 0
     max_presses = max_clicks + (1 if press_key is not None else 0)
     gathered = gather_seconds <= 0
@@ -219,6 +381,11 @@ def dismiss_field_followers(
             presses += 1
             sleep(settle_seconds)
             if _gone_on_two_frames(observe, sleep, interval):
+                if crowd is not None and not _crowd_leaves(crowd, sleep, clock, crowd_leave_seconds, interval):
+                    if press_key is not None and not key_used:
+                        key_used = True
+                        press_key()
+                        sleep(settle_seconds)
                 return FOLLOWERS_DISMISSED
             if presses >= max_presses:
                 return FOLLOWERS_STILL_VISIBLE
@@ -226,9 +393,29 @@ def dismiss_field_followers(
             deadline = clock() + max(0.0, appear_seconds)
             continue
         previous = sighting if sighting.passed else None
+        if (
+            clock() >= deadline
+            and not presses
+            and crowd is not None
+            and clock() < started + crowd_wait_seconds
+            and crowd()
+        ):
+            # The crowd is on screen but not beside the player yet.
+            deadline = min(clock() + max(interval, 1.0), started + crowd_wait_seconds)
         if clock() >= deadline:
             # After a press, an icon that stays away counts as gone.
             return FOLLOWERS_DISMISSED if presses else FOLLOWERS_ABSENT
+        sleep(interval)
+
+
+def _crowd_leaves(crowd, sleep, clock, seconds: float, interval: float) -> bool:
+    """The balloons go within ``seconds`` after the press."""
+    end = clock() + max(0.0, seconds)
+    while True:
+        if not crowd():
+            return True
+        if clock() >= end:
+            return False
         sleep(interval)
 
 
