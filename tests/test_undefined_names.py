@@ -43,7 +43,7 @@ def undefined_names(path: Path) -> list[str]:
         return []  # a star import can bring any name
     known = _module_names(table) | BUILTINS
     return sorted(
-        f"{path.relative_to(SRC.parent)}:{line} {scope}() uses {name}"
+        f"{path.relative_to(SRC.parent).as_posix()}:{line} {scope}() uses {name}"
         for scope, line, name in set(_global_reads(table))
         if name not in known
     )
