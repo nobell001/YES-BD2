@@ -82,6 +82,10 @@ class FindFieldCircleTest(unittest.TestCase):
                 continue
             if "field_circle_" in path.name or "beside_circle" in path.name:
                 continue
+            if path.name.startswith("teleport_loading_circle_"):
+                # The teleport's loading screen draws the circle itself; the
+                # walk never looks there (no field HUD, see the walk tests).
+                continue
             frame = cv2.imread(str(path))
             if frame is None or frame.shape[1] < 1200:
                 continue

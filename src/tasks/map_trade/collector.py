@@ -40,6 +40,14 @@ from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS, wait_for
 
 # "卡带单步重试次数"未配置时的默认值。
 CARD_RETRY_DEFAULT = 2
+# This many different cards skipped one after another with no map done in
+# between: whatever stops them (the screen covered, the game changed) most
+# likely stops the next ones too.  Every later card is still tried (Leo
+# 2026-10-12 「應該就繼續下張卡帶或圖 不應該整個停」), but only once: the
+# second try straight after a failed card is left out until a map is done
+# again (player v0.3.9 2026-11-10: chapters 8-19 failed one by one, each
+# tried twice, and the run was still going after an hour).
+CARDS_FAILED_IN_A_ROW_NO_RETRY = 3
 # A map whose press was cut by a field battle is done again after running
 # away, this many times at most, 压制 first to clear the monsters.
 BATTLE_REDOS_MAX = 2
@@ -113,6 +121,9 @@ class Collector(SkillExecutionMixin):
         # card_id -> why a card was skipped (player report 2026-10-17: the
         # summary said only 「这次跳过」 and the stage left over from before).
         self._skip_reasons: dict[str, str] = {}
+        # Cards skipped since a map was last done (CARDS_FAILED_IN_A_ROW_NO_RETRY).
+        self._failed_in_a_row: list[str] = []
+        self._done_at_last_skip: int | None = None
         # The skill bar is read once a run (a player may have moved skills).
         self._skill_layout_checked = False
         try:
@@ -643,6 +654,15 @@ class Collector(SkillExecutionMixin):
             yield card
             if card.card_id in retried or not self._card_left_unfinished(card):
                 continue
+            in_a_row = len(getattr(self, "_failed_in_a_row", ()))
+            if in_a_row >= CARDS_FAILED_IN_A_ROW_NO_RETRY and card.card_id in self._failed_in_a_row:
+                self._status(
+                    "采集进度", f"已经连续{in_a_row}张卡带没跑成，{card.card_id}不再马上重跑，先试下一张"
+                )
+                self.task.log_warning(
+                    f"地图采集：已经连续{in_a_row}张卡带没跑成，{card.label}不再马上重跑，先试下一张。"
+                )
+                continue
             retried.add(card.card_id)
             self._status("采集进度", f"{card.card_id}没有完成，照游戏画面再跑一次")
             self.task.log_warning(f"地图采集：{card.label}没有完成，再跑一次。")
@@ -702,6 +722,7 @@ class Collector(SkillExecutionMixin):
         follow = getattr(self, "_follow_args", None)
         if follow is None or not self._another_card_follows(card, *follow):
             self._restore_skill_group()
+        self._note_failed_in_a_row(card, reason, completed_this_run)
         returned = self.navigator.return_home()
         if returned.success:
             return None
@@ -712,6 +733,21 @@ class Collector(SkillExecutionMixin):
             completed_submaps=completed_this_run,
             message=f"{card.label}跳过后回不到主页（{returned.message}），停止跑图",
         )
+
+    def _note_failed_in_a_row(self, card, reason: str, completed_this_run: int) -> int:
+        """How many different cards have now been skipped with no map done
+        since the first of them.  A card that cannot be entered (not owned,
+        chapter not open) is the account, not a fault: not counted."""
+        if reason.startswith("进不去"):
+            return len(getattr(self, "_failed_in_a_row", ()))
+        failed = getattr(self, "_failed_in_a_row", None)
+        if failed is None or getattr(self, "_done_at_last_skip", None) != completed_this_run:
+            failed = []
+        if card.card_id not in failed:
+            failed.append(card.card_id)
+        self._failed_in_a_row = failed
+        self._done_at_last_skip = completed_this_run
+        return len(failed)
 
     def _note_skip_screen(self) -> None:
         """The 问题摘要 shows where the first skipped card stopped, not the

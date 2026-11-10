@@ -149,6 +149,8 @@ from src.tasks.map_trade.navigator_constants import (
     TELEPORT_INTERACTION_PRESSES,
     TELEPORT_INTERACTION_RECLICK_AFTER,
     TELEPORT_MAP_BACKWARD_TEMPLATE,
+    TELEPORT_MAP_DIRECT_HEADER_TEMPLATE,
+    TELEPORT_MAP_GENERATE_HEADER_TEMPLATE,
     TELEPORT_MAP_FIRST_PAGE_LIMIT,
     TELEPORT_MAP_FORWARD_TEMPLATE,
     TELEPORT_MAP_HEADER_OCR_RELATIVE_ROI,
@@ -248,6 +250,12 @@ FIELD_HUD_LAST_LOOK_SECONDS = 1.5
 
 # How long a field is looked for after a teleport page failed to open.
 SANDBOX_MAP_CLOSE_TIMEOUT = 3.0
+# After both presses on a teleport-page circle: how much longer the page may
+# stay before "no teleport is coming" (a slow PC may start late).
+TELEPORT_START_GRACE_SECONDS = STUCK_SECONDS
+# Once the page has gone after a press: how long the black loading screen
+# is waited for (live 4K clone 2026-11-11: it came 2.1 s after the press).
+TELEPORT_LOADING_AFTER_PAGE_SECONDS = 5.0
 # What reopens a circle's 传送页 that did not open after its hand.
 CIRCLE_PAGE_AGAIN = ("hand", "key")
 
@@ -1021,7 +1029,7 @@ class SandboxNavigationMixin:
             # The black loading screen needs none of the home/field checks
             # (~0.6 s a read; Leo 2026-10-01: 換圖速度).
             last_state = (
-                ScreenState.LOADING if self._black_frame(frame) else self.classify(frame)
+                ScreenState.LOADING if self._loading_black(frame) else self.classify(frame)
             )
             self._status("导航状态", last_state.value)
             if last_state == ScreenState.SANDBOX:
@@ -1503,7 +1511,7 @@ class SandboxNavigationMixin:
                 # The followers and the camera still settle after it (live
                 # 4K 2026-10-27: waited 21 s more on a moving picture).
                 return "done"
-            if state == "idle" and not self._black_frame(frame):
+            if state == "idle" and not self._loading_black(frame):
                 # A battle's own animation would read as a moving field.
                 met = self._battle_on_the_way(frame)
                 if met is not None:
@@ -1565,7 +1573,7 @@ class SandboxNavigationMixin:
                     "导航状态", f"画面 {STUCK_SECONDS:.0f} 秒没动，不再等自动移动，继续确认地图"
                 )
                 return "battle" if fled else "timeout"
-            if self._black_frame(frame):
+            if self._loading_black(frame):
                 idle = 0
                 self._status("导航状态", "加载中，等待自动移动继续")
             else:
@@ -2292,23 +2300,83 @@ class SandboxNavigationMixin:
         if page_mode != MapPageMode.DIRECT_TELEPORT:
             self._status("传送阵地图传送阵", f"拒绝未知页面模式={page_mode.value}")
             return False
-        self.vision.click_client(teleport.center, frame_shape, after_sleep=0.0)
-        self._teleport_loading_seen = self._wait_for_loading_screen(
-            TELEPORT_MAP_TRAVEL_SETTLE_SECONDS
-        )
-        if not self._teleport_loading_seen:
-            # No loading screen: the game dropped the press and the map is
-            # still up (Leo 2026-11-02 「說了10次以上」).  Once more.
-            self._status("传送阵地图传送阵", "点了没开始传送，再点一次")
-            self.vision.click_client(teleport.center, frame_shape, after_sleep=0.0)  # 不用确认：只补这一次
-            self._teleport_loading_seen = self._wait_for_loading_screen(
-                TELEPORT_MAP_TRAVEL_SETTLE_SECONDS
-            )
+        # Live 4K clone 2026-11-11 (8 of 8 teleports): the first press closes
+        # the page within ~0.1 s, the camera zooms onto the circle, and the
+        # black screen comes ~2.1 s after the press.  Waiting for the black
+        # screen alone called that "not started" at 1.5 s and pressed again,
+        # onto the field's zoom.  A page seen before the press and gone after
+        # it is the teleport under way: not pressed again.
+        page_seen = self._page_marks_now()
+        state = "still"
+        for press in (1, 2):
+            if press == 2:
+                # The page is still up: the game dropped the press (Leo
+                # 2026-11-02 「說了10次以上」).  Once more.
+                self._status("传送阵地图传送阵", "点了传送页还在，再点一次")
+            self.vision.click_client(teleport.center, frame_shape, after_sleep=0.0)  # 不用确认：下面看传送页和读取画面，没走再点一次
+            state = self._after_destination_press(page_seen, TELEPORT_MAP_TRAVEL_SETTLE_SECONDS)
+            if state != "still":
+                break
+        if state == "still" and page_seen:
+            # A slow PC may start late: the page gets STUCK_SECONDS more.
+            state = self._after_destination_press(page_seen, TELEPORT_START_GRACE_SECONDS)
+            if state == "still":
+                # Both presses and the page stayed the whole time: no
+                # teleport is coming (the character already stands on that
+                # circle, or the game took neither press).  The caller closes
+                # the page and looks where the character is.
+                self._status("传送阵地图传送阵", "点了两次传送页都还在，没有开始传送")
+                self.task.log_info("跑图：点了两次传送阵，传送页一直还在，没有开始传送。")
+                return False
+        self._teleport_loading_seen = state == "loading"
         self._status(
             "传送阵地图传送阵",
             f"交互入口直接点击中心={teleport.center}，等待传送完成",
         )
         return True
+
+    def _page_marks_now(self) -> bool:
+        try:
+            return self._map_page_marks(self.vision.capture())
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception:
+            return False
+
+    def _after_destination_press(self, page_seen: bool, seconds: float) -> str:
+        """What followed a press on a teleport-page circle within ``seconds``:
+
+        "loading"  the black loading screen came;
+        "gone"     the page (seen before the press) went away and no loading
+                   screen came in TELEPORT_LOADING_AFTER_PAGE_SECONDS, e.g. a
+                   teleport inside one map: the caller confirms by the map;
+        "still"    the page is still up, or nothing can be told (a bright
+                   page whose marks were not read before the press either).
+        """
+        gone_looks = [0]
+
+        def look() -> str:
+            try:
+                frame = self.vision.capture()
+            except (TaskDisabledException, FinishedException):
+                raise
+            except Exception:
+                return "still"
+            if self._loading_black(frame):
+                return "loading"
+            if page_seen and not self._map_page_marks(frame):
+                gone_looks[0] += 1
+                return "gone" if gone_looks[0] >= 2 else ""  # one unread look is not the page gone
+            gone_looks[0] = 0
+            return ""
+
+        seen = wait_for(look, seconds, sleep=lambda wait: self.task.sleep(wait), poll=0.1)
+        if seen != "gone":
+            return seen or "still"
+        if self._wait_for_loading_screen(TELEPORT_LOADING_AFTER_PAGE_SECONDS):
+            return "loading"
+        # No black screen: the page really gone, or only unread for a while?
+        return "still" if self._page_marks_now() else "gone"
 
     @staticmethod
     def _black_frame(frame) -> bool:
@@ -2318,6 +2386,37 @@ class SandboxNavigationMixin:
             return float(np.percentile(frame[..., :3], 95)) < TELEPORT_LOADING_DARK_P95
         except (AttributeError, TypeError, IndexError, ValueError):
             return False
+
+    def _map_page_marks(self, frame) -> bool:
+        """One of a teleport page's own marks is on ``frame``: the 移动魔法阵
+        icon of its header or a page arrow (any one).  Not the back arrow:
+        its template also passes on fields, 主页-side pages and the title
+        (40 of the fixture pictures)."""
+        for spec in (
+            TELEPORT_MAP_DIRECT_HEADER_TEMPLATE,
+            TELEPORT_MAP_GENERATE_HEADER_TEMPLATE,
+            TELEPORT_MAP_FORWARD_TEMPLATE,
+            TELEPORT_MAP_BACKWARD_TEMPLATE,
+        ):
+            try:
+                if self.vision.passes(self.vision.match(frame, spec), spec):
+                    return True
+            except (TaskDisabledException, FinishedException):
+                raise
+            except Exception:
+                continue  # an unreadable mark is no mark
+        return False
+
+    def _loading_black(self, frame) -> bool:
+        """The black loading screen, and not a dark map page.
+
+        Dark alone is not loading: the later chapters' teleport pages are
+        almost black themselves.  Player v0.3.9 2026-11-10, 第19章 通往神殿之路:
+        its page measured 35 against the 40 that says "black", so a press on
+        its circle that started no teleport was taken for the loading screen;
+        the tool waited 50 s on the open page, said 「入场确认超时」, and the
+        page left open hid the field from every step after it."""
+        return self._black_frame(frame) and not self._map_page_marks(frame)
 
     def _wait_for_loading_screen(self, timeout: float) -> bool:
         """Until the black loading screen shows (at most ``timeout``): the
@@ -2331,7 +2430,7 @@ class SandboxNavigationMixin:
                 raise
             except Exception:
                 return False
-            if self._black_frame(frame):
+            if self._loading_black(frame):
                 return True
             self.task.sleep(0.1)
         return False
@@ -2848,8 +2947,16 @@ class SandboxNavigationMixin:
                 seen.append(page.raw_text)
 
         note(context)
+        # The first two pages read again, in the same order, while flipping
+        # one way is the list come round: every page has been seen, so
+        # flipping on (the other way, or the forced pass below) only repeats
+        # them (player v0.3.9 2026-11-10: 「卡在传送阵页面一直左右切」 for an
+        # hour).  Two pages, not one: one name misread as its neighbour's
+        # (恶梦之城1 / 恶梦之城2) must not end the seek early.
+        went_round = False
         for direction in directions:
             current = start
+            this_way = [current.normalized_text]
             for _ in range(TELEPORT_MAP_SEEK_LIMIT):
                 changed = self._move_area_map(card, current, direction)
                 if changed is None:
@@ -2858,13 +2965,19 @@ class SandboxNavigationMixin:
                 note(current)
                 if (found := self._page_is(card, current, target)) is not None:
                     return found
+                if self._page_seen_again(current, this_way):
+                    went_round = True
+                    break
             start = current
+            if went_round:
+                break
         # Last resort (Leo: every read needs a fallback): an arrow misread
         # as missing ended the first side unpressed (2K 桌面分身 2026-10-16,
         # 卡勒塔市's left arrow at 0.948).  Press that side's fixed place,
         # even where the page seemed to end, and keep going while it moves.
         current = start
-        for _ in range(TELEPORT_MAP_SEEK_LIMIT):
+        this_way = [current.normalized_text]
+        for _ in range(0 if went_round else TELEPORT_MAP_SEEK_LIMIT):
             changed = self._move_area_map(card, current, directions[0], force=True)
             if changed is None:
                 break
@@ -2872,6 +2985,8 @@ class SandboxNavigationMixin:
             note(current)
             if (found := self._page_is(card, current, target)) is not None:
                 return found
+            if self._page_seen_again(current, this_way):
+                break
         start = current
         return NavigationResult(
             False,
@@ -2885,6 +3000,17 @@ class SandboxNavigationMixin:
                 + "）"
             ),
         )
+
+    @staticmethod
+    def _page_seen_again(page: AreaMapContext, seen: list[str]) -> bool:
+        """``page`` is noted in ``seen`` (the names read in this pass, in
+        order); True once the pass's first two pages have come again in the
+        same order.  Empty reads and two pages of one name say nothing."""
+        seen.append(page.normalized_text)
+        if len(seen) < 4:
+            return False
+        first, second = seen[0], seen[1]
+        return bool(first and second and first != second and seen[-2:] == [first, second])
 
     def _page_is(
         self, card: CardSpec, page: AreaMapContext, target: CollectionMapTarget
@@ -3059,6 +3185,13 @@ class SandboxNavigationMixin:
                 (f"传送前地图名不符：expected={target.title}, actual={context.raw_text or '-'}"),
             )
         teleport = self._select_map_teleport(context.teleports)
+        if teleport is None and context.map_page_mode == MapPageMode.DIRECT_TELEPORT:
+            # Live 4K clone 2026-11-11, standing on 通往神殿之路's circle: on
+            # the page of the map the character is on, the portrait marker
+            # covers the circle, so none is found (and a press on the marker
+            # does nothing).  The page is closed and the area map says where
+            # the character is: on this map already is an arrival.
+            return self._after_teleport_that_never_started(card, target, context, pressed=False)
         if teleport is None:
             return NavigationResult(
                 False,
@@ -3082,6 +3215,8 @@ class SandboxNavigationMixin:
             context.frame_shape,
             page_mode=context.map_page_mode,
         ):
+            if context.map_page_mode == MapPageMode.DIRECT_TELEPORT:
+                return self._after_teleport_that_never_started(card, target, context)
             return NavigationResult(
                 False,
                 ScreenState.AREA_MAP,
@@ -3108,6 +3243,93 @@ class SandboxNavigationMixin:
             )
         return self._confirm_collection_arrival(card, target)
 
+    def _after_teleport_that_never_started(
+        self,
+        card: CardSpec,
+        target: CollectionMapTarget,
+        context: AreaMapContext,
+        *,
+        pressed: bool = True,
+    ) -> NavigationResult:
+        """No teleport to ``target`` from its page: two presses on its circle
+        and the page stayed, or (``pressed`` False) no circle was found on
+        it.  The page is closed, never left over the field, and the area map
+        says where the character is.  Standing on ``target`` already (its
+        circle sits under the character's own marker, and a press there
+        teleports nowhere) is an arrival, not a failure."""
+        what = (
+            f"点了两次{target.title}的传送阵都没有开始传送"
+            if pressed
+            else f"{target.title}的传送页上未识别到传送阵"
+        )
+        closed = self._close_confirmed_map_page(
+            {context.map_page_mode}, timeout=SANDBOX_MAP_CLOSE_TIMEOUT
+        )
+        if not closed.success:
+            return NavigationResult(
+                False,
+                closed.state,
+                f"{what}，传送页也没关掉（{closed.message}）",
+                map_page_mode=context.map_page_mode,
+            )
+        self.last_loading_title = ""
+        if self.current_collection_target(card) == target.key:
+            self._status("区域地图", f"没有传送：人已经在{target.title}")
+            self.task.log_info(f"跑图：{what}，区域地图确认人已经在{target.title}。")
+            return NavigationResult(
+                True, ScreenState.SANDBOX, f"{card.card_id}/{target.key}/{target.title}"
+            )
+        where = getattr(self, "_last_position_header", None) or "没读到"
+        return NavigationResult(
+            False,
+            ScreenState.SANDBOX,
+            f"{what}（传送页已关掉，区域地图读到：{where}）",
+        )
+
+    def _close_teleport_page_left_open(self) -> bool:
+        """A teleport page still over the field is closed before a field
+        step: a step that failed with the page up left it there, and behind
+        it the hand, the minimap and the ≡ button could not be seen, so every
+        way back to the town failed one after another (player v0.3.9
+        2026-11-10: chapters 8-19 「回主城失败」).  The marks are looked for
+        first (templates, no OCR); True when a page was closed."""
+        try:
+            frame = self.vision.capture()
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception:
+            return False
+        if not self._map_page_marks(frame):
+            return False
+        detection = self._detect_map_page_mode(frame)
+        mode = detection.mode
+        if not mode.is_teleport_map:
+            # Which of the two teleport pages was not told (its header icon
+            # unread; the player's own last picture reads so), yet the page's
+            # mark and its 「移动魔法阵」 title both show: two signs of a page
+            # whose only harmless way out is the game's back key.
+            tap_escape = getattr(self.task, "tap_escape", None)
+            if not callable(tap_escape) or not teleport_map_header_read(
+                normalize_text(detection.header_text or "")
+            ):
+                return False
+            self._status("导航状态", "传送页还开着（没认出是哪一种），按 Esc 关掉")
+            self.task.log_info("跑图：传送页还开着挡住了场景（没认出是哪一种传送页），按 Esc 关掉。")
+            tap_escape(after_sleep=SANDBOX_MAP_SETTLE_SECONDS)
+            return True
+        self._status("导航状态", "传送页还开着挡住了场景，先关掉")
+        self.task.log_info("跑图：传送页还开着挡住了场景，先关掉再继续。")
+        closed = self._close_confirmed_map_page({mode}, timeout=SANDBOX_MAP_CLOSE_TIMEOUT)
+        if not closed.success:
+            tap_escape = getattr(self.task, "tap_escape", None)
+            if callable(tap_escape) and self._map_page_marks(self.vision.capture()):
+                # Remedy order: the page's own back arrow, then the game's
+                # back key, only while the page is still seen.
+                self._status("导航状态", "按返回没关掉传送页，改按 Esc")
+                self.task.log_info("跑图：传送页按返回没关掉，改按 Esc。")
+                tap_escape(after_sleep=SANDBOX_MAP_SETTLE_SECONDS)
+        return True
+
     def current_collection_target(self, card: CardSpec) -> str | None:
         """Which of the card's three maps the character is on (area map title).
 
@@ -3124,6 +3346,7 @@ class SandboxNavigationMixin:
         """
         self._last_position_header = None
         self._position_map_opened = False
+        self._close_teleport_page_left_open()
         if not self.ensure_small_minimap():
             self._last_position_header = "小地图放大状态未能切回"
             return None
@@ -3297,7 +3520,23 @@ class SandboxNavigationMixin:
             return self._open_circle_page("方向键走到画面上的传送阵")
         self._status("导航状态", "没走到画面上的传送阵，改用区域地图")
         self._log_info("跑图：方向键也没走到画面上的传送阵（手势没出现），改用区域地图找传送阵。")
+        self._field_clean_after_walk_try()
         return None
+
+    def _field_clean_after_walk_try(self) -> None:
+        """The next way (the ≡ menu) starts from the plain field: a page the
+        click opened is closed, and a walk the click started is waited out
+        until the field's HUD is back.  This step is new in v0.3.9, between
+        the area-map walk and the ≡ menu; that day a player's chapters 8-19
+        ended 「没按到小地图的≡按钮：画面上看不到地图界面的按键提示」 (suspected,
+        not proven, to be this step's leftovers; a step hands on a clean
+        field either way)."""
+        if self._close_teleport_page_left_open():
+            return
+        back = self._wait_for_current_sandbox(timeout=STUCK_SECONDS)
+        if not back.success:
+            self._status("导航状态", f"走完后没认到场景（{back.message}）")
+            self._log_info(f"跑图：走去画面上的传送阵之后没认到场景（{back.message}）。")
 
     def _follow_click_walk_to_circle(self, frame: np.ndarray, circle) -> str:
         """After the click on the circle: "hand" once its hand showed and was
@@ -3405,6 +3644,9 @@ class SandboxNavigationMixin:
         reach the merchant and 跑图 could not go home.  Any field signal now
         allows the fixed-place press (was the C/H/M/Q key caps only)."""
         self._nav_button_miss = ""
+        # A teleport page left open covers the ≡ button too (player v0.3.9
+        # 2026-11-10): closed before the button is looked for.
+        self._close_teleport_page_left_open()
         if self.vision.click_template(
             MERCHANT_NAV_GUIDE_TEMPLATE, timeout=MERCHANT_NAV_GUIDE_TIMEOUT, after_sleep=0.8
         ):
@@ -4149,6 +4391,7 @@ class SandboxNavigationMixin:
         card = CARD_BY_ID.get(card_id)
         if card is None or not card.collectable:
             return NavigationResult(False, ScreenState.UNKNOWN, f"非跑图剧情卡带：{card_id}")
+        self._close_teleport_page_left_open()
         if not self.ensure_small_minimap():
             return NavigationResult(False, ScreenState.SANDBOX, "小地图放大状态未能切回")
         npc_why = ""

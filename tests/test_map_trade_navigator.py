@@ -1212,9 +1212,18 @@ class NavigatorTest(unittest.TestCase):
             card.targets[1].key,
             teleports=(),
         )
+        # The page is closed and the area map asked (the character's own
+        # marker hides the circle of the map it stands on): elsewhere, so
+        # the missing circle is still a failure.
+        closed = []
+        navigator._close_confirmed_map_page = lambda modes, **_k: (
+            closed.append(modes) or NavigationResult(True, ScreenState.SANDBOX, "")
+        )
+        navigator.current_collection_target = lambda _card: card.targets[0].key
         result = navigator._click_collection_destination(card, card.targets[1], missing)
         self.assertFalse(result.success)
         self.assertIn("未识别到", result.message)
+        self.assertEqual(1, len(closed))
 
         selected = []
         navigator._click_teleport_map_destination = (
@@ -1855,6 +1864,73 @@ class CollectionPageSeekTest(unittest.TestCase):
         result = navigator._seek_collection_page(card, pages[0], card.targets[2])
         self.assertIsInstance(result, NavigationResult)
         self.assertFalse(result.success)
+
+    def test_list_that_comes_round_stops_once_every_page_was_seen(self):
+        # Player v0.3.9 2026-11-10: 「卡在传送阵页面一直左右切」 for an hour.
+        # A page list that wraps never ends, so each seek flipped 12 pages
+        # right, 12 left and 12 more forced (36) before it gave up.
+        card = CARD_BY_ID["Q_sp1"]
+        pages = [self.ctx("战斗 熊洞"), self.ctx("战斗 草药田"), self.ctx("安全 旅馆")]
+        navigator = Navigator(SimpleNamespace(), SimpleNamespace())
+        position = [0]
+        moves = []
+
+        def move(_card, _context, direction, force=False):
+            moves.append((direction, force))
+            position[0] = (position[0] + (1 if direction == "right" else -1)) % len(pages)
+            return pages[position[0]]
+
+        navigator._move_area_map = move
+        result = navigator._seek_collection_page(card, pages[0], card.targets[0])
+
+        self.assertIsInstance(result, NavigationResult)
+        self.assertFalse(result.success)
+        self.assertLessEqual(len(moves), len(pages) + 1)
+        self.assertNotIn(True, [force for _direction, force in moves])
+
+    def test_one_name_misread_as_an_earlier_page_does_not_end_the_seek(self):
+        # 恶梦之城2 read as 恶梦之城1 once: one repeated name is not the list
+        # come round, and the target two pages on is still reached.
+        card, by_key, pages = self._q_ep2_pages()
+        main = CollectionMapRole.MAIN_AREA.value
+        misread = self.ctx("战斗Ⅰ 恶梦之城1", None, left=True, right=True)
+        navigator = Navigator(SimpleNamespace(), SimpleNamespace())
+        position = [0]
+
+        def move(_card, _context, direction, force=False):
+            step = 1 if direction == "right" else -1
+            if not 0 <= position[0] + step < len(pages):
+                return None
+            position[0] += step
+            return misread if position[0] == 1 else pages[position[0]]
+
+        navigator._move_area_map = move
+        result = navigator._seek_collection_page(card, pages[0], by_key[main])
+        self.assertIsInstance(result, AreaMapContext)
+        self.assertEqual(main, result.resolved_target_key)
+
+    def test_list_with_ends_still_tries_both_sides_and_the_forced_pass(self):
+        card = CARD_BY_ID["Q_sp1"]
+        pages = [self.ctx("战斗 熊洞"), self.ctx("战斗 草药田"), self.ctx("安全 旅馆")]
+        navigator = Navigator(SimpleNamespace(), SimpleNamespace())
+        position = [1]
+        moves = []
+
+        def move(_card, _context, direction, force=False):
+            moves.append((direction, force))
+            step = 1 if direction == "right" else -1
+            if not 0 <= position[0] + step < len(pages):
+                return None
+            position[0] += step
+            return pages[position[0]]
+
+        navigator._move_area_map = move
+        result = navigator._seek_collection_page(card, pages[1], card.targets[0])
+
+        self.assertFalse(result.success)
+        self.assertIn(("left", False), moves)
+        self.assertIn(("right", False), moves)
+        self.assertTrue(any(force for _direction, force in moves))
 
     def _q_ep2_pages(self):
         """Nightmare Winter's teleport pages, left to right: the safe zone

@@ -19,7 +19,7 @@
     "src/tasks/enhance_dialog.py": 4,
     "src/tasks/map_trade/collector_skills.py": 4,
     "src/tasks/map_trade/navigator.py": 1,
-    "src/tasks/map_trade/navigator_sandbox.py": 23,
+    "src/tasks/map_trade/navigator_sandbox.py": 22,
     "src/tasks/map_trade/navigator_story.py": 10,
     "src/tasks/map_trade/navigator_trade.py": 22,
     "src/tasks/map_trade/trader_buy.py": 3,

@@ -587,7 +587,7 @@ class TradeNavigationMixin:
                     return SQUARE_ARRIVED
                 continue
             square_hits = 0
-            loading = self._black_frame(frame)
+            loading = self._loading_black(frame)
             state = ScreenState.LOADING if loading else self.classify(frame)
             now = monotonic()
             field_for = field_held.look(state == ScreenState.SANDBOX, now)
@@ -628,7 +628,7 @@ class TradeNavigationMixin:
             frame = self.vision.capture()
             # The black loading screen needs no full classify: each pass took
             # ~3 s there, so only 3 looks fit.
-            state = ScreenState.LOADING if self._black_frame(frame) else self.classify(frame)
+            state = ScreenState.LOADING if self._loading_black(frame) else self.classify(frame)
             if state == ScreenState.SANDBOX:
                 hits += 1
                 if hits >= TRADE_CARD_SANDBOX_HITS:
