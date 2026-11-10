@@ -815,6 +815,7 @@ class NavigatorTest(unittest.TestCase):
         )
         walks = iter((failed, walked))
         navigator.open_teleport_map_from_sandbox = lambda: failed
+        navigator._walk_to_circle_in_view = lambda: None  # no circle in view
         navigator._walk_to_sandbox_teleport_interaction = lambda: next(walks)
         navigator._travel_to_hunting_ground = lambda: "艾琳"
         navigator._click_sandbox_teleport_interaction = lambda *a, **k: False
@@ -893,6 +894,7 @@ class NavigatorTest(unittest.TestCase):
         navigator.open_teleport_map_from_sandbox = lambda: NavigationResult(
             False, ScreenState.SANDBOX, NOT_BY_CIRCLE_MESSAGE
         )
+        navigator._walk_to_circle_in_view = lambda: None  # no circle in view
         navigator._walk_to_sandbox_teleport_interaction = lambda: NavigationResult(
             False, ScreenState.SANDBOX, "地图上没找到传送门"
         )

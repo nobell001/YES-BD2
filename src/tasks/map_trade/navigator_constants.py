@@ -946,6 +946,20 @@ SANDBOX_CONFIRM_ACTION_TEMPLATES = (
 SANDBOX_MAP_TELEPORT_MIN_PIXEL = 0.90
 SANDBOX_MAP_TELEPORT_GLYPH_RADIUS = 12.5 / 40  # of the icon width
 SANDBOX_MAP_TELEPORT_MIN_GLYPH = 0.70
+# The circle seen on the field itself (field_circle).  One click walks
+# there when the player moves by clicking.  The screen not moving for this
+# long after the click means keyboard movement (or, after it moved, that the
+# walk ended); the circle's place moving this far on screen (1080p) is moving.
+FIELD_CIRCLE_STILL_SECONDS = 1.5
+FIELD_CIRCLE_MOVED_PIXELS = 12
+# Key walk: where the circle's centre sits on screen (1080p) with the
+# character on it.  The 镜中之战 stage's place (stage_walk.STAGE_TARGET), not
+# yet measured on a story map; the hand decides the arrival, not this point.
+FIELD_CIRCLE_TARGET = (925, 535)
+FIELD_CIRCLE_KEY_STEPS = 16
+FIELD_CIRCLE_NO_PROGRESS_STEPS = 4
+FIELD_CIRCLE_HAND_LOOK_SECONDS = 0.5
+FIELD_CIRCLE_STEP_SETTLE_SECONDS = 0.4
 # How far from a map label (OCR centre) its icon may sit, as a share of the
 # frame height: the 迪尔索特旅馆 label's centre is 18 px from its icon at 1080p.
 SANDBOX_MAP_LABEL_ICON_REACH = 40 / 1080

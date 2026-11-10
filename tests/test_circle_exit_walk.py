@@ -38,6 +38,7 @@ def navigator(calls, *, walk_result, in_sanctum_circle=True):
         return walk_result
 
     nav.open_teleport_map_from_sandbox = open_from_sandbox
+    nav._walk_to_circle_in_view = lambda: None  # no circle in view
     nav._walk_to_sandbox_teleport_interaction = lambda: calls.append("circle-walk") or NO
     nav._walk_to_collection_map = walk_to_collection_map
     nav._travel_to_hunting_ground = lambda: calls.append("nav-menu") or "艾琳"

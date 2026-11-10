@@ -6,8 +6,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QElapsedTimer,
     QEasingCurve,
+    QElapsedTimer,
     QEvent,
     QObject,
     QRectF,
@@ -18,14 +18,26 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QAbstractButton, QFrame, QWidget
+from PySide6.QtWidgets import QAbstractButton, QFrame, QSizePolicy, QWidget
 
-from src.ui.shell import clone_flow, data, icons, theme
+from src.ui.shell import clone_flow, data, icons, motion, theme
 from src.ui.shell.safe import guarded
-from src.ui.shell.widgets import Bar, Spinner, StateIcon, Text, draw_fitted, hbox, t, tf, vbox
+from src.ui.shell.widgets import (
+    Bar,
+    Segmented,
+    Spinner,
+    StateIcon,
+    Text,
+    draw_fitted,
+    hbox,
+    t,
+    tf,
+    vbox,
+)
 
 ICON_FILE = Path(__file__).resolve().parents[3] / "icons" / "icon.png"
 SIDE_WIDTH = 204
+THEME_LABELS = {"light": "淡紫", "dark": "深色"}
 # The selected shade slides from row to row and lands with a light bounce,
 # hugging the row's icon and words (Leo 2026-10-27, his reference video:
 # 「宽度也跟着文字长度调整」「落下时带一点轻微回弹」).
@@ -356,6 +368,13 @@ class Sidebar(QWidget):
         layout.addStretch(1)
         for key, label, icon_name in self.BOTTOM:
             layout.addWidget(self._item(key, label, icon_name))
+        layout.addSpacing(8)
+        # 淡紫 / 深色, moved here from 设置 (Leo 2026-11-10); the new colours
+        # open as a circle from the pressed option (motion.switch_theme).
+        self.theme_switch = Segmented(THEME_LABELS, self._theme_now(), self, labels=THEME_LABELS)
+        self.theme_switch.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.theme_switch.changed.connect(self._switch_theme)
+        layout.addWidget(self.theme_switch)
         layout.addSpacing(10)
         self.footer = _StatusFooter(self)
         layout.addWidget(self.footer)
@@ -374,6 +393,15 @@ class Sidebar(QWidget):
         self._map_timer.timeout.connect(self._refresh_map)
         self.apply_style()
         theme.on_theme_changed(self, self.apply_style)
+
+    @staticmethod
+    def _theme_now() -> str:
+        """The colours showing now (also when the old 跟随系统 choice picked them)."""
+        return "dark" if theme.isDarkTheme() else "light"
+
+    def _switch_theme(self, mode: str) -> None:
+        motion.switch_theme(mode, self.theme_switch.button(mode))
+        self.theme_switch.set_value(self._theme_now())
 
     def _item(self, key: str, label: str, icon_name: str) -> NavItem:
         # Leo 2026-10-09: 使用说明 bolder (2026-10-22 bold), always marked 必看.
@@ -394,6 +422,7 @@ class Sidebar(QWidget):
 
     def apply_style(self) -> None:
         self.setStyleSheet(theme.style_sheet())
+        self.theme_switch.set_value(self._theme_now())
         # 淡紫 draws the column as a rounded panel set in from the window edge.
         inset = int(theme.shape("side_inset"))
         self.setFixedWidth(SIDE_WIDTH + 2 * inset)

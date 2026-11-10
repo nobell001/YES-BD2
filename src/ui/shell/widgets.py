@@ -1586,6 +1586,10 @@ class Segmented(QFrame):
     def _clicked(self, value: str) -> None:
         self.changed.emit(value)
 
+    def button(self, option: str) -> QPushButton | None:
+        """The button of one option (where a motion that follows the press starts)."""
+        return self._buttons.get(option)
+
     def set_value(self, value: str | None) -> None:
         button = self._buttons.get(value) if value is not None else None
         if button is not None and not button.isChecked():

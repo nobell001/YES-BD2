@@ -45,6 +45,13 @@ from src.tasks.map_trade.models import (
     TemplateSpec,
 )
 from src.tasks.map_trade.navigator_constants import (
+    FIELD_CIRCLE_MOVED_PIXELS,
+    FIELD_CIRCLE_STILL_SECONDS,
+    FIELD_CIRCLE_HAND_LOOK_SECONDS,
+    FIELD_CIRCLE_KEY_STEPS,
+    FIELD_CIRCLE_NO_PROGRESS_STEPS,
+    FIELD_CIRCLE_STEP_SETTLE_SECONDS,
+    FIELD_CIRCLE_TARGET,
     area_map_header_named,
     teleport_map_header_read,
     AREA_MAP_BACK_TEMPLATE,
@@ -179,6 +186,8 @@ from src.tasks.map_trade.vision import normalize_text
 from src.utils.calibration import FHD_1080
 from src.utils.field_followers import dismiss_once_per_run
 from src.utils.press_confirm import press_and_confirm, wait_for
+from src.tasks.map_trade.field_circle import find_field_circle
+from src.utils.stage_walk import STAGE_PROGRESS_PIXELS, plan_step
 from src.utils.wait_limits import STUCK_SECONDS, MotionWatch, StillTimer
 
 
@@ -3227,6 +3236,13 @@ class SandboxNavigationMixin:
         walked = self._walk_to_sandbox_teleport_interaction()
         if walked.success:
             return walked
+        # Second: the circle in plain view on the field is walked onto (Leo
+        # 2026-11-10 「打開地圖點傳送陣應該是要第二優先」, this after it).  The
+        # area map's icon lies under the character's own marker when the
+        # character stands beside the circle (player v0.3.8, 第14章).
+        seen = self._walk_to_circle_in_view()
+        if seen is not None:
+            return seen
         neighbour = self._walk_to_circle_neighbour(card)
         if neighbour is not None:
             return neighbour
@@ -3251,6 +3267,103 @@ class SandboxNavigationMixin:
         if walked.success:
             return walked
         return self._walk_to_circle_neighbour(card) or walked
+
+    def _walk_to_circle_in_view(self) -> NavigationResult | None:
+        """Walk onto the teleport circle the field itself shows and use its
+        hand: one click on it (click-to-move), then the movement keys for
+        players who move by WASD, where a click on the ground does nothing
+        (Leo 2026-11-10).  None when no circle is in view, the field is not
+        confirmed, or the hand never showed: the caller goes on with the
+        area map.  A click on the ground and a few steps are harmless."""
+        frame = self.vision.capture()
+        circle = find_field_circle(frame) if self._field_keycaps_shown(frame) else None
+        if circle is None:
+            return None
+        self._status(
+            "导航状态",
+            f"画面上看得到传送阵（{circle.center}，{circle.size[0]}x{circle.size[1]}），直接走过去",
+        )
+        self._log_info("跑图：画面上看得到传送阵，点它走过去。")
+        self.vision.click_client(circle.center, frame.shape, after_sleep=0.3)  # 不用确认：下一行等手势，没出现改用方向键
+        walked = self._follow_click_walk_to_circle(frame, circle)
+        if walked == "hand":
+            return self._open_circle_page("点画面上的传送阵走过去")
+        self._log_info(
+            "跑图：点了画面上的传送阵，画面没动（键盘移动），改用方向键走过去。"
+            if walked == "still"
+            else "跑图：点了画面上的传送阵，走完了手势还没出现，用方向键补几步。"
+        )
+        if self._walk_keys_to_circle_in_view():
+            return self._open_circle_page("方向键走到画面上的传送阵")
+        self._status("导航状态", "没走到画面上的传送阵，改用区域地图")
+        self._log_info("跑图：方向键也没走到画面上的传送阵（手势没出现），改用区域地图找传送阵。")
+        return None
+
+    def _follow_click_walk_to_circle(self, frame: np.ndarray, circle) -> str:
+        """After the click on the circle: "hand" once its hand showed and was
+        pressed; "still" when the screen never moved (the player moves by
+        keys: a click on the ground does nothing; Leo 2026-11-10 「畫面沒有
+        移動 那就是」); "stopped" when it moved and came to rest without the
+        hand.  Moving is the circle's place shifting on screen (the camera
+        follows the character) or the whole view panning, either one."""
+        start = circle.center
+        shift = FIELD_CIRCLE_MOVED_PIXELS * frame.shape[1] / 1920
+        motion = MotionWatch(looks=1)
+        motion.moving(frame)
+        began = last_move = monotonic()
+        moved = False
+        while monotonic() - began <= STUCK_SECONDS:
+            if self._click_sandbox_teleport_interaction(timeout=FIELD_CIRCLE_HAND_LOOK_SECONDS):  # 不用确认：没手势继续看画面动不动
+                return "hand"
+            look = self.vision.capture()
+            now_circle = find_field_circle(look)
+            shifted = now_circle is not None and (
+                float(np.hypot(now_circle.center[0] - start[0], now_circle.center[1] - start[1]))
+                > shift
+            )
+            if now_circle is not None:
+                start = now_circle.center
+            if motion.moving(look) or shifted:
+                moved, last_move = True, monotonic()
+            elif monotonic() - last_move > FIELD_CIRCLE_STILL_SECONDS:
+                break
+        return "stopped" if moved else "still"
+
+    def _walk_keys_to_circle_in_view(self) -> bool:
+        """Short key steps that bring the circle under the character (the
+        camera follows the character, as on the 镜中之战 stage walk whose
+        step planner this uses) until the hand shows and is pressed.  Ends
+        when the circle leaves the view, comes no nearer for
+        FIELD_CIRCLE_NO_PROGRESS_STEPS steps (the camera stopped at the
+        map's edge), or no key can be sent."""
+        hold = getattr(self.task, "hold_key", None)
+        if not callable(hold):
+            return False
+        best = None
+        since_best = 0
+        for _step in range(FIELD_CIRCLE_KEY_STEPS):
+            if self._click_sandbox_teleport_interaction(timeout=FIELD_CIRCLE_HAND_LOOK_SECONDS):  # 不用确认：没手势就再走一步
+                return True
+            frame = self.vision.capture()
+            circle = find_field_circle(frame)
+            if circle is None:
+                return False
+            scale = 1920 / frame.shape[1]
+            place = (round(circle.center[0] * scale), round(circle.center[1] * scale))
+            step = plan_step(place, FIELD_CIRCLE_TARGET)
+            self._status("导航状态", f"传送阵在画面 {place}，下一步 {step}")
+            if step is None:
+                break
+            distance = float(np.hypot(place[0] - FIELD_CIRCLE_TARGET[0], place[1] - FIELD_CIRCLE_TARGET[1]))
+            if best is None or distance < best - STAGE_PROGRESS_PIXELS:
+                best, since_best = distance, 0
+            else:
+                since_best += 1
+                if since_best >= FIELD_CIRCLE_NO_PROGRESS_STEPS:
+                    return False
+            if not hold(step.key, step.seconds, after_sleep=FIELD_CIRCLE_STEP_SETTLE_SECONDS):
+                return False
+        return self._click_sandbox_teleport_interaction()  # 不用确认：调用方没手势改用区域地图
 
     def _walk_to_circle_neighbour(self, card: CardSpec | None) -> NavigationResult | None:
         """From an area without a teleport circle, walk out through its exit

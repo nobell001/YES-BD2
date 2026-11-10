@@ -11,7 +11,7 @@ from collections.abc import Callable
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
-from src.ui.shell import actions, data, theme
+from src.ui.shell import actions, data
 from src.ui.shell.page import Page
 from src.ui.shell.widgets import (
     Button,
@@ -20,7 +20,6 @@ from src.ui.shell.widgets import (
     IconTile,
     KeyCap,
     OptionSwitch,
-    Segmented,
     Select,
     Separator,
     Text,
@@ -33,7 +32,6 @@ from src.ui.shell.widgets import (
 )
 from src.utils import game_sound, game_status_bar, run_notify, wait_settings
 
-THEME_LABELS = {"light": "淡紫", "dark": "深色", "auto": "跟随系统"}
 # Each language in its own words.  The project's texts are written in
 # Simplified Chinese (Traditional is converted); English, Japanese and Korean
 # translate the framework's words and whatever the catalogs cover so far.
@@ -193,14 +191,7 @@ class SettingsPage(Page):
         self._window = window
 
         look = self._section("外观")
-        self.theme_switch = Segmented(list(THEME_LABELS), theme.theme_mode(), labels=THEME_LABELS)
-        self.theme_switch.changed.connect(theme.set_theme_mode)
-        look.addWidget(
-            HubRow(
-                "sun-moon", "颜色", "淡紫、深色，或跟着 Windows 的设定", control=self.theme_switch
-            )
-        )
-        look.addWidget(Separator(indent=ROW_INDENT))
+        # 淡紫 / 深色 moved to the sidebar (Leo 2026-11-10 「移出來 放左邊側邊攔」).
         self.language_switch = Select()  # oink-ui Select (2026-11-09)
         for mode, label in LANGUAGE_LABELS.items():
             # Native names stay as written; only 跟随系统 follows the UI language.
@@ -531,7 +522,6 @@ class SettingsPage(Page):
             login.disable()
 
     def refresh(self) -> None:
-        self.theme_switch.set_value(theme.theme_mode())
         self._show_language()
         self.notify_toggle.set_checked_quietly(system_notification_on())
         self.mute_toggle.set_checked_quietly(game_sound.enabled())

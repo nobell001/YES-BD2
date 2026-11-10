@@ -13,11 +13,21 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QEasingCurve, QEvent, QObject, Qt, QTimer, QVariantAnimation
-from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QObject,
+    QPoint,
+    QPointF,
+    QRectF,
+    Qt,
+    QTimer,
+    QVariantAnimation,
+)
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
-from src.ui.shell import theme
+from src.ui.shell import cover, theme
 
 DURATION_MS = 220
 RISE_PX = 18
@@ -176,3 +186,123 @@ class Tween(QObject):
     def _step(self, value) -> None:
         self.value = value
         self._on_change()
+
+
+# 淡紫 <-> 深色: the new colours open as a circle from the pressed option
+# (Leo 2026-11-10, measured from the video he linked: hard-edged circle, slow
+# start then fast, a grey ring riding on the edge, 0.55 s both ways).
+REVEAL_MS = 550
+REVEAL_START_PX = 10
+REVEAL_RING = QColor(154, 154, 154, 178)
+REVEAL_RING_SHARE = 0.018  # ring width as a share of the window width
+REVEAL_RING_MIN_PX = 6
+
+
+class ThemeReveal(QWidget):
+    """A picture of the window in its old colours with a growing round hole.
+
+    The real window underneath already has the new colours, so each frame is
+    one clipped blit and nothing is restyled during the motion.  Clicks pass
+    through, and the cover deletes itself when the circle has left the window.
+    """
+
+    def __init__(self, window: QWidget, shot: QPixmap, origin: QPoint):
+        super().__init__(window)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setFocusPolicy(Qt.NoFocus)
+        self._shot = shot
+        self._origin = QPointF(origin)
+        self._progress = 0.0
+        self._anim = QVariantAnimation(self)
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.setDuration(REVEAL_MS)
+        self._anim.setEasingCurve(QEasingCurve.InQuart)
+        self._anim.valueChanged.connect(self._step)
+        self._anim.finished.connect(self.finish)
+        cover.follow(self, window)
+        self.raise_()
+        self.show()
+
+    def start(self) -> None:
+        self._anim.start()
+
+    def finish(self) -> None:
+        self._anim.stop()
+        self.hide()
+        self._shot = QPixmap()
+        self.deleteLater()
+
+    def ring_width(self) -> float:
+        return max(REVEAL_RING_MIN_PX, self.width() * REVEAL_RING_SHARE)
+
+    def end_radius(self) -> float:
+        """Far enough that the ring too has left the farthest corner."""
+        x, y = self._origin.x(), self._origin.y()
+        far_x = max(x, self.width() - x)
+        far_y = max(y, self.height() - y)
+        return (far_x * far_x + far_y * far_y) ** 0.5 + self.ring_width()
+
+    def radius(self) -> float:
+        return REVEAL_START_PX + (self.end_radius() - REVEAL_START_PX) * self._progress
+
+    def _step(self, value) -> None:
+        self._progress = float(value)
+        self.update()
+
+    def paintEvent(self, _event):
+        if self._shot.isNull():
+            return
+        radius = self.radius()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        old = QPainterPath()
+        old.addRect(QRectF(self.rect()))
+        hole = QPainterPath()
+        hole.addEllipse(self._origin, radius, radius)
+        painter.setClipPath(old.subtracted(hole))
+        painter.drawPixmap(0, 0, self._shot)
+        painter.setClipping(False)
+        ring = self.ring_width()
+        painter.setPen(QPen(REVEAL_RING, ring))
+        painter.setBrush(Qt.NoBrush)
+        mid = radius - ring / 2
+        if mid > 0:
+            painter.drawEllipse(self._origin, mid, mid)
+
+
+def switch_theme(mode: str, source: QWidget | None = None) -> ThemeReveal | None:
+    """Switch 淡紫 / 深色 / 跟随系统, opening the new colours from ``source``.
+
+    The switch itself never waits for or depends on the motion: when there is
+    nothing to watch (window hidden or minimized, no source, the colours stay
+    the same, or taking the picture fails) it is the plain instant switch.
+    """
+    window = source.window() if source is not None else None
+    for stale in window.findChildren(ThemeReveal) if window is not None else ():
+        stale.finish()
+    reveal = None
+    was_dark = theme.isDarkTheme()
+    try:
+        if (
+            window is not None
+            and source.isVisible()
+            and window.isVisible()
+            and not window.isMinimized()
+            and window.width() > 0
+        ):
+            shot = window.grab()
+            if not shot.isNull():
+                origin = source.mapTo(window, source.rect().center())
+                reveal = ThemeReveal(window, shot, origin)
+    except Exception:  # the motion is decoration: never block the switch
+        reveal = None
+    theme.set_theme_mode(mode)
+    if reveal is None:
+        return None
+    if theme.isDarkTheme() == was_dark:
+        reveal.finish()
+        return None
+    reveal.start()
+    return reveal

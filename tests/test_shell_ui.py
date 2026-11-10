@@ -886,10 +886,11 @@ class ThemeTest(unittest.TestCase):
         self.assertAlmostEqual(theme.corner(5), 13.0)
 
     def test_theme_switch_has_no_old_light_option(self):
-        from src.ui.shell import settings
+        from src.ui.shell import sidebar
 
-        self.assertEqual(list(settings.THEME_LABELS), ["light", "dark", "auto"])
-        self.assertEqual(settings.THEME_LABELS["light"], "淡紫")
+        # In the sidebar since 2026-11-10 (Leo), two choices like the switch he showed.
+        self.assertEqual(list(sidebar.THEME_LABELS), ["light", "dark"])
+        self.assertEqual(sidebar.THEME_LABELS["light"], "淡紫")
 
     def test_every_colour_parses(self):
         for palette in (theme.LIGHT, theme.DARK):
