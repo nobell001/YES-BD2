@@ -310,6 +310,14 @@ WALK_ONLY_TARGETS = frozenset(
 COVERED_CIRCLE_ICONS = {
     "迪尔索特港口城市": "迪尔索特旅馆",
 }
+# The same maps' ≡-menu row that leaves for a place with its own circle:
+# 第16章's 旅馆 is a map of its own, its circle beside the arrival (Leo
+# 2026-11-11).  Used only on the pass after 艾琳 (TOWN_THEN_LAST_CARD_IDS);
+# that day every area-map try read no 「迪尔索特旅馆」 and 第16章 was skipped
+# after ~4 min; the ≡ menu read 「旅馆 商店 酒馆 招募 艾琳」.
+COVERED_CIRCLE_NAV_ENTRIES = {
+    "迪尔索特港口城市": "旅馆",
+}
 CIRCLE_EXIT_WALKS = {
     "Q_sp18": ("科库托斯暗黑神殿", "科库托斯圣域"),
 }
@@ -361,6 +369,13 @@ RESUMING_WALK_CARD_IDS = frozenset(
 # leaves the character on its exit, where clicking the 拍卖场 exit does
 # nothing (~9 s lost before the restart); Leo left the call to Claude.
 LAST_MAP_THEN_TOWN_CARD_IDS = frozenset({"Q_cp3"})
+# Cards whose pass after the 艾琳 restart runs town -> last map -> back
+# through the middle maps -> town, and may leave the town by its ≡-menu row
+# (COVERED_CIRCLE_NAV_ENTRIES) when the area map still shows no circle.  Leo
+# 2026-11-11, 第16章: the town's circle can hide under a name or the inn; the
+# inn is its own map with its own circle; 「從戰鬥二倒回來比較順」; 「這方法僅限
+# 傳艾琳後 地圖辨識不出傳送陣 才這樣做」.
+TOWN_THEN_LAST_CARD_IDS = frozenset({"Q_sp16"})
 # How long such a walk may keep going, catches included (Leo: 60 s); a
 # screen still for STUCK_SECONDS ends it sooner (Leo 2026-10-14).
 RESUMING_WALK_TIMEOUT = 60.0

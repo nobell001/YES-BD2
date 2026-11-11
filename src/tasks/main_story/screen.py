@@ -61,6 +61,19 @@ WHITE_MIN = 200
 # Where the skip icon is when its template is not read: the F2 cap at
 # (1640, 103), the icon above it (2000x1125 screenshot, scaled).
 SKIP_POINT = (1640, 60)
+# The same row by its key caps' dark letters 「F1 F2 F3」 (a black-hat of the
+# grey picture: dark strokes inside the white caps).  The white-only icon
+# above drowns on a bright map (Leo 2026-11-09, a player: 「地图有点亮的那种」):
+# on the 1520 live 4K looks, story frames with 30%+ of the corner over the
+# white line read 0.39-0.66 there (3 of 7 under SKIP_MIN), while the letters
+# keep 0.78+ on every bright one; no other screen over 0.32.
+SKIP_KEYS_TEMPLATE = "skip_keys_dark.png"
+SKIP_KEYS_MIN = 0.5
+SKIP_KEYS_KERNEL = 7
+SKIP_KEYS_F2 = (146, 18)  # the F2 cap's centre inside the template
+SKIP_ICON_ABOVE_CAP = 46
+# The other caps of the row (OCR reads 「F1」 or 「F3」 when 「F2」 is lost).
+SKIP_CAP_FROM_F2 = {"F1": -122, "F3": 118}
 
 # The 「跳過對話」 dialog (title, 「是否結束故事觀賞？」, 取消 ESC / 確認 ENTER OR SPACE).
 SKIP_DIALOG_WORDS = ("跳過對話", "跳过对话", "是否結束故事觀賞", "是否结束故事观赏", "結束故事觀賞", "结束故事观赏")
@@ -291,6 +304,37 @@ def skip_icon(frame_1080: np.ndarray) -> tuple[float, tuple[int, int]]:
     height, width = template.shape[:2]
     # The icon is the top part of the template, the F2 cap the bottom.
     return float(score), (x1 + x + width // 2, y1 + y + height // 3)
+
+
+def _dark_strokes(grey: np.ndarray) -> np.ndarray:
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (SKIP_KEYS_KERNEL, SKIP_KEYS_KERNEL))
+    return cv2.morphologyEx(grey, cv2.MORPH_BLACKHAT, kernel)
+
+
+def skip_keys(frame_1080: np.ndarray) -> tuple[float, tuple[int, int]]:
+    """(score, 1080p point of the skip icon) from the 「F1 F2 F3」 caps'
+    letters: dark on white whatever the map behind is."""
+    template = _picture(SKIP_KEYS_TEMPLATE, False)
+    if template is None:
+        return 0.0, SKIP_POINT
+    x1, y1, x2, y2 = SKIP_SEARCH
+    part = _dark_strokes(cv2.cvtColor(frame_1080[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY))
+    if part.std() == 0:
+        return 0.0, SKIP_POINT
+    _low, score, _at, (x, y) = cv2.minMaxLoc(template_match_response(part, template))
+    fx, fy = SKIP_KEYS_F2
+    return float(score), (x1 + x + fx, y1 + y + fy - SKIP_ICON_ABOVE_CAP)
+
+
+def skip_row(frame_1080: np.ndarray) -> tuple[bool, tuple[int, int], str]:
+    """The story's F1/F2/F3 row by either picture (any one is enough)."""
+    score, point = skip_icon(frame_1080)
+    if score >= SKIP_MIN:
+        return True, point, f"跳过图示 {score:.2f}"
+    keys, keys_point = skip_keys(frame_1080)
+    if keys >= SKIP_KEYS_MIN:
+        return True, keys_point, f"F1F2F3 键帽 {keys:.2f}（跳过图示 {score:.2f}）"
+    return False, point, f"跳过图示 {score:.2f} / 键帽 {keys:.2f}"
 
 
 # More pictures, looked at before any text (Leo 2026-11-06 「要頻繁辨識 最好
@@ -567,9 +611,9 @@ def read_pictures(frame_1080: np.ndarray) -> Reading | None:
     if seen:
         confirm = (point[0] + DIALOG_CONFIRM_FROM_KEYS[0], point[1] + DIALOG_CONFIRM_FROM_KEYS[1])
         return Reading(Kind.SKIP_DIALOG, confirm, f"跳过对话按键图 {score:.2f}")
-    skip, skip_point = skip_icon(frame_1080)
-    if skip >= SKIP_MIN:
-        return Reading(Kind.SKIP, skip_point, f"跳过图示 {skip:.2f}")
+    seen, skip_point, why = skip_row(frame_1080)
+    if seen:
+        return Reading(Kind.SKIP, skip_point, why)
     seen, point, score = picture_seen(frame_1080, Kind.BATTLE)
     if seen:
         return Reading(Kind.BATTLE, None, f"自动战斗结束图 {score:.2f}")
@@ -654,14 +698,20 @@ def read(frame_1080: np.ndarray, boxes) -> Reading:
     if go is not None and _find(boxes, QUICK_ASK_WORDS, QUICK_ASK_BOX) is not None:
         return Reading(Kind.QUICK_ASK, _centre(go), go.name)
 
-    score, point = skip_icon(frame_1080)
-    if score >= SKIP_MIN:
-        return Reading(Kind.SKIP, point, f"跳过图示 {score:.2f}")
+    seen, point, why = skip_row(frame_1080)
+    if seen:
+        return Reading(Kind.SKIP, point, why)
     x1, y1, x2, y2 = SKIP_SEARCH
     f2 = _find(boxes, ("F2",), SKIP_SEARCH, exact=True)
     if f2 is not None:
         cx, cy = _centre(f2)
         return Reading(Kind.SKIP, (cx, max(y1, cy - 43)), "F2")
+    # 「F2」 lost on a bright map (live: read as 「a」), its neighbours read.
+    for cap, from_f2 in SKIP_CAP_FROM_F2.items():
+        other = _find(boxes, (cap,), SKIP_SEARCH, exact=True)
+        if other is not None:
+            cx, cy = _centre(other)
+            return Reading(Kind.SKIP, (cx - from_f2, max(y1, cy - 43)), cap)
 
     if any(word in text for word in DEFEAT_WORDS):
         return Reading(Kind.DEFEAT, None, "DEFEAT")

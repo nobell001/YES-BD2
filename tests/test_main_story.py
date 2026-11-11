@@ -41,6 +41,37 @@ class PicturesTest(unittest.TestCase):
         x, y = reading.point
         self.assertLess(abs(x - 1640), 15)  # the skip icon, over its F2 cap
 
+    def test_story_row_on_bright_maps(self):
+        """A player 2026-11-09: 「地图有点亮的那种」 story frames were not known.
+        Live 4K looks (snow, a pale sky, a gold hall): the white-only icon reads
+        0.39-0.54 there, under SKIP_MIN; the caps' dark letters still tell it."""
+        for name in (
+            "story_row_bright_snow.jpg",
+            "story_row_bright_snow2.jpg",
+            "story_row_bright_pale.jpg",
+            "story_row_bright_gold.jpg",
+        ):
+            frame = frame_with(name, (1450, 0))
+            frame[170:, :] = 230  # the bright map goes on below
+            self.assertLess(screen.skip_icon(frame)[0], screen.SKIP_MIN, name)  # the old cue alone missed it
+            reading = screen.read_pictures(frame)
+            self.assertIsNotNone(reading, name)
+            self.assertEqual(Kind.SKIP, reading.kind, name)
+            x, y = reading.point
+            self.assertLess(abs(x - 1640), 15, name)
+            self.assertLess(abs(y - 60), 15, name)
+
+    def test_caps_letters_are_not_seen_without_the_row(self):
+        for frame in (frame_with("field_top_020.jpg", (1450, 0)), BLACK, np.full((1080, 1920, 3), 235, np.uint8)):
+            self.assertLess(screen.skip_keys(frame)[0], screen.SKIP_KEYS_MIN)
+
+    def test_f1_or_f3_read_when_f2_is_lost(self):
+        frame = np.full((1080, 1920, 3), 235, np.uint8)
+        for cap, x in (("F1", 1505), ("F3", 1745)):
+            reading = screen.read(frame, [box(cap, x, 95, 26, 20)])
+            self.assertEqual(Kind.SKIP, reading.kind, cap)
+            self.assertLess(abs(reading.point[0] - 1640), 15, cap)
+
     def test_skip_dialog_tall_and_short(self):
         for name, confirm_y in (("skip_dialog_tall_046.jpg", 780), ("skip_dialog_short_262.jpg", 628)):
             reading = screen.read_pictures(frame_with(name, (700, 560)))

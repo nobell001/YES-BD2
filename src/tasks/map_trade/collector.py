@@ -26,6 +26,7 @@ from src.tasks.map_trade.collector_skills import SkillExecutionMixin
 from src.tasks.map_trade.models import (
     COLLECTABLE_CARDS,
     LAST_MAP_THEN_TOWN_CARD_IDS,
+    TOWN_THEN_LAST_CARD_IDS,
     CollectionActionState,
     CollectionMapRole,
     CollectionResult,
@@ -123,6 +124,8 @@ class Collector(SkillExecutionMixin):
         self._skip_reasons: dict[str, str] = {}
         # Cards skipped since a map was last done (CARDS_FAILED_IN_A_ROW_NO_RETRY).
         self._failed_in_a_row: list[str] = []
+        # Cards whose same map failed again after the 艾琳 restart: no retry.
+        self._no_retry_cards: set[str] = set()
         self._done_at_last_skip: int | None = None
         # The skill bar is read once a run (a player may have moved skills).
         self._skill_layout_checked = False
@@ -283,6 +286,8 @@ class Collector(SkillExecutionMixin):
                 current = card.targets[0]
             observed_depleted = False
             restarted = False
+            restart_failed_at = None
+            self.navigator.covered_circle_menu_route = False
             search_confirmed = False
             before_search: list[str] = []
             # Maps finished in this pass: a restart walks through them again
@@ -296,6 +301,12 @@ class Collector(SkillExecutionMixin):
                 arrived = self._go_to_collection_target(card, current, target)
                 if arrived is not None and not arrived.success:
                     if restarted:
+                        if target.key == restart_failed_at:
+                            # The same map failed again after going back by
+                            # 艾琳: the card's retry would meet it a third
+                            # time (Leo 2026-11-11 「傳艾琳後 又認不出就不要輪迴」;
+                            # 第16章 went round for ~4 min).
+                            self.__dict__.setdefault("_no_retry_cards", set()).add(card.card_id)
                         stopped = self._skip_card(
                             card,
                             f"前往{target.title}失败（{arrived.message}）",
@@ -305,6 +316,7 @@ class Collector(SkillExecutionMixin):
                             return stopped
                         break
                     restarted = True
+                    restart_failed_at = target.key
                     self._status(
                         "采集进度",
                         f"前往{target.title}失败（{arrived.message}），经狩猎场或艾琳回主城重来",
@@ -321,6 +333,13 @@ class Collector(SkillExecutionMixin):
                         break
                     current = card.targets[0]
                     order = list(card.targets)
+                    if card.card_id in TOWN_THEN_LAST_CARD_IDS and len(order) > 2:
+                        # Leo 2026-11-11 (第16章), only on this pass after 艾琳:
+                        # an area map that still shows no circle is left by
+                        # ≡ 旅馆 and the inn's own circle, then 「從戰鬥二倒回來
+                        # 比較順」: town -> last -> back -> town.
+                        order = [order[0], *reversed(order[1:]), order[0]]
+                        self.navigator.covered_circle_menu_route = True
                     index = 0
                     continue
                 current = target
@@ -673,6 +692,10 @@ class Collector(SkillExecutionMixin):
         if card.card_id in getattr(self, "_badges_unfinished", set()):
             return True
         if card not in self._skipped_cards:
+            return False
+        if card.card_id in getattr(self, "_no_retry_cards", ()):
+            self._status("采集进度", f"{card.card_id} 回艾琳重来后同一张图还是失败，不再重跑")
+            self.task.log_warning(f"地图采集：{card.label}回艾琳重来后同一张图还是失败，不再重跑，先跑下一张。")
             return False
         reason = self._skip_reasons.get(card.card_id, "")
         return not reason.startswith("进不去")

@@ -23,6 +23,7 @@ from src.tasks.map_trade.action_icons import (
 from src.tasks.map_trade.collector_constants import SEARCH_COUNTDOWN_RELATIVE_ROI
 from src.tasks.map_trade.models import (
     COVERED_CIRCLE_ICONS,
+    COVERED_CIRCLE_NAV_ENTRIES,
     CARD_BY_ID,
     CIRCLE_EXIT_WALKS,
     EVENT_WALK_EDGES,
@@ -212,6 +213,12 @@ WALK_ARRIVED_TEXT = "完成自动移动"
 # YES-BD2 #24): 「是否自动移动前往所选目的地？」 with 取消 / 确认; it does not
 # show once the player ticked 不再显示.
 AUTO_MOVE_QUESTION_KEYWORDS = ("是否自动移动", "前往所选目的地")
+# The walk's own banners, which name 自动移动 too but are no question.
+AUTO_MOVE_BANNER_WORDS = ("移动中", "完成自动移动", "中止自动移动", "停止自动移动")
+# The dialog's title is 自动移动 in every client; its question's wording is
+# only known from the 简中 one (player v0.3.8 繁中 4K 2026-11-10: 第6章 and
+# 第14章, the only map walks, failed with the area map left open).
+AUTO_MOVE_DIALOG_TITLE = "自动移动"
 AUTO_MOVE_CANCEL_TEXT = "取消"
 NOT_BY_CIRCLE_MESSAGE = "人不在可用的传送阵上（右下 F 键的手势没变绿）"
 # ≡-menu entries also found by a part of the name when one character is
@@ -1423,9 +1430,21 @@ class SandboxNavigationMixin:
 
     @staticmethod
     def _auto_move_question_shown(walk_text: str) -> bool:
-        """The 自动移动 dialog's question (「是否自动移动前往所选目的地？」)
-        in normalized walk-area text."""
-        return any(word in walk_text for word in AUTO_MOVE_QUESTION_KEYWORDS)
+        """The 自动移动 dialog (「是否自动移动前往所选目的地？」) in normalized
+        walk-area text: its question, or its title 自动移动 when no walk
+        banner (「自动移动中」「已完成自动移动」) carries that word.
+
+        Only the 简中 question was known; a 繁中 question worded otherwise
+        was taken for the walk itself (第14章: 确认 never pressed, the map
+        stayed open) or for an exit that did not react (第6章), player
+        v0.3.8 2026-11-10.  Leo's account ticked 不再显示 long ago, so his
+        runs never show the dialog."""
+        if any(word in walk_text for word in AUTO_MOVE_QUESTION_KEYWORDS):
+            return True
+        rest = walk_text
+        for word in AUTO_MOVE_BANNER_WORDS:
+            rest = rest.replace(word, "")
+        return AUTO_MOVE_DIALOG_TITLE in rest
 
     def _cancel_auto_move_dialog(self, frame: np.ndarray | None = None) -> bool:
         """Press 取消 on a 自动移动 dialog left open over the map (YES-BD2
@@ -1752,12 +1771,9 @@ class SandboxNavigationMixin:
             )
             if "生成魔法阵" in label:
                 continue
-            if not (
-                label == "确认"
-                or label.startswith("确认")
-                or label == "生成"
-                or label.startswith("生成")
-            ):
+            # 确定: the 繁中 client may word 确认 so (unverified; only the
+            # 简中 dialog was ever seen), never anything that spends.
+            if not label.startswith(("确认", "确定", "生成")):
                 continue
             center = self._ocr_box_center(box)
             if center is None:
@@ -1800,6 +1816,15 @@ class SandboxNavigationMixin:
             # inn's icon covers it, player report 2026-10-29): pressing that
             # icon lists 「魔法阵 / 旅馆」.
             under = self._circle_under_other_icon(frame) if ever_confirmed else None
+            if under is None and ever_confirmed and getattr(self, "covered_circle_menu_route", False):
+                # Second way when the covering icon's label did not read
+                # (Leo's 4K 1080p window 2026-11-11: 「地图上没读到「迪尔索特旅馆」」
+                # on every try, 第16章 skipped after ~4 min): the ≡ menu's
+                # row for that place (the inn: its own map and own circle).
+                # Only on the collector's pass after 艾琳 (Leo 「僅限傳艾琳後」).
+                by_menu = self._walk_to_covered_circle_by_menu(self._area_map_title(frame))
+                if by_menu is not None:
+                    return by_menu
             if under is None:
                 # Why, in the player's words (Leo 2026-10-24 「錯誤要寫原因 不要寫讀不到」).
                 why = (
@@ -1910,7 +1935,7 @@ class SandboxNavigationMixin:
                     return True, False
                 self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
                 continue
-            if "自动移动" in walk_text:
+            if "移动中" in walk_text:
                 # One click on the map icon already started the walk: no
                 # menu and no confirm button follow.
                 return True, False
@@ -1963,6 +1988,53 @@ class SandboxNavigationMixin:
         if outcome == "walk":
             return True, False
         self._undo_map_icon_press()
+        return None
+
+    def _walk_to_covered_circle_by_menu(self, header: str) -> NavigationResult | None:
+        """On a map whose circle lies under another icon (COVERED_CIRCLE_NAV_ENTRIES):
+        close the area map, take the ≡ menu's row for a place with its own
+        circle (第16章: 旅馆, a map of its own), then that circle's hand, else
+        that place's own area map, else that circle in view.
+        None when the map is not listed or nothing came of it; the caller
+        goes on with its other ways.  F is not sent here: by the inn's door
+        it would open the inn."""
+        entry = next(
+            (row for title, row in COVERED_CIRCLE_NAV_ENTRIES.items() if title in header),
+            None,
+        )
+        if entry is None:
+            return None
+        self._status("导航状态", f"区域地图上找不到传送阵的图示，改用≡菜单的「{entry}」走过去")
+        self.task.log_info(f"跑图：区域地图上认不出盖住传送阵的图示，改用≡菜单的「{entry}」走到传送阵旁。")
+        self._close_confirmed_map_page(
+            {MapPageMode.SANDBOX_LARGE_MAP},
+            timeout=SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
+        )
+        self._close_field_map_if_open()
+        if self._travel_via_nav_menu(entry) is None:
+            why = getattr(self, "_nav_failure", "") or "-"
+            self._status("导航状态", f"≡菜单的「{entry}」没走成（{why}）")
+            self.task.log_info(f"跑图：≡菜单的「{entry}」没走成（{why}）。")
+            return None
+        if self._click_sandbox_teleport_interaction():  # 不用确认：_open_circle_page 没打开会再按交互
+            return self._open_circle_page(f"≡菜单{entry}后传送阵交互按钮")
+        # The trip ends by the inn's keeper; its circle is upstairs, plain on
+        # the inn's own area map (live 4K 2026-11-11: 0.959, walk + hand +
+        # page in 6.6 s).  On screen it merges with the blue floor pattern.
+        # The flag is off for this inner try so the inn is not left by ≡ again.
+        self.covered_circle_menu_route = False
+        try:
+            walked = self._walk_to_sandbox_teleport_interaction()
+        finally:
+            self.covered_circle_menu_route = True
+        if walked.success:
+            return walked
+        seen = self._walk_to_circle_in_view()
+        if seen is not None and seen.success:
+            return seen
+        self.task.log_info(
+            f"跑图：到了「{entry}」后，手势、{entry}的区域地图、画面上都没找到传送阵（{walked.message}）。"
+        )
         return None
 
     def _area_map_title(self, frame: np.ndarray) -> str:

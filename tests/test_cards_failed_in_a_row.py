@@ -99,5 +99,42 @@ class CardsFailedInARowTest(unittest.TestCase):
         )
 
 
+class SameMapFailsAfterEileenTest(unittest.TestCase):
+    """Leo 2026-11-11 「傳艾琳後 又認不出就不要輪迴」: 第16章 failed on the same
+    map before and after the 艾琳 restart, then the card's retry met it twice
+    more (~4 min).  Such a card is not run a second time."""
+
+    def test_not_retried(self):
+        collector = _collector()
+        card = _card(16)
+        collector._no_retry_cards = {card.card_id}
+        collector._skip_card(card, "前往迪尔索特黑市失败（区域地图上找不到传送阵图标）", 0)
+        self.assertFalse(collector._card_left_unfinished(card))
+
+    def test_other_skips_still_retried(self):
+        collector = _collector()
+        card = _card(16)
+        collector._skip_card(card, "前往迪尔索特黑市失败（区域地图上找不到传送阵图标）", 0)
+        self.assertTrue(collector._card_left_unfinished(card))
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class InnRouteOnlyAfterEileenTest(unittest.TestCase):
+    """Leo 2026-11-11 「這方法僅限傳艾琳後 地圖辨識不出傳送陣 才這樣做」: the
+    navigator's ≡ 旅馆 way is off until the collector's pass after 艾琳."""
+
+    def test_off_by_default(self):
+        from src.tasks.map_trade.navigator import Navigator
+        from src.tasks.map_trade.vision import Vision
+
+        task = SimpleNamespace(config={}, info_set=lambda *_a: None)
+        navigator = Navigator(task, Vision(task))
+        self.assertFalse(getattr(navigator, "covered_circle_menu_route", False))
+
+    def test_only_chapter_16_takes_it(self):
+        from src.tasks.map_trade.models import TOWN_THEN_LAST_CARD_IDS
+
+        self.assertEqual(frozenset({"Q_sp16"}), TOWN_THEN_LAST_CARD_IDS)

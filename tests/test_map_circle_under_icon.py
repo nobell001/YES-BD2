@@ -28,6 +28,10 @@ except ImportError:  # pragma: no cover - the tool always ships onnxocr
 FIXTURES = Path(__file__).resolve().parent / "fixtures/map_trade/map_pages"
 MAP = FIXTURES / "port_city_inn_covers_circle_leo_2k_as_1080.jpg"
 MENU = FIXTURES / "port_city_inn_menu_leo_2k_as_1080.jpg"
+# Leo's 4K, 1080p window, 繁中, 2026-11-11 after a restart: this time the
+# circle is drawn OVER the inn (draw order changes) and covers the inn's
+# label, so only 「迪爾」 of 「迪爾索特旅館」 shows.
+OVER = FIXTURES / "port_city_circle_over_inn_leo_4k_tw_fhd.jpg"
 INN = (481, 469)
 
 
@@ -44,6 +48,17 @@ class CircleHiddenUnderInnTest(unittest.TestCase):
         navigator._status = lambda *_a: None
 
         self.assertIsNone(navigator._sandbox_navigation_teleport(_frame(MAP)))
+
+    def test_drawn_over_the_inn_the_circle_is_found(self):
+        task = SimpleNamespace(config={}, info_set=lambda *_a: None)
+        navigator = Navigator(task, Vision(task))
+        navigator._status = lambda *_a: None
+
+        circle = navigator._sandbox_navigation_teleport(_frame(OVER))
+
+        self.assertIsNotNone(circle)
+        self.assertLess(abs(circle.center[0] - 499), 15)
+        self.assertLess(abs(circle.center[1] - 455), 15)
 
 
 class BattleExitNeverPressedTest(unittest.TestCase):
@@ -208,6 +223,77 @@ class PressIconsForMagicCircleTest(unittest.TestCase):
 
         self.assertIsNone(navigator._circle_under_other_icon(self.map))
         self.assertEqual([], presses)
+
+
+class CoveredCircleByMenuTest(unittest.TestCase):
+    """Leo's 4K 2026-11-11 (1080p window): 「地图上没读到「迪尔索特旅馆」」 on
+    every try, 第16章 went round 艾琳 and the card retry for ~4 min and was
+    skipped.  The ≡ menu listed 「旅馆 商店 酒馆 招募 艾琳」: 旅馆 is a map of
+    its own with its own circle (Leo), the way out on the pass after 艾琳."""
+
+    def _navigator(self, travelled="旅馆", hand=True, in_view=None, inn_map_ok=False):
+        task = SimpleNamespace(
+            config={}, info_set=lambda *_a: None,
+            sleep=lambda *_a: None, log_info=lambda *_a: None,
+        )
+        navigator = Navigator(task, Vision(task))
+        navigator._status = lambda *_a: None
+        calls = []
+        navigator._close_confirmed_map_page = lambda *_a, **_k: calls.append("close map")
+        navigator._close_field_map_if_open = lambda: None
+        navigator._travel_via_nav_menu = lambda *entries: calls.append(entries) or travelled
+        navigator._click_sandbox_teleport_interaction = lambda **_k: hand
+        navigator._walk_to_circle_in_view = lambda: in_view
+        flags = []
+
+        def inn_map():
+            flags.append(navigator.covered_circle_menu_route)
+            return SimpleNamespace(success=inn_map_ok, message="inn map")
+
+        navigator._walk_to_sandbox_teleport_interaction = inn_map
+        navigator.covered_circle_menu_route = True
+        self.flags = flags
+        navigator._open_circle_page = lambda why: calls.append("page") or SimpleNamespace(
+            success=True, message=why
+        )
+        navigator._press_interact_key_on_circle = lambda: self.fail("F by the inn opens the inn")
+        return navigator, calls
+
+    def test_the_inn_row_walks_there_and_the_hand_opens_the_page(self):
+        navigator, calls = self._navigator()
+
+        result = navigator._walk_to_covered_circle_by_menu("安全迪尔索特港口城市普通")
+
+        self.assertTrue(result.success)
+        self.assertEqual(["close map", ("旅馆",), "page"], calls)
+
+    def test_no_hand_then_the_inn_s_own_area_map(self):
+        # Live 4K 2026-11-11: the inn's circle is upstairs, plain on its map.
+        navigator, _calls = self._navigator(hand=False, inn_map_ok=True)
+
+        result = navigator._walk_to_covered_circle_by_menu("安全迪尔索特港口城市")
+
+        self.assertEqual("inn map", result.message)
+        self.assertEqual([False], self.flags)  # not ≡ 旅馆 again from the inn
+        self.assertTrue(navigator.covered_circle_menu_route)
+
+    def test_no_hand_then_the_circle_in_view(self):
+        seen = SimpleNamespace(success=True, message="in view")
+        navigator, _calls = self._navigator(hand=False, in_view=seen)
+
+        self.assertIs(seen, navigator._walk_to_covered_circle_by_menu("安全迪尔索特港口城市"))
+
+    def test_nothing_came_of_it_hands_back_to_the_other_ways(self):
+        navigator, _calls = self._navigator(hand=False, in_view=None)
+        self.assertIsNone(navigator._walk_to_covered_circle_by_menu("安全迪尔索特港口城市"))
+        navigator, _calls = self._navigator(travelled=None)
+        self.assertIsNone(navigator._walk_to_covered_circle_by_menu("安全迪尔索特港口城市"))
+
+    def test_another_map_does_nothing(self):
+        navigator, calls = self._navigator()
+
+        self.assertIsNone(navigator._walk_to_covered_circle_by_menu("安全华特波尔镇"))
+        self.assertEqual([], calls)
 
 
 if __name__ == "__main__":

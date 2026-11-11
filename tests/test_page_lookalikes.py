@@ -129,7 +129,19 @@ CHECKS = {
         lambda nav, frame: title_screen.still_starting(nav.task.ocr(frame=frame)),
         {"title_starting"},
     ),
+    # 推剧情 presses F2 only on the story's F1/F2/F3 row, now told by its key
+    # caps' letters too (a player 2026-11-09: bright maps were not known).
+    "剧情跳过列": (
+        lambda nav, frame: _story_row(frame),
+        {"story_scene"},
+    ),
 }
+
+
+def _story_row(frame):
+    from src.tasks.main_story import screen
+
+    return screen.skip_row(screen.to_1080(frame))[0]
 
 
 def _channel_button(nav, frame):
