@@ -1921,6 +1921,7 @@ class SandboxNavigationMixin:
         确认, or the 自动移动 question, until the walk is confirmed.
         (confirmed, caught before the banner was read)."""
         menu_end_at = monotonic() + SANDBOX_NAVIGATION_CONFIRM_TIMEOUT
+        motion = MotionWatch(looks=2)
         while monotonic() <= menu_end_at:
             menu_frame = self.vision.capture()
             walk_text = self._walk_text(menu_frame)
@@ -1933,6 +1934,9 @@ class SandboxNavigationMixin:
                 # 自动移动 is not the walk banner; its 确认 starts the walk.
                 if self._click_sandbox_navigation_destination_confirmation(menu_frame):
                     return True, False
+                # A banner cut to 「自动移动」 reads as the question too.
+                if self._walk_began_unread(menu_frame, walk_text, motion):
+                    return True, False
                 self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
                 continue
             if "移动中" in walk_text:
@@ -1944,8 +1948,42 @@ class SandboxNavigationMixin:
                 continue
             if self._click_sandbox_navigation_destination_confirmation(menu_frame):
                 return True, False
+            if self._walk_began_unread(menu_frame, walk_text, motion):
+                return True, False
             self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
         return False, False
+
+    def _walk_began_unread(self, frame: np.ndarray, walk_text: str, motion: MotionWatch) -> bool:
+        """The circle press started a walk although 「自动移动中」 never read:
+        the area map closed by itself (no 魔法阵 menu, no 自动移动 question:
+        both sit over the map) and one more sign shows: the game's
+        「已完成自动移动」, the circle's hand, or a field that pans look after
+        look (YES-BD2 #62's motion check).
+
+        YES-BD2 #82 (v0.3.12, 繁中 1080p 125%): 角色卡3 上流社会派对会场 ended
+        「箱庭大地图选择传送阵后未确认目的地按钮」 and the card was skipped.
+        Reproduced on Leo's 2K 桌面分身 2026-11-12 (简中, 12 presses of 12,
+        frames on diag/issue82-cp3-1112): 艾琳 stands close to the town's
+        lower-left circle, the map closes 0.2-0.5 s after the press, the
+        walk is over by 2.1-2.9 s and 「已完成自动移动」 stays until ~5 s.
+        The first look comes 3.2 s after the press (the settle), and since
+        v0.3.11 (#541) only 「移动中」 counted as the walk, so 4 s went by
+        waiting for a 确认 that never comes; the 艾琳 restart ends at the
+        same spot.  The player's own 繁中 run is taken to be the same."""
+        if self._sandbox_navigation_page_has_keyword(frame) or self._loading_black(frame):
+            motion.reset()
+            return False
+        if WALK_ARRIVED_TEXT in walk_text:
+            sign = "已完成自动移动"
+        elif self.vision.passes(self.vision.match(frame, HAND_TEMPLATE), HAND_TEMPLATE):
+            sign = "传送阵的手势已出现"
+        elif motion.moving(frame):
+            sign = "画面一直在动"
+        else:
+            return False
+        self._status("导航状态", f"点传送阵后大地图自己关了，{sign}：当作已经走起来")
+        self._log_info(f"跑图：点了区域地图上的传送阵，没读到「自动移动中」，但地图自己关了、{sign}，当作已经在走。")
+        return True
 
     def _circle_under_other_icon(self, frame: np.ndarray) -> tuple[bool, bool] | None:
         """On a map whose circle the game draws under another icon
