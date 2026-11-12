@@ -565,6 +565,8 @@ class SellFlowMixin:
         sold_count = 0
         settle_retries = 0
         previous_owned: int | None = None
+        # Cards whose dialog showed another item; skipped until a sale reflows the list.
+        wrong_cards: list[tuple[int, int]] = []
         self._sale_drag_refused = False
         self._scroll_sale_list_to_top()
         while True:
@@ -616,6 +618,20 @@ class SellFlowMixin:
                 return False
 
             candidates, frame = located
+            candidates = [
+                item
+                for item in candidates
+                if not self._near_any_point(item.center, wrong_cards, frame.shape)
+            ]
+            if not candidates:
+                self.task.log_warning(
+                    f"卖：{entry.item}可见的卡片点开都是别的商品，跳过此项。"
+                )
+                if sold_count:
+                    return True
+                self._last_sale_unavailable = True
+                self._last_sale_reason = "点开的出售窗口是别的商品"
+                return False
             candidate = candidates[0]
             if not self._candidate_unmoved(candidate, frame):
                 settle_retries += 1
@@ -632,12 +648,25 @@ class SellFlowMixin:
                 previous_owned=previous_owned,
             )
             if outcome is None:
-                return False
+                if not self._sale_dialog_rejected:
+                    return False
+                # Nothing was sold: the dialog title was another item's.  Close
+                # it and try the next card with the name instead of stopping.
+                if self._sale_dialog_shown() and not self._close_sale_dialog():
+                    self.task.log_warning(f"卖：{entry.item}点到别的商品，弹窗无法关闭，停止出售。")
+                    return False
+                self._sale_dialog_rejected = False
+                wrong_cards.append(candidate.center)
+                self.task.log_info(
+                    f"卖：{entry.item}点到别的商品{candidate.center}，已关闭弹窗，试下一张卡片。"
+                )
+                continue
             owned, sold = outcome
             if not sold:
                 return True
             sold_count += 1
             previous_owned = owned
+            wrong_cards.clear()
             if getattr(self, "_reserve_reached", False):
                 # The slider sold down to the reserve: this item is done.
                 self._status("出售完成确认", f"{entry.item}:已出售{sold_count}组，留到保留量")
@@ -656,6 +685,18 @@ class SellFlowMixin:
                 # unit at a time for hours.
                 self.task.log_info(f"卖：出售保险开启，{entry.item}只出售一次。")
                 return True
+
+    @staticmethod
+    def _near_any_point(
+        point: tuple[int, int],
+        others: list[tuple[int, int]],
+        frame_shape: tuple[int, ...],
+    ) -> bool:
+        height, width = frame_shape[:2]
+        reach_x, reach_y = width * 0.02, height * 0.02
+        return any(
+            abs(point[0] - x) <= reach_x and abs(point[1] - y) <= reach_y for x, y in others
+        )
 
     def _sell_one_candidate(
         self,
@@ -903,6 +944,69 @@ class SellFlowMixin:
         self._last_sale_reason = last_reason
         return None
 
+    def _is_another_goods_name(self, entry: CalendarEntry, normalized: str) -> bool:
+        """The card text names a different good, or could be one.
+
+        Player 2026-11-12 (v0.3.11): selling 巧克力, the card 巧克力鸡尾酒 held
+        the name and was clicked first; the dialog check then stopped the whole
+        sale.  A text counts as another good when it is exactly another good's
+        name, when the longest known name inside it is another good's
+        (巧克力鸡尾酒, 土豆汤 for 土豆), or when it is a cut piece of another,
+        longer name (巧克力鸡尾 for 巧克力).
+        """
+
+        if not normalized:
+            return False
+        try:
+            catalog = self._sale_title_catalog(entry)
+        except (AttributeError, OSError, ValueError):
+            return False
+        expected = self._normal(entry.item)
+        owners = catalog.get(normalized)
+        if owners:
+            return expected not in owners
+        own_names = [name for name, ids in catalog.items() if expected in ids]
+        own_inside = [name for name in own_names if name in normalized]
+        longest = 0
+        longest_owners: set[str] = set()
+        for name, ids in catalog.items():
+            if len(name) < 2:
+                continue
+            if (
+                own_inside
+                and expected not in ids
+                and any(own in name and own != name for own in own_inside)
+                and (
+                    SequenceMatcher(None, normalized, name).ratio()
+                    > max(SequenceMatcher(None, normalized, own).ratio() for own in own_inside)
+                    or (
+                        # One Chinese character off; a stray digit or mark
+                        # in front of this good's own name is noise, not that.
+                        len(normalized) == len(name)
+                        and [
+                            "\u4e00" <= a <= "\u9fff"
+                            for a, b in zip(normalized, name)
+                            if a != b
+                        ] == [True]
+                    )
+                )
+            ):
+                # One character of the longer name misread (巧克力鸡尾洒): the
+                # text is still closer to it than to this good.
+                return True
+            if name in normalized:
+                if len(name) > longest:
+                    longest, longest_owners = len(name), set(ids)
+                elif len(name) == longest:
+                    longest_owners |= ids
+            elif (
+                expected not in ids
+                and len(normalized) >= SALE_NAME_FRAGMENT_MIN_CHARS
+                and normalized in name
+            ):
+                return True
+        return bool(longest_owners) and expected not in longest_owners
+
     @staticmethod
     def _sale_name_matches(
         normalized: str,
@@ -990,7 +1094,17 @@ class SellFlowMixin:
             search_roi=search_roi,
             gray_frame=gray_frame,
         )
-        if not matches and ocr_boxes:
+        if matches and ocr_boxes:
+            # The digit-free template also fits ↑110% (player 2026-11-12:
+            # 巧克力鸡尾酒 ↑110% counted as ↑120%).  A badge the page OCR reads
+            # clearly as another rate needs the badge alone to read 120.
+            matches = tuple(
+                result
+                for result in matches
+                if not self._marker_reads_other_rate(result, ocr_boxes)
+                or self._badge_crop_reads_120(frame, result)
+            )
+        elif not matches and ocr_boxes:
             relaxed = replace(
                 SALE_120_PERCENT_MARKER_TEMPLATE,
                 min_pixel_score=SALE_MARKER_RELAXED_PIXEL_SCORE,
@@ -1071,6 +1185,19 @@ class SellFlowMixin:
                 # A clear read of another rate (116, 117…): not 120.
                 return False
         return False
+
+    @classmethod
+    def _marker_reads_other_rate(cls, result, ocr_boxes) -> bool:
+        """OCR over the badge reads a clear rate from 100 to 119 and no 120.
+
+        The arrow reads as a stray 1 or 4 (4117%), so the last three digits
+        are the rate; above 120 (4129) is a misread, not another rate.
+        """
+
+        digits = [value for value in cls._marker_digits(result, ocr_boxes) if value]
+        if any(SALE_MARKER_OCR_DIGITS in value for value in digits):
+            return False
+        return any(len(value) >= 3 and 100 <= int(value[-3:]) < 120 for value in digits)
 
     @classmethod
     def _marker_reads_120(cls, result, ocr_boxes) -> bool:
@@ -1213,6 +1340,8 @@ class SellFlowMixin:
                 text = str(getattr(box, "name", ""))
                 normalized = self._normal(text)
                 if self._sale_name_matches(normalized, normalized_names):
+                    if self._is_another_goods_name(entry, normalized):
+                        continue
                     name_boxes.append(box)
 
             if not name_boxes:
@@ -1390,6 +1519,8 @@ class SellFlowMixin:
             text = str(getattr(box, "name", ""))
             normalized = self._normal(text)
             if not self._sale_name_matches(normalized, normalized_names):
+                continue
+            if self._is_another_goods_name(entry, normalized):
                 continue
             matching_boxes.append(box)
         for box in self._deduplicate_ocr_boxes(matching_boxes):
