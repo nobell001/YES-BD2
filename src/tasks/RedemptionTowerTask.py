@@ -37,6 +37,7 @@ from src.tasks.DoomBookTask import (
     QUICK_SLOT_XS,
     CartridgeFieldTask,
 )
+from src.tasks import run_report
 from src.tasks.task_vision_mixin import REFERENCE_HEIGHT, REFERENCE_WIDTH
 from src.utils import image_io
 from src.utils.image_utils import template_match_response
@@ -72,6 +73,26 @@ MARKER_HUD_MASKS = ((1540, 0, 380, 110), (115, 85, 220, 200))
 LEVEL_TICK_TEMPLATE = ASSET_DIR / "level_tick.png"
 LEVEL_LIST_ROI = (230, 100, 210, 980)
 LEVEL_TICK_MIN_SCORE = 0.7
+# The rows' ✓ sit one row pitch apart from LV.1's (top left of the match, at
+# 1080 reference: LV.1 y=138, LV.7 y=732 on Leo's 简中 and 繁中 frames).  The
+# row labels are too dark to read behind the character art (OCR misses LV.4,
+# LV.5, LV.7), so the row number comes from where the ✓ is, and the big badge
+# at the top (「LV 7」, readable) confirms it once the row is picked.
+LEVEL_FIRST_TICK_Y = 138
+LEVEL_ROW_PITCH = 99
+# Where a row is clicked to pick it: on its 「LV.N」 label, left of the ✓.
+LEVEL_LABEL_DX = -60
+LEVEL_LABEL_DY = 12
+LEVEL_BADGE_ROI = (780, 110, 110, 90)
+
+# 快速战斗 is greyed until the picked level (the top one, picked on entry) is
+# cleared this season (Leo 2026-11-13, 繁中 2K: LV10 not cleared, LV1-7 ✓):
+# the button's own brightness, and next to the 开始挑战 button that is always
+# lit (Leo's frame: 84 vs 222; lit 222 vs 222).
+QUICK_BUTTON_BOX = (1345, 965, 200, 40)
+START_BUTTON_BOX = (1590, 965, 200, 40)
+BUTTON_LIT_SHARE = 0.75
+PAGE_WHITE_FLOOR = 176.0
 
 # Walking up (W): one hold at a time, each followed by a look.  From the
 # spawn the altar is a few seconds up; the cap only ends a walk that can
@@ -118,6 +139,8 @@ BATTLE_BUTTON_ROI = (885, 778, 315, 56)
 BATTLE_BUTTON_POINT = (1042, 806)
 BATTLE_KEYWORDS = ("战斗", "戰鬥")
 MAX_POINT = (1169, 543)
+# The 「-」 next to the count (one battle less); changes only the count.
+MINUS_POINT = (698, 611)
 DIALOG_CANCEL_POINT = (804, 805)
 # The 「攻略完毕」 result screen (Leo's 2K frame, 10-21): 「点击画面继续」 at
 # the bottom; Leo 「點空白處就好」.  The blank spot is the floor bottom left.
@@ -190,25 +213,78 @@ def find_castle_marker(frame_1080: np.ndarray) -> tuple[int, int] | None:
 _tick_cache: list = []
 
 
-def level_ticks(frame_1080: np.ndarray) -> int:
-    """How many level rows carry a ✓ on the 救赎之塔 page."""
+def level_tick_points(frame_1080: np.ndarray) -> list[tuple[int, int]]:
+    """The ✓ of each cleared level row on the 救赎之塔 page, top to bottom
+    (top left of each match, 1080 reference)."""
     if not _tick_cache:
         tick = image_io.read(LEVEL_TICK_TEMPLATE, cv2.IMREAD_GRAYSCALE)
         if tick is None:
-            return 0
+            return []
         _tick_cache.append(tick)
     tick = _tick_cache[0]
     x, y, w, h = LEVEL_LIST_ROI
     grey = cv2.cvtColor(frame_1080[y : y + h, x : x + w, :3], cv2.COLOR_BGR2GRAY)
     response = np.nan_to_num(template_match_response(grey, tick, zero_mean=True), nan=-1.0)
-    found = 0
+    found = []
     for _row in range(12):
         _low, score, _where, (px, py) = cv2.minMaxLoc(response)
         if score < LEVEL_TICK_MIN_SCORE:
             break
-        found += 1
+        found.append((x + px, y + py))
         response[max(0, py - 30) : py + 30, max(0, px - 30) : px + 30] = -1.0
-    return found
+    return sorted(found, key=lambda point: point[1])
+
+
+def level_ticks(frame_1080: np.ndarray) -> int:
+    """How many level rows carry a ✓ on the 救赎之塔 page."""
+    return len(level_tick_points(frame_1080))
+
+
+def level_of_row(tick_y: int) -> int:
+    """The level number of the row whose ✓ is at ``tick_y``."""
+    return max(1, round((tick_y - LEVEL_FIRST_TICK_Y) / LEVEL_ROW_PITCH) + 1)
+
+
+def highest_cleared(frame_1080: np.ndarray) -> tuple[int, tuple[int, int]] | None:
+    """The lowest row with a ✓ (the highest cleared level) and where to click it."""
+    points = level_tick_points(frame_1080)
+    if not points:
+        return None
+    x, y = points[-1]
+    return level_of_row(y), (x + LEVEL_LABEL_DX, y + LEVEL_LABEL_DY)
+
+
+def parse_level(text: str) -> int | None:
+    """The big badge 「LV 10」 / 「10」 → 10."""
+    numbers = re.findall(r"\d+", normalize_ocr_text(text or ""))
+    if not numbers:
+        return None
+    value = int(numbers[-1])
+    return value if 1 <= value <= 99 else None
+
+
+def _box_value(frame_1080: np.ndarray, box) -> float:
+    x, y, w, h = box
+    value = frame_1080[y : y + h, x : x + w, :3].max(axis=2)
+    return float(np.median(value)) if value.size else 0.0
+
+
+def quick_battle_lit(frame_1080: np.ndarray) -> bool:
+    """快速战斗 is lit (not greyed): as bright as the page's white, or as
+    the 开始挑战 button beside it while that one is lit."""
+    value = frame_1080[::4, ::4, :3].max(axis=2)
+    white = max(float(np.percentile(value, 99)), PAGE_WHITE_FLOOR)
+    quick = _box_value(frame_1080, QUICK_BUTTON_BOX)
+    start = _box_value(frame_1080, START_BUTTON_BOX)
+    if quick >= BUTTON_LIT_SHARE * white:
+        return True
+    return start >= BUTTON_LIT_SHARE * white and quick >= BUTTON_LIT_SHARE * start
+
+
+def swept_note(level: int | None, count: int | None) -> str:
+    """The report line (Leo 2026-11-13 「已掃蕩救贖之塔LV7 9場」)."""
+    where = f"救赎之塔LV{level}" if level else "救赎之塔"
+    return f"已扫荡{where} {count}场" if count else f"已扫荡{where}"
 
 
 def marker_red_ratio(patch: np.ndarray, mask: np.ndarray) -> float:
@@ -548,32 +624,42 @@ class RedemptionTowerTask(CartridgeFieldTask):
             self.log_info(f"{LABEL}：钥匙 0/10，今天不用打了。")
             return True
 
-        self.info_set("当前阶段", "快速战斗")
-        quick = self._box_with(
-            self._reference_boxes(self.capture_frame(), QUICK_BATTLE_ROI, "快速战斗"),
-            QUICK_BATTLE_KEYWORDS,
-        )
-        point = (
-            (round(quick.x + quick.width / 2), round(quick.y + quick.height / 2))
-            if quick
-            else QUICK_BATTLE_POINT
-        )
-        if not self.press_and_confirm(
-            f"{LABEL}「快速战斗」",
-            lambda: self._click_reference(*point, after_sleep=1.0),
-            lambda: self._dialog_visible(self.capture_frame()),
-            still_before=lambda: not self._dialog_visible(self.capture_frame()),
-            timeout=4.0,
-        ):
-            self._note_why("点了快速战斗没有出现场数窗口")
+        picked = self._pick_level()
+        if picked is None:
             return False
+        level, top = picked
+        if not self._open_dialog():
+            # Read lit but the press opened nothing: greyed after all (a
+            # misread); the highest cleared level is picked and tried once more.
+            if not top or quick_battle_lit(self._reference(self.capture_frame())):
+                return False
+            self.log_info(f"{LABEL}：快速战斗按了没反应，它是灰的，改选已通关的最高难度。")
+            picked = self._pick_level(force_lower=True)
+            if picked is None:
+                return False
+            level, top = picked
+            if not self._open_dialog():  # 有备案：这已是改选已通关难度后的第二次
+                return False
 
-        # Leo 2026-10-21 「就直接max 不管那麼多 不用對數字」「目標是完成任務」:
-        # MAX, then 战斗; the game itself caps MAX at the keys there are.
+        # Leo 2026-10-21 「就直接max」; 2026-11-13: on the top level MAX, on a
+        # lower (already cleared) level MAX-1 (「快速打(MAX-1)場」).
         self.info_set("当前阶段", "场数 MAX")
-        self._click_reference(*MAX_POINT, after_sleep=0.8)  # 不用确认：MAX 只改场数
+        self._click_reference(*MAX_POINT, after_sleep=0.8)  # 不用确认：下面读场数
+        count = self._dialog_count()
+        if not top:
+            count = self._one_less(count)
+            if count is None:
+                self._cancel_dialog()
+                return False
+            if count == 0:
+                note = f"救赎之塔只剩 1 把钥匙，留着打 LV{level} 以上，今天没扫荡"
+                self.log_info(f"{LABEL}：{note}。")
+                self._cancel_dialog()
+                self.done_already(note)
+                return True
         if bool(self.config.get(DRY_RUN_KEY, False)):
-            self.log_info(f"{LABEL}：试跑，已按 MAX，不按战斗，取消。")
+            self.save_frame("redemption_tower_dry_run_count", self.capture_frame())
+            self.log_info(f"{LABEL}：试跑，LV{level} 场数已设为 {count}，不按战斗，取消。")
             self._cancel_dialog()
             return True
 
@@ -590,7 +676,7 @@ class RedemptionTowerTask(CartridgeFieldTask):
         else:
             self._note_why("场数窗口不见了，没按战斗")
             return False
-        self.info_set("当前阶段", "战斗 MAX")
+        self.info_set("当前阶段", f"战斗 LV{level} {count or 'MAX'}场")
         # Spends keys: pressed once, never again (retries=0).
         if not self.press_and_confirm(
             f"{LABEL}「战斗」",
@@ -603,7 +689,121 @@ class RedemptionTowerTask(CartridgeFieldTask):
             if self._dialog_visible(self.capture_frame()):
                 self._cancel_dialog()
             return False
-        return self._after_battle()
+        if not self._after_battle():
+            return False
+        note = swept_note(level, count)
+        self.log_info(f"{LABEL}：{note}。")
+        run_report.add_current_note(note)
+        return True
+
+    # -- which level -----------------------------------------------------------------
+
+    def _badge_level(self) -> int | None:
+        """The big 「LV N」 badge at the top of the conditions."""
+        return parse_level(self._text_in(self.capture_frame(), LEVEL_BADGE_ROI, "救赎之塔难度"))
+
+    def _pick_level(self, force_lower: bool = False) -> tuple[int, bool] | None:
+        """(level, top): the level the page opened on when its 快速战斗 is
+        lit (cleared this season), else the highest level with a ✓ picked
+        (Leo 2026-11-13 「沒亮的話，就選擇已通關的最高難度」).  None: no
+        lit level could be picked (why noted)."""
+        frame = self._reference(self.capture_frame())
+        lowest = highest_cleared(frame)
+        if not force_lower and quick_battle_lit(frame):
+            level = self._badge_level() or (lowest[0] if lowest else None)
+            self.log_info(f"{LABEL}：LV{level} 快速战斗是亮的，扫荡 MAX 场。")
+            return level, True
+        if lowest is None:
+            self._note_why("快速战斗是灰的，左边也没找到打过的关卡")
+            return None
+        level, point = lowest
+        opened_on = self._badge_level()
+        self.log_info(
+            f"{LABEL}：LV{opened_on or '?'} 快速战斗是灰的（这一期还没通关），"
+            f"改选已通关的最高难度 LV{level}。"
+        )
+        if opened_on == level:
+            self._note_why(f"LV{level} 有勾但快速战斗还是灰的")
+            return None
+        self.info_set("当前阶段", f"选择 LV{level}")
+
+        def picked() -> bool:
+            shown = self._reference(self.capture_frame())
+            return quick_battle_lit(shown) and self._badge_level() in (level, None)
+
+        # Picking a row only changes the page shown: a second press is harmless.
+        if not self.press_and_confirm(
+            f"{LABEL} LV{level}",
+            lambda: self._click_reference(*point, after_sleep=0.8),
+            picked,
+            timeout=3.0,
+        ):
+            self._save_flow_diagnostic("redemption_tower_level_pick_failed")
+            self._note_why(f"点了 LV{level} 后快速战斗还是灰的")
+            return None
+        return (self._badge_level() or level), False
+
+    # -- the dialog ------------------------------------------------------------------
+
+    def _open_dialog(self) -> bool:
+        self.info_set("当前阶段", "快速战斗")
+        quick = self._box_with(
+            self._reference_boxes(self.capture_frame(), QUICK_BATTLE_ROI, "快速战斗"),
+            QUICK_BATTLE_KEYWORDS,
+        )
+        point = (
+            (round(quick.x + quick.width / 2), round(quick.y + quick.height / 2))
+            if quick
+            else QUICK_BATTLE_POINT
+        )
+        if self.press_and_confirm(
+            f"{LABEL}「快速战斗」",
+            lambda: self._click_reference(*point, after_sleep=1.0),
+            lambda: self._dialog_visible(self.capture_frame()),
+            still_before=lambda: not self._dialog_visible(self.capture_frame()),
+            timeout=4.0,
+        ):
+            return True
+        self._note_why("点了快速战斗没有出现场数窗口")
+        return False
+
+    def _dialog_count(self) -> int | None:
+        """「战斗N次奖励」 read the same on two looks; None when unread."""
+
+        def read() -> int | None:
+            return parse_reward_count(
+                self._text_in(self.capture_frame(), REWARD_LINE_ROI, "快速战斗奖励")
+            )
+
+        for _attempt in range(3):
+            first = read()
+            self.sleep(0.3)
+            second = read()
+            if first is not None and first == second:
+                return first
+        return None
+
+    def _one_less(self, count: int | None) -> int | None:
+        """MAX-1: one 「-」 after MAX, the count read back.  None: the count
+        could not be set or read (why noted, 战斗 not pressed: it spends keys)."""
+        if count is None:
+            self._save_flow_diagnostic("redemption_tower_count_unread")
+            self._note_why("场数窗口里读不到场数，没按战斗")
+            return None
+        if count <= 1:
+            return 0
+        wanted = count - 1
+        self.info_set("当前阶段", f"场数 {wanted}")
+        for _attempt in range(2):
+            self._click_reference(*MINUS_POINT, after_sleep=0.6)  # 不用确认：「-」只改场数，下面读回来
+            now = self._dialog_count()
+            if now == wanted:
+                return wanted
+            if now is not None and now < wanted:
+                break
+        self._save_flow_diagnostic("redemption_tower_minus_failed")
+        self._note_why(f"场数没能从 {count} 改成 {wanted}，没按战斗")
+        return None
 
     def _after_battle(self) -> bool:
         """Tap the 「攻略完毕」 screen away until the 救赎之塔 page is back.

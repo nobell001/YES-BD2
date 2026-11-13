@@ -31,6 +31,7 @@ from src.tasks.RewardClaimTasks import _ClaimTaskBase
 from src.utils import image_io
 from src.utils.chinese import to_simplified
 from src.utils.image_utils import template_match_response
+from src.utils.known_popups import OVERLAY_DISMISS_KEYWORDS, REWARD_DIALOG_TITLES
 from src.utils.ocr_utils import normalize_ocr_text
 from src.utils.press_confirm import wait_for
 
@@ -64,6 +65,10 @@ SPUN_PATTERN = re.compile(r"参与(\d+)次")
 # animation.  Wait until the panel stands still (two calm looks in a row),
 # at most the 10 s stuck limit.  A still page moves ≤0.11 (blinking lights,
 # 4K 11-07); a wheel turning 0.5° in half a second already moves about 1.
+# The reward box itself is the second cue (Leo 10-10: never wait on once
+# a cue is read): its sparkles keep the panel moving 3-7 (4K 繁中 11-11),
+# so stillness alone always ran the full 10 s after the box was already up.
+SPIN_REWARD_WORDS = OVERLAY_DISMISS_KEYWORDS + REWARD_DIALOG_TITLES
 SPIN_STILL_MAX_DIFF = 1.0
 SPIN_STILL_LOOKS = 2
 SPIN_WAIT_SECONDS = 10.0
@@ -526,11 +531,17 @@ class EventRewardTask(_ClaimTaskBase):
         return True
 
     def _wait_spin_stop(self, label: str) -> None:
-        """Wait for the wheel to stop before the reward box is looked for."""
+        """Wait for the wheel to stop before the reward box is looked for.
+
+        Stopped = the reward box is on screen, or the panel stood still twice
+        in a row (whichever comes first)."""
         state = {"last": panel_view(self.capture_frame()), "calm": 0}
 
         def stopped() -> bool:
-            view = panel_view(self.capture_frame())
+            frame = self.capture_frame()
+            if self._spin_reward_shown(frame, label):
+                return True
+            view = panel_view(frame)
             last = state["last"]
             if last is not None and view is not None:
                 self.info_set("转盘画面变化", f"{float(np.abs(last - view).mean()):.1f}")
@@ -542,6 +553,14 @@ class EventRewardTask(_ClaimTaskBase):
         self.sleep(SPIN_LOOK_SECONDS)
         if not wait_for(stopped, SPIN_WAIT_SECONDS, sleep=self.sleep, poll=SPIN_LOOK_SECONDS):
             self.log_info(f"活动「{label}」：转盘 {SPIN_WAIT_SECONDS:.0f} 秒还在动，先往下看奖励。")
+
+    def _spin_reward_shown(self, frame, label: str) -> bool:
+        """The spin's reward box (「點擊畫面即可返回」 / 獲得獎勵) is up."""
+        text = " ".join(_box_text(box) for box in self._roi_boxes(frame, None, f"{label}转完"))
+        if not any(normalize_ocr_text(word) in text for word in SPIN_REWARD_WORDS):
+            return False
+        self.info_set("转盘停止", "看到奖励视窗")
+        return True
 
     def _spin_did_nothing(self, before: tuple, label: str, word: str) -> bool:
         """True when a spin changed neither the token count nor 累积参与N次.

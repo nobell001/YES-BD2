@@ -39,7 +39,8 @@ def _converter(profile: str = "s2twp"):
 
 # Taiwan words OpenCC's s2twp gets wrong (GitHub issue #4's 账号 came out as
 # 賬號, live 2026-10-09).
-TAIWAN_FIXES = (("賬號", "帳號"), ("賬戶", "帳戶"))
+# 全屏 stays 全屏 in s2twp; Taiwan says 全螢幕 (2K live check 2026-11-13).
+TAIWAN_FIXES = (("賬號", "帳號"), ("賬戶", "帳戶"), ("全屏", "全螢幕"))
 
 
 @lru_cache(maxsize=4096)

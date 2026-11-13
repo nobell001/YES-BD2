@@ -61,7 +61,13 @@ from src.ui.traditional import ui_text
 
 def t(text: str) -> str:
     """Display text (Traditional Chinese when the app language asks for it)."""
-    return ui_text(text)
+    shown = ui_text(text)
+    if shown == text and text:
+        # A report note with numbers in it (note_templates).
+        from src.ui.note_templates import translate
+
+        return translate(text, ui_text) or shown
+    return shown
 
 
 def tf(template: str, **values) -> str:

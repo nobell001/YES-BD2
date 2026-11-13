@@ -3,8 +3,10 @@
 The picture is what the author reads first: the run, where it stopped and
 why, the game window and screen, the last log lines, a few small frames of
 the seconds before, and the game frame of that moment.  It always uses the light colours, whatever the app's look, so
-every player's picture reads the same, and Simplified Chinese, whatever the
-tool's language, since it is for the author.  The text is four short lines for
+every player's picture reads the same.  It is Simplified Chinese, except for a
+player who reads Traditional: then every word of it (titles, step names, log
+lines, the copied text, the file names) is Traditional (Leo 2026-11-12, YES-BD2
+#82: a 繁中 game got a 简体 summary).  See ``traditional``.  The text is four short lines for
 places that take no pictures (Leo: 「不要一大串 只複製重要的」).
 """
 
@@ -19,6 +21,8 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QGuiApplication, QImage,
 
 from src.tasks import problem_report
 from src.ui.shell import theme
+from src.ui.traditional import _locale_name, is_traditional, to_traditional
+from src.utils import game_language
 
 ICON_FILE = Path(__file__).resolve().parents[3] / "icons" / "icon.png"
 SUPPORTED = ((1920, 1080), (2560, 1440), (3840, 2160))
@@ -46,9 +50,42 @@ WARN_SOFT = QColor("#FAF0D7")
 
 
 def t(text: str) -> str:
-    """The picture and text are for the author: always Simplified Chinese,
-    whatever language the player's tool shows (the log lines are too)."""
+    """Texts are written in Simplified Chinese; ``in_language`` turns the
+    finished picture or text into Traditional for a Traditional player."""
     return text
+
+
+def traditional(record: dict) -> bool:
+    """Whether this player reads Traditional Chinese.  Any one cue is enough:
+    the run saw the 繁中 game client, the tool's language was set to 繁體中文,
+    the tool shows Traditional now (its language or Windows'), or this
+    session saw the 繁中 client (a run that failed before home was read)."""
+    env = problem_report.env_of(record)
+    if env.get("game_language") == game_language.TRADITIONAL_LABEL:
+        return True
+    if is_traditional_label(env.get("ui_language")):
+        return True
+    if tool_shows_traditional():
+        return True
+    return game_language.client_is_traditional()
+
+
+def is_traditional_label(label) -> bool:
+    return str(label or "") in {"繁體中文", "繁体中文"}
+
+
+def tool_shows_traditional() -> bool:
+    try:
+        from ok import og
+
+        return is_traditional(_locale_name(getattr(og, "app", None)))
+    except Exception:
+        return False
+
+
+def in_language(record: dict, text: str) -> str:
+    """The whole text in the player's script (Traditional or as written)."""
+    return to_traditional(text) if text and traditional(record) else text
 
 
 def tf(template: str, **values) -> str:
@@ -172,12 +209,12 @@ def summary_text(record: dict) -> str:
     dispatch = record.get("dispatch") or {}
     if dispatch.get("text"):
         lines.append(tf("派遣：{text}", text=dispatch["text"]))
-    return "\n".join(lines)
+    return in_language(record, "\n".join(lines))
 
 
 def file_name(record: dict) -> str:
     moment = _local(float(record.get("finished") or time.time()))
-    return f"YES-BD2-{t('问题')}-{moment:%m-%d-%H%M}.png"
+    return in_language(record, f"YES-BD2-{t('问题')}-{moment:%m-%d-%H%M}.png")
 
 
 # ---------------------------------------------------------------- picture
@@ -186,10 +223,15 @@ def file_name(record: dict) -> str:
 class _Pen:
     """Lays out and paints top to bottom; run once to measure, once to paint."""
 
-    def __init__(self, painter: QPainter | None, family: list[str]):
+    def __init__(self, painter: QPainter | None, family: list[str], traditional: bool = False):
         self.p = painter
         self.family = family
         self.y = 0.0
+        self.traditional = traditional
+
+    def say(self, text: str) -> str:
+        """Every word drawn goes through here: Traditional for such a player."""
+        return to_traditional(text) if self.traditional and text else text
 
     def font(self, size: float, bold: bool = False, mono: bool = False) -> QFont:
         font = QFont()
@@ -204,10 +246,12 @@ class _Pen:
 
     def text_height(self, text: str, font: QFont, width: float) -> float:
         metrics = QFontMetricsF(font)
+        text = self.say(text)  # measured as it will be drawn
         rect = metrics.boundingRect(QRectF(0, 0, width, 100000), Qt.TextWordWrap, text)
         return max(metrics.height(), rect.height())
 
     def text(self, x, y, width, text, font, colour, align=Qt.AlignLeft) -> float:
+        text = self.say(text)
         height = self.text_height(text, font, width)
         if self.p is not None:
             self.p.setFont(font)
@@ -239,7 +283,7 @@ def _paint(pen: _Pen, record: dict, frame, before=()) -> float:
     finished = float(record.get("finished") or time.time())
     sub = " · ".join(p for p in (version_text(env), f"{_local(finished):%Y-%m-%d %H:%M}") if p)
     pen.text(title_x, y + 26, 400, sub, pen.font(13), INK3)
-    state = ended_text(record)
+    state = pen.say(ended_text(record))
     bad = record.get("ended") != problem_report.DONE
     state_font = pen.font(15)
     state_width = QFontMetricsF(state_font).horizontalAdvance(state) + 28
@@ -341,7 +385,7 @@ def _paint(pen: _Pen, record: dict, frame, before=()) -> float:
 
 def _card(pen: _Pen, y: float, inner: float, body) -> float:
     """A white card around ``body(pen, top) -> height``, measured before painting."""
-    height = body(_Pen(None, pen.family), y + CARD_PAD)
+    height = body(_Pen(None, pen.family, pen.traditional), y + CARD_PAD)
     pen.round_rect(QRectF(PAD, y, inner, height + 2 * CARD_PAD), CARD, 14)
     if pen.p is not None:
         body(pen, y + CARD_PAD)
@@ -460,7 +504,8 @@ def render(record: dict) -> QImage:
         if item.get("path")
     ]
     family = _family()
-    height = _paint(_Pen(None, family), record, frame, before)
+    trad = traditional(record)
+    height = _paint(_Pen(None, family, trad), record, frame, before)
     image = QImage(round(WIDTH * SCALE), round(height * SCALE), QImage.Format_RGB32)
     image.fill(GROUND)
     painter = QPainter(image)
@@ -468,7 +513,7 @@ def render(record: dict) -> QImage:
     painter.setRenderHint(QPainter.TextAntialiasing)
     painter.setRenderHint(QPainter.SmoothPixmapTransform)
     painter.scale(SCALE, SCALE)
-    _paint(_Pen(painter, family), record, frame, before)
+    _paint(_Pen(painter, family, trad), record, frame, before)
     painter.end()
     return image
 
@@ -486,7 +531,7 @@ def copy_text(record: dict) -> None:
 
 def full_log_name(record: dict) -> str:
     moment = _local(float(record.get("finished") or time.time()))
-    return f"YES-BD2-{t('完整记录')}-{moment:%m-%d-%H%M}.txt"
+    return in_language(record, f"YES-BD2-{t('完整记录')}-{moment:%m-%d-%H%M}.txt")
 
 
 def full_log_text(record: dict) -> str | None:
@@ -510,7 +555,9 @@ def full_log_text(record: dict) -> str | None:
             + [f"{_local(float(r.get('at') or 0)):%H:%M:%S}  {r.get('key')}：{r.get('text')}" for r in reads]
         ))
     parts.append(t("完整记录（! = 警告）") + "\n" + log.rstrip("\n"))
-    return "\n\n".join(parts) + "\n"
+    text = "\n\n".join(parts) + "\n"
+    # The whole log is too big for to_traditional's cache: convert it once.
+    return to_traditional.__wrapped__(text) if traditional(record) else text
 
 
 def save_full_log(record: dict, folder: Path | None = None) -> Path | None:

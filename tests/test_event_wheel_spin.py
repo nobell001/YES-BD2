@@ -129,9 +129,18 @@ class SpinPressTest(unittest.TestCase):
 
 
 class WaitSpinStopTest(unittest.TestCase):
-    def _task(self, frames):
+    def _task(self, frames, reward_from=None):
         task = object.__new__(EventRewardTask)
         looks = []
+        dismiss = _box("點擊畫面即可返回。", 860, 980, 200, 30)
+
+        def boxes(*_a, **_k):
+            # The reward box comes up from look ``reward_from`` on.
+            if reward_from is not None and len(looks) >= reward_from:
+                return [_box("REWARD", 900, 200), dismiss]
+            return []
+
+        task._roi_boxes = boxes
 
         def capture():
             looks.append(1)
@@ -156,6 +165,24 @@ class WaitSpinStopTest(unittest.TestCase):
         task, looks = self._task([still])
         task._wait_spin_stop("转盘")
         self.assertEqual(len(looks), 3)
+
+    def test_reward_box_ends_the_wait_while_sparkles_move(self):
+        # 4K 繁中 11-11: the box's sparkles kept the panel moving 3-7, so the
+        # stillness check alone always ran the full 10 s.
+        rng = np.random.default_rng(7)
+        sparkling = [rng.integers(0, 255, (1080, 1920, 3), dtype=np.uint8) for _ in range(30)]
+        task, looks = self._task(sparkling, reward_from=4)
+        task._wait_spin_stop("转盘")
+        self.assertEqual(len(looks), 4)
+
+    def test_task_line_alone_does_not_end_the_wait(self):
+        rng = np.random.default_rng(9)
+        turning = [rng.integers(0, 255, (1080, 1920, 3), dtype=np.uint8) for _ in range(4)]
+        still = np.full((1080, 1920, 3), 90, np.uint8)
+        task, looks = self._task(turning + [still])
+        task._roi_boxes = lambda *_a, **_k: [_box("转盘旋转1次", 1100, 400, 300)]
+        task._wait_spin_stop("转盘")
+        self.assertEqual(len(looks), 7)
 
 
 if __name__ == "__main__":

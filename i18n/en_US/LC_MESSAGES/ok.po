@@ -3742,3 +3742,12 @@ msgstr "Dispatch: no \"!\" seen, pressed F once anyway"
 
 msgid "派遣：没看到「!」"
 msgstr "Dispatch: no \"!\" seen"
+
+msgid "已扫荡救赎之塔LV{lv} {n}场"
+msgstr "Swept Tower of Redemption LV{lv} ×{n}"
+
+msgid "已扫荡救赎之塔LV{lv}"
+msgstr "Swept Tower of Redemption LV{lv}"
+
+msgid "救赎之塔只剩 1 把钥匙，留着打 LV{lv} 以上，今天没扫荡"
+msgstr "Only 1 Tower of Redemption key left, kept for LV{lv} or higher: no sweep today"

@@ -20,12 +20,17 @@ from src.tasks.RedemptionTowerTask import (
     DRY_RUN_KEY,
     FALLBACK_TEST_KEY,
     MAX_POINT,
+    MINUS_POINT,
     SETTLING_NOTE,
     RedemptionTowerTask,
     find_castle_marker,
+    highest_cleared,
     keys_empty,
     level_ticks,
+    parse_level,
     parse_reward_count,
+    quick_battle_lit,
+    swept_note,
 )
 
 MODULE = "src.tasks.RedemptionTowerTask"
@@ -235,6 +240,9 @@ class QuickBattleTest(unittest.TestCase):
         task._click_reference = mock.Mock()
         task._cancel_dialog = mock.Mock()
         task._after_battle = mock.Mock(return_value=True)
+        task._pick_level = lambda **k: (10, True)
+        task._dialog_count = lambda: 10
+        task.save_frame = lambda *a: None
         task.sleep = lambda *_: None
         task.info_set = lambda *a: None
         task.log_info = lambda *a, **k: None
@@ -297,6 +305,173 @@ class QuickBattleTest(unittest.TestCase):
         with mock.patch("src.tasks.RedemptionTowerTask.level_ticks", return_value=0):
             self.assertTrue(task._quick_battle())
         task.press_and_confirm.assert_not_called()
+
+
+class GreyedTopLevelTest(unittest.TestCase):
+    """Leo 2026-11-13 (繁中 2K, new season): LV10 not cleared yet, so its
+    快速战斗 is greyed; LV1-7 have ✓.  The tool pressed the grey button twice
+    and failed with 「点了快速战斗没有出现场数窗口」.  Now: lit → MAX on the
+    top level; greyed → the highest ✓ level, MAX-1, report
+    「已扫荡救赎之塔LV7 9场」."""
+
+    def test_leos_frame_greyed_and_lv7_is_the_highest_cleared(self):
+        frame = load("tower_page_lv10_grey_tw_2k.jpg")
+        self.assertFalse(quick_battle_lit(frame))
+        level, (x, y) = highest_cleared(frame)
+        self.assertEqual(7, level)
+        # The click lands on the LV.7 row (its label, left of the ✓).
+        self.assertTrue(230 <= x <= 330 and 715 <= y <= 775, (x, y))
+
+    def test_cleared_top_level_is_lit(self):
+        frame = load("tower_page_ticks_2k.jpg")
+        self.assertTrue(quick_battle_lit(frame))
+        self.assertEqual(10, highest_cleared(frame)[0])
+
+    def test_lit_needs_the_button_not_the_page(self):
+        # Pages without the tower buttons are not lit (the check is only used
+        # on the tower page, but must not say lit on a dark page).
+        self.assertFalse(quick_battle_lit(load("castle_page_2k.jpg")))
+        self.assertFalse(quick_battle_lit(np.zeros((1080, 1920, 3), np.uint8)))
+
+    def test_badge_and_note(self):
+        self.assertEqual(10, parse_level("LV 10"))
+        self.assertEqual(7, parse_level("7"))
+        self.assertIsNone(parse_level("LV"))
+        self.assertEqual("已扫荡救赎之塔LV7 9场", swept_note(7, 9))
+        self.assertEqual("已扫荡救赎之塔LV10", swept_note(10, None))
+
+    def task(self, counts, picked=(7, False)):
+        task = RedemptionTowerTask(SimpleNamespace(scene=None), SimpleNamespace(debug=False))
+        task.config = {DRY_RUN_KEY: False}
+        task._open_tower = lambda: True
+        task._no_keys_left = lambda: False
+        task.look_again = lambda look, *a, **k: look()
+        ticks = mock.patch(f"{MODULE}.level_ticks", return_value=7)
+        ticks.start()
+        self.addCleanup(ticks.stop)
+        task.capture_frame = lambda: np.zeros((1080, 1920, 3), np.uint8)
+        task._reference_boxes = lambda *a: [
+            SimpleNamespace(name="战斗", x=1000, y=790, width=60, height=30)
+        ]
+        task._dialog_visible = lambda frame: True
+        task.press_and_confirm = mock.Mock(return_value=True)
+        task._click_reference = mock.Mock()
+        task._cancel_dialog = mock.Mock()
+        task._after_battle = mock.Mock(return_value=True)
+        task._pick_level = mock.Mock(return_value=picked)
+        counts = iter(counts)
+        task._dialog_count = lambda: next(counts)
+        task._save_flow_diagnostic = lambda *a: None
+        task.save_frame = lambda *a: None
+        task.sleep = lambda *_: None
+        task.info_set = lambda *a: None
+        task.log_info = lambda *a, **k: None
+        task.done_already_note = ""
+        notes = mock.patch(f"{MODULE}.run_report.add_current_note")
+        self.note = notes.start()
+        self.addCleanup(notes.stop)
+        return task
+
+    def test_lower_level_max_minus_one_and_report(self):
+        task = self.task([10, 9])
+        self.assertTrue(task._quick_battle())
+        task._click_reference.assert_any_call(*MAX_POINT, after_sleep=mock.ANY)
+        task._click_reference.assert_any_call(*MINUS_POINT, after_sleep=mock.ANY)
+        self.assertEqual(2, task.press_and_confirm.call_count)  # 快速战斗, 战斗
+        task._after_battle.assert_called_once_with()
+        self.note.assert_called_once_with("已扫荡救赎之塔LV7 9场")
+
+    def test_top_level_max_no_minus(self):
+        task = self.task([10], picked=(10, True))
+        self.assertTrue(task._quick_battle())
+        self.assertNotIn(
+            mock.call(*MINUS_POINT, after_sleep=mock.ANY), task._click_reference.call_args_list
+        )
+        self.note.assert_called_once_with("已扫荡救赎之塔LV10 10场")
+
+    def test_minus_not_taken_twice_never_fights(self):
+        task = self.task([10, 10, 10])
+        self.assertFalse(task._quick_battle())
+        self.assertEqual(1, task.press_and_confirm.call_count)  # 快速战斗 only
+        task._cancel_dialog.assert_called_once()
+        task._after_battle.assert_not_called()
+
+    def test_minus_taken_on_the_second_press(self):
+        task = self.task([10, 10, 9])
+        self.assertTrue(task._quick_battle())
+        self.note.assert_called_once_with("已扫荡救赎之塔LV7 9场")
+
+    def test_unread_count_on_a_lower_level_never_fights(self):
+        task = self.task([None])
+        self.assertFalse(task._quick_battle())
+        self.assertEqual(1, task.press_and_confirm.call_count)
+        task._after_battle.assert_not_called()
+
+    def test_one_key_on_a_lower_level_is_kept(self):
+        task = self.task([1])
+        self.assertTrue(task._quick_battle())
+        self.assertEqual(1, task.press_and_confirm.call_count)
+        task._cancel_dialog.assert_called_once()
+        self.assertIn("1 把钥匙", task.done_already_note)
+
+    def test_no_lit_level_fails_with_its_reason_and_no_press(self):
+        task = self.task([10])
+        task._pick_level = mock.Mock(return_value=None)
+        self.assertFalse(task._quick_battle())
+        task.press_and_confirm.assert_not_called()
+
+    def test_lit_misread_falls_back_to_the_highest_cleared(self):
+        task = self.task([10, 9], picked=(10, True))
+        task._pick_level = mock.Mock(side_effect=[(10, True), (7, False)])
+        opened = iter([False, True])
+        task._open_dialog = lambda: next(opened)
+        with mock.patch(f"{MODULE}.quick_battle_lit", return_value=False):
+            self.assertTrue(task._quick_battle())
+        task._pick_level.assert_called_with(force_lower=True)
+        self.note.assert_called_once_with("已扫荡救赎之塔LV7 9场")
+
+
+class PickLevelTest(unittest.TestCase):
+    """The row pick on Leo's real frame: LV.7 clicked, confirmed by the lit
+    button (the badge is read by OCR on the PC)."""
+
+    def task(self, frames, badge):
+        task = RedemptionTowerTask(SimpleNamespace(scene=None), SimpleNamespace(debug=False))
+        frames = iter(frames)
+        last = {}
+
+        def capture():
+            last["f"] = next(frames, last.get("f"))
+            return last["f"]
+
+        task.capture_frame = capture
+        task._badge_level = lambda: badge
+        task._click_reference = mock.Mock()
+        task.press_and_confirm = lambda label, press, confirmed, **k: (press(), confirmed())[1]
+        task._save_flow_diagnostic = lambda *a: None
+        task.info_set = lambda *a: None
+        task.log_info = lambda *a, **k: None
+        task._why = ""
+        return task
+
+    def test_greyed_top_picks_lv7(self):
+        grey = load("tower_page_lv10_grey_tw_2k.jpg")
+        lit = load("tower_page_ticks_2k.jpg")  # after the pick: 快速战斗 lit
+        task = self.task([grey, lit], badge=None)
+        self.assertEqual((7, False), task._pick_level())
+        x, y = task._click_reference.call_args.args
+        self.assertTrue(715 <= y <= 775, y)
+
+    def test_pick_that_stays_grey_fails(self):
+        grey = load("tower_page_lv10_grey_tw_2k.jpg")
+        task = self.task([grey], badge=None)
+        self.assertIsNone(task._pick_level())
+        self.assertIn("LV7", task._why)
+
+    def test_lit_top_stays(self):
+        task = self.task([load("tower_page_ticks_2k.jpg")], badge=10)
+        self.assertEqual((10, True), task._pick_level())
+        task._click_reference.assert_not_called()
 
 
 class SeasonSettlingTest(unittest.TestCase):
