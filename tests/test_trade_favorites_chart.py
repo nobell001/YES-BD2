@@ -36,6 +36,9 @@ class FavoritesChartDataTest(unittest.TestCase):
         self.assertEqual(chart_cells("S9"), [False] * 8)
         # 角色卡带 4: everything.
         self.assertEqual(chart_cells("R4"), [True] * 8)
+        # 活动卡带 2 and 5: seven goods, the fourth is left alone (Leo 2026-11-14).
+        self.assertEqual(chart_cells("E2"), [True, True, True, False, True, True, True])
+        self.assertEqual(chart_cells("E5"), [True, True, True, False, True, True, True])
         for code in SHOP_PRODUCT_COUNTS:
             self.assertEqual(len(chart_cells(code)), SHOP_PRODUCT_COUNTS[code])
 

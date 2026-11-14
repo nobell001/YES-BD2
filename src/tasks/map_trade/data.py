@@ -70,6 +70,8 @@ SHOP_UNFAVORITED_POINTS: dict[str, frozenset[int]] = {
 # like SHOP_FAVORITE_POINTS.  Counted on the same favourites chart the table
 # above follows; the 跑商 page draws its 收藏清单 (which cells to favourite)
 # from the two tables together.
+# Leo 2026-11-14: 活动卡带 2 and 5 sell seven goods (second row has three), not
+# eight: the chart drew a lit eighth cell that is not in the shop.
 SHOP_PRODUCT_COUNTS: dict[str, int] = {
     "S1": 7,
     "S2": 8,
@@ -98,9 +100,9 @@ SHOP_PRODUCT_COUNTS: dict[str, int] = {
     "R6": 11,
     "R7": 7,
     "E1": 7,
-    "E2": 8,
+    "E2": 7,
     "E3": 10,
-    "E5": 8,
+    "E5": 7,
     "E7": 8,
 }
 
