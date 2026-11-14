@@ -72,5 +72,18 @@
  "光圣石": "icon_resource114_18.png",
  "暗圣石": "icon_resource115_19.png",
  "进阶天赋技能书": "icon_resource906_50.png",
- "高级布料": "icon_resource411_43.png"
+ "高级布料": "icon_resource411_43.png",
+ "凯洛养身汤": "cook_kello_wellness_soup.png",
+ "藏红花甜茶": "cook_saffron_sweet_tea.png",
+ "水果冰沙": "cook_fruit_smoothie.png",
+ "巧克力面包": "cook_chocolate_bread.png",
+ "黑啤酒炖锅": "cook_dark_beer_stew.png",
+ "土豆汤": "cook_potato_soup.png",
+ "黄色史莱姆": "slime_yellow.png",
+ "蓝色史莱姆": "slime_blue.png",
+ "红色史莱姆": "slime_red.png",
+ "顶级招募契约书": "contract_top.png",
+ "高级招募契约书": "contract_high.png",
+ "普通招募契约书": "contract_normal.png",
+ "招募书": "contract_top.png"
 }

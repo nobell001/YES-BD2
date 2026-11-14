@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import replace
 from difflib import SequenceMatcher
@@ -11,9 +12,19 @@ import numpy as np
 
 from src.tasks import run_report
 from src.tasks.map_trade import trade_detail
+from src.tasks.map_trade.asset_keep import (
+    CONTRACT_ALIASES,
+    CONTRACT_SHOP,
+    CONTRACT_TIERS,
+    SLIME_ALIASES,
+    SLIME_SHOP,
+    contract_plan,
+    contract_recruits,
+    slime_keep_range,
+    slime_sale_plan,
+)
 from src.tasks.map_trade.calendar import (
     SALE_PRICE_REFRESH_HOUR,
-    parse_calendar_payload,
     sale_price_calendar_date,
 )
 from src.tasks.map_trade.data import (
@@ -22,6 +33,7 @@ from src.tasks.map_trade.data import (
     shop_purchase_reference,
 )
 from src.tasks.map_trade.models import (
+    KNOWN_SHOPS,
     CalendarEntry,
     ScreenState,
 )
@@ -29,11 +41,12 @@ from src.tasks.map_trade.phase_ledger import PhaseDeferred
 from src.tasks.map_trade.sale_days import (
     apply_sale_checklist,
     bundled_sale_days,
+    carry_checklists_over,
     describe_entry,
+    every_bundled_entry,
 )
 from src.tasks.map_trade.sold_today import SoldToday
 from src.tasks.map_trade.trader_constants import (
-    CALENDAR_DIR,
     OWNED_NAME_FUZZY_MIN_CHARS,
     OWNED_NAME_FUZZY_RATIO,
     SALE_120_PERCENT_MARKER_MAX_RESULTS,
@@ -42,12 +55,12 @@ from src.tasks.map_trade.trader_constants import (
     SALE_AVAILABLE_PATTERN,
     SALE_CANDIDATE_SETTLE_RETRIES,
     SALE_CANDIDATE_STILL_MIN,
-    SALE_CLOSE_POINT,
-    SALE_COMPLETION_INTERVAL,
     SALE_CARD_STOCK_BOTTOM_LINES,
     SALE_CARD_STOCK_LEFT_LINES,
     SALE_CARD_STOCK_RIGHT_SLACK_LINES,
     SALE_CARD_STOCK_TOP_LINES,
+    SALE_CLOSE_POINT,
+    SALE_COMPLETION_INTERVAL,
     SALE_COMPLETION_STABLE_HITS,
     SALE_COMPLETION_TIMEOUT,
     SALE_CONFIRM_POINT,
@@ -76,13 +89,20 @@ from src.tasks.map_trade.trader_constants import (
     SALE_MARKER_VERTICAL_PADDING,
     SALE_MAX_POINT,
     SALE_MIN_POINT,
+    SALE_MINUS_ONE_POINT,
+    SALE_MINUS_TEN_POINT,
     SALE_NAME_FRAGMENT_MIN_CHARS,
     SALE_OCR_INTERVAL,
+    SALE_ONE_UNIT_POINT,
     SALE_OWNED_PATTERN,
+    SALE_PLUS_ONE_POINT,
+    SALE_PLUS_TEN_POINT,
     SALE_RESERVE_ADJUST_ATTEMPTS,
     SALE_RESERVE_MIN_SLACK,
     SALE_RESERVE_SLACK_RATIO,
     SALE_SLIDER_REGION,
+    SALE_STEP_MAX_DELTA,
+    SALE_STEP_ROUNDS,
     SALE_TOAST_ID_PATTERN,
     SELL_MODE_POINT,
     SHOP_MODE_INTERVAL,
@@ -247,11 +267,19 @@ class SellFlowMixin:
     def _keep_owned_at_max_rate(self, entries: list[CalendarEntry]) -> list[CalendarEntry]:
         """Drop planned items the 价目表 does not show at ↑120% in the bag."""
 
+        # 史莱姆 / 招募契约书 are decided in their shop, from the sale dialog:
+        # the 价目表 misread their rows (frames 2026-11-10: 一般契約書 read as
+        # 「一」), and a misread there must not keep them from being sold.
+        all_assets = [entry for entry in entries if entry.asset]
+        assets = self._drop_sold_today(all_assets)
+        entries = [entry for entry in entries if not entry.asset]
+        if not entries:
+            return assets
         owned = self.owned_items_at_max_rate()
         if owned is None:
             # Unreadable list: search the shops as before, minus what this
             # price day already sold (YES-BD2 #60).
-            return self._drop_sold_today(entries)
+            return [*self._drop_sold_today(entries), *assets]
         owned_names = {self._normal(name) for name in owned}
         goods = self._known_goods(entries)
         exact_only = confusable_goods(goods)
@@ -266,10 +294,15 @@ class SellFlowMixin:
         if missing:
             self._status("价目表未见", "、".join(missing))
             self.task.log_info(f"卖：背包里没有今天120%的{'、'.join(missing)}，不去它们的商店。")
-        extra = sorted(name for name, owner in owners.items() if owner not in planned)
+        # The assets are on today's list too (live 4K 2026-11-10: the three
+        # slimes were logged as 「不卖」 and then sold).
+        listed = planned | {self._normal(entry.item) for entry in all_assets}
+        extra = sorted(
+            name for name, owner in owners.items() if owner not in listed and name not in listed
+        )
         if extra:
             self.task.log_info(f"卖：价目表另有120%但不在今日清单的：{'、'.join(extra)}（不卖）。")
-        return keep
+        return [*keep, *assets]
 
     def _sale_day_key(self) -> str:
         day = getattr(self, "_sale_calendar_date", None)
@@ -297,10 +330,7 @@ class SellFlowMixin:
         """Every good's names (bundled 价表, aliases, today's plan), so a
         价目表 name is matched against all goods, not only the planned ones."""
 
-        bundled = parse_calendar_payload(
-            (CALENDAR_DIR / "price_calendar.v1.json").read_text(encoding="utf-8")
-        )
-        sources = [item for items in bundled.days.values() for item in items]
+        sources = every_bundled_entry()
         sources.extend(CalendarEntry(item, "") for item in ITEM_ALIASES)
         sources.extend(self._sale_title_entries)
         sources.extend(entries)
@@ -380,6 +410,10 @@ class SellFlowMixin:
         try:
             market_now = self._current_market_time()
             calendar_date = sale_price_calendar_date(market_now)
+            # The game's 2026-11-19 update has its own bundled table.
+            pick_table = getattr(self.calendar_client, "use_table_for", None)
+            if callable(pick_table):
+                pick_table(calendar_date)
             calendar = self.calendar_client.load(
                 use_bundled=bool(
                     self.task.config.get("使用程序默认价表", True)
@@ -430,6 +464,12 @@ class SellFlowMixin:
                 allowed_entries.append(entry)
             entries = allowed_entries
         entries = self._apply_day_checklist(calendar_date.day, entries)
+        assets = self._asset_sale_entries(calendar_date.day)
+        if assets:
+            # Not on the price table: their own switch and keep amounts decide.
+            self._sale_title_entries = (*self._sale_title_entries, *assets)
+            self._sale_title_catalog_cache = None
+            return [*entries, *assets]
         if not entries:
             # Said on the report, so a run that sold nothing says why
             # (Leo 2026-10-28 「29 30 31 沒有東西賣 報表要寫清楚 例如 29號不販售」).
@@ -449,12 +489,157 @@ class SellFlowMixin:
 
         return entries
 
+    def _asset_sale_entries(self, day: int) -> list[CalendarEntry]:
+        """史莱姆 the player switched on, each with what must be left of it.
+
+        Leo 2026-11-10: an account asset, so nothing is sold unless the
+        player turned the switch on AND typed how many to keep; what is left
+        after the slider may be 5% under to 10% over that amount.
+        """
+
+        plan, skipped = slime_sale_plan(self.task.config, day)
+        for detail in skipped:
+            self.task.log_info(f"卖：{detail}，不卖。")
+            run_report.add_current_note(f"卖：{detail}，所以没卖")
+        entries = []
+        for item, keep in plan:
+            low, high = slime_keep_range(keep)
+            entries.append(
+                CalendarEntry(
+                    item=item,
+                    shop=KNOWN_SHOPS[SLIME_SHOP],
+                    aliases=SLIME_ALIASES.get(item, ()),
+                    reserve=keep,
+                    keep_low=low,
+                    keep_high=high,
+                    asset=True,
+                )
+            )
+            if keep == 0:
+                # The page warns 「填 0 代表全賣，請謹慎設置」 when 0 is typed.
+                self.task.log_info(f"卖：{item}保留数量填了0，全部卖出。")
+            else:
+                self.task.log_info(
+                    f"卖：{item}要留{keep}个（剩{low}～{high}个都算对），多的才卖。"
+                )
+        self._contract_recruits, why = contract_recruits(self.task.config, day)
+        self._contract_plan = None
+        if why:
+            self.task.log_info(f"卖：{why}，不卖。")
+            run_report.add_current_note(f"卖：{why}，所以没卖")
+        if self._contract_recruits is not None:
+            # How many of each tier is decided in the shop, after all three
+            # were counted (_planned_contract).
+            entries.extend(self._contract_entry(item) for item in CONTRACT_TIERS)
+            self.task.log_info(
+                f"卖：招募契约书要留到至少能招募{self._contract_recruits}个5星，"
+                "先数三种各有几本再决定卖哪些。"
+            )
+        return entries
+
+    @staticmethod
+    def _contract_entry(item: str) -> CalendarEntry:
+        return CalendarEntry(
+            item=item,
+            shop=KNOWN_SHOPS[CONTRACT_SHOP],
+            aliases=CONTRACT_ALIASES.get(item, ()),
+            asset=True,
+        )
+
+    def _planned_contract(self, entry: CalendarEntry) -> CalendarEntry | None:
+        """The tier with its exact keep amount; None when none of it is sold.
+
+        Leo 2026-11-10: keep enough to recruit N 5-star characters, the top
+        tier first, then the middle, then the lowest; when everything together
+        is worth fewer than N, not one book is sold.  All three tiers are
+        counted (and each count checked against MAX) before anything is sold.
+        """
+
+        if getattr(self, "_contract_plan", None) is None:
+            self._contract_plan = self._count_contracts_and_plan()
+        planned = self._contract_plan.get(entry.item)
+        if planned is None:
+            return None
+        owned, keep = planned
+        return replace(
+            entry, reserve=keep, keep_low=keep, keep_high=keep, expect_owned=owned
+        )
+
+    def _count_contracts_and_plan(self) -> dict[str, tuple[int, int]]:
+        recruits = int(getattr(self, "_contract_recruits", 0) or 0)
+        counted: dict[str, int] = {}
+        self._contract_counting = counted
+        try:
+            for item in CONTRACT_TIERS:
+                self._sell_entry_with_retry(self._contract_entry(item))
+                if getattr(self, "_sale_drag_refused", False) or self._sale_dialog_shown():
+                    # The list cannot be moved, or a dialog is still up: the
+                    # counts cannot be trusted, so no book is sold.
+                    self.task.log_warning("卖：招募契约书没能数完三种的数量，这次一本都不卖。")
+                    run_report.add_current_note("卖：招募契约书没能数完数量，所以没卖")
+                    return {}
+        finally:
+            self._contract_counting = None
+            self._last_sale_unavailable = False
+            self._last_sale_reason = ""
+        plan, owned, keep = contract_plan(counted, recruits)
+        unread = [item for item in CONTRACT_TIERS if item not in counted]
+        names = ("顶级", "高级", "普通")
+        counts = (owned.top, owned.middle, owned.low)
+        have = "、".join(
+            f"{name}{'没读到' if item in unread else f'{count}本'}"
+            for name, item, count in zip(names, CONTRACT_TIERS, counts)
+        )
+        if unread:
+            self.task.log_info(
+                f"卖：{'、'.join(unread)}没在出售列表里读到，当作0本，也不会卖它。"
+            )
+        if not plan:
+            short = owned.worth < recruits * 100
+            why = (
+                f"加起来不够招募{recruits}个5星，一本都不卖"
+                if short
+                else f"刚好够招募{recruits}个5星，没有多的可卖"
+            )
+            self.task.log_info(f"卖：招募契约书 {have}，{why}。")
+            run_report.add_current_note(f"卖：招募契约书（{have}）{why}")
+            return {}
+        stay = "、".join(
+            f"{name}{count}本"
+            for name, count in zip(names, (keep.top, keep.middle, keep.low))
+            if count
+        ) or "0本"
+        sell = "、".join(
+            f"{name}{plan[item][0] - plan[item][1]}本"
+            for name, item in zip(names, CONTRACT_TIERS)
+            if item in plan
+        )
+        self.task.log_info(
+            f"卖：招募契约书 {have}；要留到能招募{recruits}个5星：留{stay}，卖{sell}。"
+        )
+        return plan
+
+    def _kept_range(self, entry: CalendarEntry) -> tuple[int, int]:
+        """What may be left of an entry with a reserve: (fewest, most)."""
+
+        low = entry.reserve if entry.keep_low is None else entry.keep_low
+        high = (
+            entry.reserve + self._reserve_slack(entry.reserve)
+            if entry.keep_high is None
+            else entry.keep_high
+        )
+        return low, max(low, high)
+
     def _apply_day_checklist(
         self, day: int, entries: list[CalendarEntry]
     ) -> list[CalendarEntry]:
         """Drop what the user unticked for this date and say what will be sold."""
 
-        bundled = bundled_sale_days().get(day, ())
+        sale_date = getattr(self, "_sale_calendar_date", None)
+        # The app may have been open since before the table changed.
+        for key in carry_checklists_over(self.task.config, sale_date):
+            self.task.log_info(f"卖：出售日历换成新的了，{key}的勾选已经跟着更新。")
+        bundled = bundled_sale_days(sale_date).get(day, ())
         keep, dropped = apply_sale_checklist(self.task.config, day, entries, bundled)
         for entry in dropped:
             self.task.log_info(f"卖：{entry.item}在{day}号出售清单中未勾选，不卖。")
@@ -498,8 +683,12 @@ class SellFlowMixin:
                     selected_shop = ""
                     continue
                 selected_shop = entry.shop
+            if entry.asset and entry.item in CONTRACT_TIERS:
+                entry = self._planned_contract(entry)
+                if entry is None:
+                    continue  # nothing of this tier to sell (the plan said why)
             if self._sell_entry_with_retry(entry):
-                if self._sale_day_key():
+                if self._sale_day_key() and not self._sale_is_a_test():
                     self._sold_record().add(self._sale_day_key(), entry.item)
             else:
                 if self._last_sale_unavailable:
@@ -528,6 +717,8 @@ class SellFlowMixin:
         if failed:
             self.task.log_warning("最高价出售失败：" + "、".join(entry.item for entry in failed))
             return False
+        if self._sale_is_a_test():
+            return PhaseDeferred("只看不卖的测试，不记为今日已卖")
         unconfirmed = [
             detail for detail in unavailable if UNCONFIRMED_MARKER_REASON in detail
         ]
@@ -559,6 +750,25 @@ class SellFlowMixin:
         return self._sell_selected_entry(entry)
 
     def _sell_selected_entry(self, entry: CalendarEntry) -> bool:
+        return self._sell_selected_entry_here(entry)
+
+    def _start_sale_search(self, entry: CalendarEntry) -> int:
+        """Put the list where this item's search starts; returns the direction.
+
+        Normal goods: from the top, dragging down.  史莱姆 / 招募契约书 sit at
+        the end of their shop's list (Leo 2026-11-10): from the bottom,
+        dragging up.  The game puts the list back at the top after every sale
+        (Leo by hand, every item), so from the top each slime cost ~30 s.
+        """
+
+        if getattr(entry, "asset", False):
+            self._scroll_sale_list_to_end(-1, SALE_LIST_MAX_SCROLLS)
+            self._status("出售列表", f"{entry.item}：先滑到清单最底，再往上找")
+            return 1
+        self._scroll_sale_list_to_top()
+        return -1
+
+    def _sell_selected_entry_here(self, entry: CalendarEntry) -> bool:
         self._last_sale_unavailable = False
         self._last_sale_reason = ""
         self._last_sale_page_empty = False
@@ -568,9 +778,26 @@ class SellFlowMixin:
         # Cards whose dialog showed another item; skipped until a sale reflows the list.
         wrong_cards: list[tuple[int, int]] = []
         self._sale_drag_refused = False
-        self._scroll_sale_list_to_top()
+        from_bottom = self._start_sale_search(entry) > 0
         while True:
-            located = None if self._sale_drag_refused else self._find_sale_item_candidates(entry)
+            if self._sale_drag_refused:
+                located = None
+            elif from_bottom:
+                located = self._find_sale_item_candidates(entry, direction=1, settled=True)
+            else:
+                located = self._find_sale_item_candidates(entry)
+            if (
+                located is None
+                and from_bottom
+                and not sold_count
+                and not self._sale_drag_refused
+                and not getattr(self, "_last_sale_name_seen", False)
+            ):
+                # 有备案：最底往上没找到，再照旧从最上面往下找一遍
+                self._status("出售列表", f"{entry.item}：从最底往上没找到，改从最上面往下找")
+                self._scroll_sale_list_to_top()
+                from_bottom = False
+                continue
             if located is None and self._sale_drag_refused:
                 # Not "item missing": the list could not be moved, and every
                 # later item needs it too, so the sell stops as a failure.
@@ -685,6 +912,11 @@ class SellFlowMixin:
                 # unit at a time for hours.
                 self.task.log_info(f"卖：出售保险开启，{entry.item}只出售一次。")
                 return True
+            if from_bottom:
+                # More of this item to sell, and the sale put the list back at
+                # the top: down to the bottom again (only now, when the item is
+                # not done: live 2026-11-10 the drags ran after the last sale).
+                self._start_sale_search(entry)
 
     @staticmethod
     def _near_any_point(
@@ -760,7 +992,19 @@ class SellFlowMixin:
             f"卖：{entry.item}出售弹窗记录库存{owned}个，当前组可购买{available}个。"
         )
         self._reserve_reached = False
-        if entry.reserve and owned <= entry.reserve + self._reserve_slack(entry.reserve):
+        counting = getattr(self, "_contract_counting", None)
+        if counting is not None:
+            # Counting the books before the plan: MAX must select what was
+            # read as owned, then the dialog is closed without selling.
+            verified = self._owned_matches_sale_max(entry, owned, available)
+            if not self._close_sale_dialog():  # 有备案：✕按两次，再按 Esc
+                self.task.log_warning(f"卖：{entry.item}出售弹窗关闭失败，停止出售。")
+                return None
+            if verified:
+                counting[entry.item] = owned
+                self.task.log_info(f"卖：{entry.item}数到{owned}本。")
+            return owned, False
+        if entry.reserve and owned <= self._kept_range(entry)[1]:
             # Within the slack the slider would sell one at a time, over and
             # over (live 2026-10-07: 10137 -> 10136 -> 10135 ... of 兽肉).
             self.task.log_info(
@@ -770,6 +1014,19 @@ class SellFlowMixin:
                 self.task.log_warning(f"卖：{entry.item}出售弹窗关闭失败，停止出售。")
                 return None
             return owned, False
+        if (
+            entry.expect_owned is not None
+            and previous_owned is None
+            and owned != entry.expect_owned
+        ):
+            self.task.log_warning(
+                f"卖：{entry.item}现在是{owned}本，和刚才数到的{entry.expect_owned}本不一样，"
+                "为了不卖错，这次不卖它。"
+            )
+            self._close_sale_dialog()
+            self._last_sale_unavailable = True
+            self._last_sale_reason = "数量和刚才数到的不一样"
+            return None
         if not self._choose_sale_quantity(entry, owned, available):
             return None
         expected_selected = None
@@ -787,10 +1044,54 @@ class SellFlowMixin:
                 f"当前组上限{available}），停止确认。"
             )
             return None
+        if entry.asset:
+            # Last check before the press: never leave fewer than may be kept.
+            chosen = getattr(self, "_last_selected_sale_quantity", None)
+            lowest = self._kept_range(entry)[0]
+            if chosen is None or owned - chosen < lowest:
+                self.task.log_warning(
+                    f"卖：{entry.item}已选{chosen}个会剩不到{lowest}个，不出售。"
+                )
+                self._close_sale_dialog()
+                return None
+        one_unit_items = self._sale_one_unit_items()
+        if self._sale_look_only() or (one_unit_items and entry.item not in one_unit_items):
+            chosen = getattr(self, "_last_selected_sale_quantity", None)
+            self.task.log_info(
+                f"卖：【只看不卖】{entry.item}拥有{owned}个，已选{chosen}个，"
+                f"会剩{owned - chosen if chosen is not None else '?'}个；不按出售，关闭弹窗。"
+            )
+            self._status("只看不卖", f"{entry.item}:拥有{owned} 已选{chosen}")
+            if not self._close_sale_dialog():  # 有备案：✕按两次，再按 Esc
+                self.task.log_warning(f"卖：{entry.item}出售弹窗关闭失败，停止出售。")
+                return None
+            return owned, False
+        if one_unit_items:
+            # Developer test: the amount above was chosen and checked the real
+            # way, then only ONE is sold, once.
+            only_one = False
+            for _press in range(2):  # a dropped MIN press is pressed once more
+                self.task.operate_click(*SALE_ONE_UNIT_POINT, after_sleep=0.5)  # 不用确认：读回
+                if self._wait_selected_sale_quantity(1):
+                    only_one = True
+                    break
+            if not only_one:
+                self.task.log_warning(
+                    f"卖：【只卖1个的测试】{entry.item}按MIN后没读到已选1个，不出售。"
+                )
+                self._close_sale_dialog()
+                return None
+            self.task.log_info(
+                f"卖：【只卖1个的测试】{entry.item}拥有{owned}个，只出售1个。"
+            )
         self.task.operate_click(*SALE_CONFIRM_POINT, after_sleep=0.5)
+        if one_unit_items:
+            self._reserve_reached = True  # one unit, once: never loop on this item
         # MAX of a group that covers everything owned leaves nothing to sell;
         # searching the list for more cost ~25 s of drags (live 2026-09-27).
-        self._last_sale_cleared = expected_selected == available and available >= owned > 0
+        self._last_sale_cleared = (
+            not one_unit_items and expected_selected == available and available >= owned > 0
+        )
         self.task.log_info(
             f"卖：{entry.item}已点击出售，本组最大可出售{available}个，等待交易完成。"
         )
@@ -817,6 +1118,34 @@ class SellFlowMixin:
             else getattr(self, "_last_selected_sale_quantity", None),
         )
         return owned, True
+
+    @staticmethod
+    def _sale_look_only() -> bool:
+        """Developer test switch: do everything but the 出售 press.
+
+        Leo 2026-11-10 「測試不要賣我的東西喔」.  Set only from a test shell
+        (YES_BD2_SELL_LOOK_ONLY=1); it can only stop a sale, never cause one.
+        """
+
+        return os.environ.get("YES_BD2_SELL_LOOK_ONLY", "") == "1"
+
+    @staticmethod
+    def _sale_one_unit_items() -> frozenset[str]:
+        """Developer test switch: really sell ONE unit of each named item.
+
+        Leo 2026-11-10 「史萊姆…你可以賣很小量」「你史萊姆測試用一隻一隻賣沒關係的」.
+        YES_BD2_SELL_ONE_UNIT=<item>[,<item>...] sells one unit of each named
+        item once and treats every other item as look only, so it can only make
+        a sale smaller, never bigger.
+        """
+
+        raw = os.environ.get("YES_BD2_SELL_ONE_UNIT", "")
+        return frozenset(part.strip() for part in raw.replace("，", ",").split(",") if part.strip())
+
+    def _sale_is_a_test(self) -> bool:
+        """A look-only or one-unit run is not the day's real sale."""
+
+        return self._sale_look_only() or bool(self._sale_one_unit_items())
 
     @staticmethod
     def _in_sale_item_list(box, frame_shape) -> bool:
@@ -872,31 +1201,46 @@ class SellFlowMixin:
         2026-09-26: the next shop was searched from the bottom).
         """
 
-        for _attempt in range(SALE_LIST_TOP_ATTEMPTS):
+        self._scroll_sale_list_to_end(1, SALE_LIST_TOP_ATTEMPTS)
+
+    def _scroll_sale_list_to_end(self, direction: int, attempts: int) -> None:
+        """Drag without reading names until the list stops moving
+        (direction > 0: to the top, < 0: to the bottom)."""
+
+        for _attempt in range(attempts):
             before = self._sale_list_view()
-            if not self._move_sale_list(1):
+            if not self._move_sale_list(direction):
                 return
             if float(np.mean(np.abs(self._sale_list_view() - before))) < SALE_LIST_END_DIFF:
                 return
 
     def _find_sale_item_candidates(
-        self, entry: CalendarEntry
+        self, entry: CalendarEntry, direction: int = -1, settled: bool = False
     ) -> tuple[list[SaleItemCandidate], np.ndarray] | None:
-        """Look for the item on the current view, then scroll down the list.
+        """Look for the item on the current view, then scroll the list on
+        (direction < 0: down, > 0: up).
 
         The name only counts as absent once the list stops moving; a name that
         is on screen but fails the marker check stays a recognition failure.
+        ``settled``: the list was just dragged and has stopped, so one read
+        without the name is enough, as on every later page.
         """
 
-        located = self._wait_sale_item_candidates(entry)
+        if settled:
+            located = self._wait_sale_item_candidates(
+                entry, timeout=SALE_LIST_SCROLL_WAIT_TIMEOUT, empty_hits=1
+            )
+        else:
+            located = self._wait_sale_item_candidates(entry)
         if located is not None or self._last_sale_name_seen or not self._last_sale_ocr_output:
             return located
         for page in range(1, SALE_LIST_MAX_SCROLLS + 1):
             before = self._sale_list_view()
-            if not self._move_sale_list(-1):
+            if not self._move_sale_list(direction):
                 break
             moved = float(np.mean(np.abs(self._sale_list_view() - before)))
-            self._status("出售列表滚动", f"{entry.item}：第{page}次，变化={moved:.1f}")
+            way = "往上" if direction > 0 else "往下"
+            self._status("出售列表滚动", f"{entry.item}：{way}第{page}次，变化={moved:.1f}")
             if moved < SALE_LIST_END_DIFF:
                 break
             # After a drag the list has settled: one read without the name is
@@ -1829,10 +2173,7 @@ class SellFlowMixin:
     def _sale_title_catalog(self, entry: CalendarEntry) -> dict[str, set[str]]:
         if self._sale_title_catalog_cache is not None:
             return self._sale_title_catalog_cache
-        bundled = parse_calendar_payload(
-            (CALENDAR_DIR / "price_calendar.v1.json").read_text(encoding="utf-8")
-        )
-        entries = [item for items in bundled.days.values() for item in items]
+        entries = every_bundled_entry()
         entries.extend(CalendarEntry(item, "") for item in ITEM_ALIASES)
         entries.extend(self._sale_title_entries)
         entries.append(entry)
@@ -2010,7 +2351,8 @@ class SellFlowMixin:
     def _choose_sale_quantity(
         self, entry: CalendarEntry, owned: int, available: int | None = None
     ) -> bool:
-        if entry.reserve > 0:
+        if entry.reserve > 0 or entry.asset:
+            # An asset sold completely (keep 0) still has its count checked.
             if not self._owned_matches_sale_max(entry, owned, available):
                 return False
             if available is not None and owned - available >= entry.reserve:
@@ -2023,7 +2365,9 @@ class SellFlowMixin:
                     f"还保留{owned - available}个（目标至少{entry.reserve}个）。"
                 )
                 return True
-            return self._choose_reserved_quantity(entry, owned, available)
+            # MAX is selected now (the count check pressed it and read it back).
+            most = min(owned, available) if available else owned
+            return self._choose_reserved_quantity(entry, owned, available, selected_now=most)
         if bool(self.task.config.get("出售保险", False)):
             self.task.operate_click(*SALE_MIN_POINT, after_sleep=0.5)
         else:
@@ -2054,8 +2398,40 @@ class SellFlowMixin:
         )
         return False
 
+    def _step_to_quantity(self, selected: int, target: int) -> int | None:
+        """Press -10/+10 and −/+ until ``target`` is selected; what is selected
+        afterwards (read back), or None when it cannot be read.
+
+        The slider's pixels cannot hit every count; 招募契约书 are sold by exact
+        counts (Leo 2026-11-10), and a slime slider a few off is corrected the
+        same way.  Only for the last few (SALE_STEP_MAX_DELTA).
+        """
+
+        for _round in range(SALE_STEP_ROUNDS):
+            delta = target - selected
+            if delta == 0 or abs(delta) > SALE_STEP_MAX_DELTA:
+                break
+            tens, ones = divmod(abs(delta), 10)
+            ten = SALE_PLUS_TEN_POINT if delta > 0 else SALE_MINUS_TEN_POINT
+            one = SALE_PLUS_ONE_POINT if delta > 0 else SALE_MINUS_ONE_POINT
+            # The presses are not confirmed one by one: the amount is read
+            # back below and the difference pressed again (SALE_STEP_ROUNDS).
+            for _press in range(tens):
+                self.task.operate_click(*ten, after_sleep=0.2)  # 不用确认：按完读回已选数量
+            for _press in range(ones):
+                self.task.operate_click(*one, after_sleep=0.2)  # 不用确认：按完读回已选数量
+            read = self._read_selected_quantity()
+            if read is None:
+                return None
+            selected = read
+        return selected
+
     def _choose_reserved_quantity(
-        self, entry: CalendarEntry, owned: int, available: int | None = None
+        self,
+        entry: CalendarEntry,
+        owned: int,
+        available: int | None = None,
+        selected_now: int | None = None,
     ) -> bool:
         """Sell all but about ``entry.reserve``, never keeping fewer.
 
@@ -2063,14 +2439,15 @@ class SellFlowMixin:
         2000: 39879 were sold and 366 kept, Leo 2026-10-05).  The selected
         count is read back after each click and the next click corrected
         from the clicks so far, until the kept amount lies in
-        [reserve, reserve + slack]; otherwise nothing is sold.
+        [reserve, reserve + slack] (or the entry's own keep_low..keep_high);
+        otherwise nothing is sold.
         """
 
         reserve = entry.reserve
-        slack = self._reserve_slack(reserve)
-        if owned <= reserve:
+        low, high = self._kept_range(entry)
+        if owned <= low:
             return False
-        target = max(1, owned - reserve - slack // 2)  # amount to sell
+        target = max(1, owned - (low + high) // 2)  # amount to sell
         left, top, right, bottom = SALE_SLIDER_REGION
         y = (top + bottom) / 2
         # (x, selected) pairs; the right end sells the whole group.
@@ -2078,6 +2455,24 @@ class SellFlowMixin:
         observed: list[tuple[float, int]] = [(right, most)]
         x = left + (right - left) * max(0.0, min(1.0, (target - 1) / max(1, most - 1)))
         self._status("出售保留量", f"{entry.item}:约{reserve}")
+
+        def stepped_into_range(selected: int) -> bool:
+            """A few off: the dialog's ± buttons finish it exactly."""
+            if abs(target - selected) > SALE_STEP_MAX_DELTA:
+                return False
+            after = self._step_to_quantity(selected, target)
+            if after is None or not low <= owned - after <= high:
+                return False
+            self.task.log_info(
+                f"卖：{entry.item}拥有{owned}个，用加减按钮选到出售{after}个，"
+                f"保留{owned - after}个（目标{reserve}个，{low}～{high}都算对）。"
+            )
+            self._status("出售已选数量", f"{after}（保留{owned - after}）")
+            self._reserve_reached = True
+            return True
+
+        if selected_now is not None and stepped_into_range(selected_now):
+            return True
         for attempt in range(1, SALE_RESERVE_ADJUST_ATTEMPTS + 1):
             self.task.operate_click(x, y, after_sleep=0.4)
             selected = self._read_selected_quantity()
@@ -2086,10 +2481,12 @@ class SellFlowMixin:
                 return False
             kept = owned - selected
             self._status("出售已选数量", f"{selected}（保留{kept}）")
-            if reserve <= kept <= reserve + slack:
+            if not low <= kept <= high and stepped_into_range(selected):
+                return True
+            if low <= kept <= high:
                 self.task.log_info(
                     f"卖：{entry.item}拥有{owned}个，选择出售{selected}个，"
-                    f"保留{kept}个（目标至少{reserve}个）。"
+                    f"保留{kept}个（目标{reserve}个，{low}～{high}都算对）。"
                 )
                 self._reserve_reached = True
                 return True
@@ -2100,15 +2497,15 @@ class SellFlowMixin:
             )
         # Not within the slack: the click that kept the least, still at
         # least the reserve, is good enough (keeping more is safe).
-        safe = [(x_, s_) for x_, s_ in observed[1:] if owned - s_ >= reserve]
+        safe = [(x_, s_) for x_, s_ in observed[1:] if owned - s_ >= low]
         if safe:
             best_x, _best = max(safe, key=lambda point: point[1])
             self.task.operate_click(best_x, y, after_sleep=0.4)
             selected = self._read_selected_quantity()
-            if selected is not None and owned - selected >= reserve:
+            if selected is not None and owned - selected >= low:
                 self.task.log_info(
                     f"卖：{entry.item}拥有{owned}个，选择出售{selected}个，"
-                    f"保留{owned - selected}个（目标至少{reserve}个）。"
+                    f"保留{owned - selected}个（目标{reserve}个，比它多留一些）。"
                 )
                 self._reserve_reached = True
                 return True

@@ -16,3 +16,5 @@ Pictures used only by the new main window (`src/ui/shell`).
 - `bargain/sticker.png`: the 循环砍价 picture, a 贴纸 (sticker) cut out of
   Leo's 4K game screenshot (2026-10-11), dark background made transparent.
   Game art belongs to the game's publisher.
+- `cartridges/SQUARE.png`: the 梦幻广场 card's label art, a copy of the
+  recognition template `Q_square.png` (the 跑商 page's 买 card).

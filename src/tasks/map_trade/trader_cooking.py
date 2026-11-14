@@ -16,11 +16,15 @@ from src.tasks.map_trade.action_icons import (
 from src.tasks.map_trade.models import (
     COOKING_RECIPE_TEMPLATES,
     DEFAULT_COOKING_RECIPES,
+    EXTRA_COOKING_KEY,
+    EXTRA_COOKING_RECIPES,
     FINAL_COOKING_RECIPE,
     OPTIONAL_COOKING_RECIPES,
     MatchResult,
     TemplateSpec,
 )
+from src.tasks.map_trade.calendar import sale_price_calendar_date
+from src.tasks.map_trade.sale_days import NEXT_TABLE, table_for
 from src.tasks.map_trade.trader_constants import (
     COOK_SUBMENU_TEMPLATE,
     COOKING_BACK_POINT,
@@ -129,6 +133,10 @@ COOKING_MAX_FIXED_POINT = (480, 588)
 # page) failed the whole phase; after this long with the pre-click screen
 # still read on 2 frames the same press is repeated once.
 COOKING_RECLICK_AFTER = 3.0
+# One batch makes 10000 at most (Leo 2026-11-10 「料理有一次做10000個的上限」):
+# a dish whose card is still bright after a batch is cooked again.  The screen
+# decides when to stop; this only ends a loop that should never happen.
+COOKING_BATCH_LIMIT = 60
 COOKING_RECLICK_HITS = 2
 
 COOKING_RECIPE_SPECS = {
@@ -288,7 +296,11 @@ class CookingFlowMixin:
                     if outcome is CookingRecipeOutcome.COOKED:
                         cooked.append(recipe)
                         self._status("料理进度", f"已完成：{'、'.join(cooked)}")
-                        continue
+                        if self._cook_remaining_batches(recipe):
+                            continue
+                        self.task.log_warning(f"料理：{recipe} 接着再做时没完成，停止后续料理。")
+                        flow_success = False
+                        break
                     if outcome is CookingRecipeOutcome.UNAVAILABLE:
                         unavailable.append(recipe)
                         continue
@@ -320,6 +332,44 @@ class CookingFlowMixin:
                 self._status("料理状态", "失败")
         return flow_success
 
+    def _cook_remaining_batches(self, recipe: str) -> bool:
+        """After a batch: cook the same dish again while its card stays bright.
+
+        One batch is 10000 at most, so plenty of ingredients leave the card
+        bright.  Grey (or gone from the list) ends it; False only when a
+        further batch failed halfway.
+        """
+
+        for batch in range(2, COOKING_BATCH_LIMIT + 1):
+            outcome = self._cook_one_recipe(recipe, again=True)
+            if outcome is CookingRecipeOutcome.COOKED:
+                self.task.log_info(f"料理：{recipe} 材料还够，已做第{batch}次。")
+                self._status("料理进度", f"{recipe} 第{batch}次")
+                continue
+            return outcome is not CookingRecipeOutcome.FAILED
+        self.task.log_warning(
+            f"料理：{recipe} 已连续做了{COOKING_BATCH_LIMIT}次图标还是亮的，先做下一道。"
+        )
+        return True
+
+    def _extra_cooking_recipes(self) -> tuple[str, ...]:
+        """额外料理 the player left ticked, once the 2026-11-19 update sells them.
+
+        Before that the old sale table still sells their ingredients (Leo
+        2026-11-10 「賣的部分先維持舊的直到19號」), so they are not cooked yet.
+        """
+
+        try:
+            sale_date = sale_price_calendar_date(self._current_market_time())
+        except AttributeError:
+            sale_date = None  # no run clock (a bare helper): today's date
+        if table_for(sale_date) != NEXT_TABLE:
+            return ()
+        # The setting's default ticks all six; a config without it cooks none.
+        raw = self.task.config.get(EXTRA_COOKING_KEY) or ()
+        chosen = set(split_items(raw if isinstance(raw, str) else tuple(raw)))
+        return tuple(recipe for recipe in EXTRA_COOKING_RECIPES if recipe in chosen)
+
     def _selected_cooking_recipes(self) -> tuple[str, ...]:
         raw = self.task.config.get("5星料理", [])
         values = (
@@ -337,7 +387,8 @@ class CookingFlowMixin:
             chosen = set(split_items(tuple(raw_main or ())))
         main = tuple(recipe for recipe in DEFAULT_COOKING_RECIPES if recipe in chosen)
         final = (FINAL_COOKING_RECIPE,) if FINAL_COOKING_RECIPE in chosen else ()
-        return (*main, *optional, *final)
+        # 额外料理 have the lowest priority: after everything else.
+        return (*main, *optional, *final, *self._extra_cooking_recipes())
 
     def _enter_cooking_list(self) -> bool:
         arrived = self.navigator.go_to_trade_merchant()
@@ -469,6 +520,8 @@ class CookingFlowMixin:
     def _cook_one_recipe(
         self,
         recipe: str,
+        *,
+        again: bool = False,
     ) -> CookingRecipeOutcome:
         # Skipping a grey or absent recipe changes nothing on screen, so the
         # same list frame serves the next recipe: re-reading it for each one
@@ -522,7 +575,10 @@ class CookingFlowMixin:
             self.task.log_warning(f"料理：{recipe} 图标亮度状态不明确。")
             return CookingRecipeOutcome.FAILED
         if not enabled:
-            self.task.log_info(f"料理：{recipe} 列表图标变灰，跳过。")
+            if again:
+                self.task.log_info(f"料理：{recipe} 材料用完了（图标变灰），做下一道。")
+            else:
+                self.task.log_info(f"料理：{recipe} 列表图标变灰，跳过。")
             self._list_snapshot_cache = list_snapshot
             return CookingRecipeOutcome.UNAVAILABLE
         self._status(

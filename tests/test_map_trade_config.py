@@ -170,7 +170,8 @@ class MapTradeConfigTest(unittest.TestCase):
         self.assertTrue(trade.default_config["制作料理"])
         self.assertEqual([], trade.default_config["5星料理"])
         self.assertEqual(
-            ["料理清单", "5星料理"], trade.config_type["制作料理"]["sub_configs"][True]
+            ["料理清单", "5星料理", "额外料理"],
+            trade.config_type["制作料理"]["sub_configs"][True],
         )
         # Every regular dish is selectable and ticked by default (review 2026-09-27).
         self.assertIn("街头烤鸡肉串", trade.default_config["料理清单"])
@@ -200,7 +201,7 @@ class MapTradeConfigTest(unittest.TestCase):
         # sold; the whitelist, blacklist and other price tables are gone
         # (user, 2026-09-27).
         self.assertEqual(
-            [f"出售{day}号" for day in range(1, 29)],
+            [*(f"出售{day}号" for day in range(1, 29)), "卖招募契约书", "卖史莱姆"],
             trade.config_type["卖"]["sub_configs"][True],
         )
         self.assertEqual(["杏仁", "哈密瓜"], trade.default_config["出售19号"])

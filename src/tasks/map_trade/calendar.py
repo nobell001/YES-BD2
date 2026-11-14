@@ -188,12 +188,21 @@ class PriceCalendarClient:
         sources_path: Path | None = None,
         timeout: float = 5.0,
         now_provider: Callable[[], datetime] | None = None,
+        bundled_for: Callable[[date], Path] | None = None,
     ) -> None:
         self.bundled_path = bundled_path
+        # More than one bundled table: the sale date picks (see sale_days).
+        self.bundled_for = bundled_for
         self.cache_path = Path(cache_path)
         self.sources_path = sources_path
         self.timeout = timeout
         self.now_provider = now_provider or (lambda: datetime.now(UTC_PLUS_8))
+
+    def use_table_for(self, sale_date: date) -> None:
+        """Read the bundled table that sells on ``sale_date`` from now on."""
+
+        if self.bundled_for is not None:
+            self.bundled_path = self.bundled_for(sale_date)
 
     def load(
         self,

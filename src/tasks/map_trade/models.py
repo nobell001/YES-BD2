@@ -153,6 +153,16 @@ class CalendarEntry:
     aliases: tuple[str, ...] = ()
     sell: bool = True
     reserve: int = 0
+    # The amount left after selling may lie in [keep_low, keep_high] instead
+    # of the usual [reserve, reserve + slack] (slimes: Leo 2026-11-10
+    # 「留20000個 拉完條 -5%~+10% 都可以」).  None = the usual range.
+    keep_low: int | None = None
+    keep_high: int | None = None
+    # 史莱姆 / 招募契约书: an account asset sold by the player's own keep setting,
+    # not by the price table.  The owned count is always checked against MAX.
+    asset: bool = False
+    # 招募契约书: the count the plan was made from; another count sells nothing.
+    expect_owned: int | None = None
 
 
 @dataclass(frozen=True)
@@ -647,6 +657,29 @@ RECIPE_TEMPLATES = {
     "地狱火紫菜包饭": "image/Shop/cook_Hellfire Gimbap.png",
 }
 COOKING_RECIPE_TEMPLATES.update(RECIPE_TEMPLATES)
+
+# 「額外料理」 (Leo 2026-11-10): six dishes the game's 2026-11-19 update starts
+# selling at ↑120%.  Lowest priority: cooked after everything else, each one
+# can be unticked.  They are old recipes, so the cards were cut from Leo's own
+# cooking list (2560x1440, 2026-11-10) at the other cards' size.
+EXTRA_COOKING_RECIPES = (
+    "凯洛养身汤",
+    "藏红花甜茶",
+    "水果冰沙",
+    "巧克力面包",
+    "黑啤酒炖锅",
+    "土豆汤",
+)
+EXTRA_RECIPE_TEMPLATES = {
+    "凯洛养身汤": "image/Shop/cook_Kello Wellness Soup.png",
+    "藏红花甜茶": "image/Shop/cook_Saffron Sweet Tea.png",
+    "水果冰沙": "image/Shop/cook_Fruit Smoothie.png",
+    "巧克力面包": "image/Shop/cook_Chocolate Bread.png",
+    "黑啤酒炖锅": "image/Shop/cook_Dark Beer Stew.png",
+    "土豆汤": "image/Shop/cook_Potato Soup.png",
+}
+COOKING_RECIPE_TEMPLATES.update(EXTRA_RECIPE_TEMPLATES)
+EXTRA_COOKING_KEY = "额外料理"
 
 DEFAULT_SALE_WHITELIST = (
     "蜂蜜黄油杏仁",

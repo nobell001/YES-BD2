@@ -66,6 +66,44 @@ SHOP_UNFAVORITED_POINTS: dict[str, frozenset[int]] = {
     "E7": frozenset({5}),
 }
 
+# How many goods each cartridge sells, numbered row by row and four to a row
+# like SHOP_FAVORITE_POINTS.  Counted on the same favourites chart the table
+# above follows; the 跑商 page draws its 收藏清单 (which cells to favourite)
+# from the two tables together.
+SHOP_PRODUCT_COUNTS: dict[str, int] = {
+    "S1": 7,
+    "S2": 8,
+    "S3": 13,
+    "S4": 13,
+    "S5": 8,
+    "S6": 9,
+    "S7": 9,
+    "S8": 13,
+    "S9": 8,
+    "S10": 12,
+    "S11": 10,
+    "S12": 15,
+    "S13": 13,
+    "S14": 12,
+    "S15": 9,
+    "S16": 10,
+    "S17": 10,
+    "S18": 9,
+    "S19": 9,
+    "R1": 7,
+    "R2": 8,
+    "R3": 10,
+    "R4": 8,
+    "R5": 11,
+    "R6": 11,
+    "R7": 7,
+    "E1": 7,
+    "E2": 8,
+    "E3": 10,
+    "E5": 8,
+    "E7": 8,
+}
+
 
 @dataclass(frozen=True)
 class ShopPurchaseReference:

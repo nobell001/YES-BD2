@@ -11,15 +11,30 @@ from qfluentwidgets import FluentIcon
 from src.tasks import problem_report, run_report
 from src.tasks.BaseBD2Task import BaseBD2Task, stuck_reason
 from src.tasks.map_trade import trade_detail
-from src.tasks.map_trade.models import OPTIONAL_COOKING_RECIPES
+from src.tasks.map_trade.asset_keep import (
+    CONTRACT_KEEP_KEY,
+    SELL_CONTRACTS_KEY,
+    SELL_SLIMES_KEY,
+    SLIME_KEEP_KEYS,
+)
+from src.tasks.map_trade.models import (
+    EXTRA_COOKING_KEY,
+    EXTRA_COOKING_RECIPES,
+    OPTIONAL_COOKING_RECIPES,
+)
 from src.tasks.map_trade.navigator import Navigator
 from src.tasks.map_trade.phase_ledger import ONLY_INCOMPLETE_KEY, PhaseDeferred, PhaseLedger
 from src.tasks.map_trade.progress import ProgressStore
 from src.tasks.map_trade.sale_days import (
+    OLD_TABLE,
+    SALE_TABLE_KEY,
     bundled_sale_days,
+    carry_checklists_over,
     day_items,
     describe_entry,
+    every_sale_day,
     sale_day_key,
+    table_for,
 )
 from src.tasks.map_trade.trader import Trader
 from src.tasks.map_trade.trader_cooking import MAIN_COOKING_RECIPES
@@ -325,11 +340,21 @@ class MapTradeTask(MapAutomationTaskBase):
                 "制作料理": True,
                 "料理清单": list(MAIN_COOKING_RECIPES),
                 "5星料理": [],
+                # Cooked last, from the game's 2026-11-19 update on.
+                EXTRA_COOKING_KEY: list(EXTRA_COOKING_RECIPES),
                 # 收藏重建周期 and 出售保险 were removed from the settings (Leo,
                 # 2026-10-05: 「用處不大」); a saved value is dropped on load and
                 # the trader falls back to never rebuilding / selling MAX.
                 "买": True,
                 "卖": True,
+                # 史莱姆 are an account asset: off, and no keep amount, until
+                # the player says so (Leo 2026-11-10 「預設讓玩家自己填
+                # 就算打開介面 沒有填就當不賣」).
+                SELL_SLIMES_KEY: False,
+                **{key: "" for key in SLIME_KEEP_KEYS},
+                # 招募契约书 the same: off, and no number.
+                SELL_CONTRACTS_KEY: False,
+                CONTRACT_KEEP_KEY: "",
                 TRADE_VISION_THRESHOLD_KEY: 0.72,
                 TRADE_OCR_THRESHOLD_KEY: 0.20,
                 "加载页面等待秒数": LOADING_MAX_SECONDS,
@@ -340,6 +365,7 @@ class MapTradeTask(MapAutomationTaskBase):
                 "制作料理": "购买后按优先级制作料理，全部选择 MAX；灰色料理跳过。",
                 "料理清单": "要制作的料理（全部选择 MAX）；取消勾选的不做。街头烤鸡肉串总在最后。",
                 "5星料理": "额外制作的白框五道料理，默认不选；街头烤鸡肉串始终最后制作。",
+                EXTRA_COOKING_KEY: "2026-11-19 改版后开始出售的六道料理，排在最后制作；取消勾选的不做。",
                 "买": (
                     "按每日08:00库存批次到梦幻广场的商人洛兹处砍价（进不了广场时改去第一章商人无聊收集狂大叔），"
                     "然后直接按「一键购买全部收藏」，买游戏里已收藏的商品。"
@@ -348,6 +374,21 @@ class MapTradeTask(MapAutomationTaskBase):
                     "按每日23:00刷新后的日期，出售出售日历里当天已勾选的商品"
                     "（见下方每日出售清单）。"
                 ),
+                SELL_CONTRACTS_KEY: (
+                    "每月1号（↑120%）在剧情游戏卡1卖掉多出来的招募契约书；默认不卖。"
+                ),
+                CONTRACT_KEEP_KEY: (
+                    "至少要留到能招募几个5星角色（10本低一级可合成1本高一级，1本顶级招募1个5星）。"
+                    "先留顶级，再留高级，最后留普通；加起来不够就一本都不卖。空着=不卖，填0=全卖。"
+                ),
+                SELL_SLIMES_KEY: (
+                    "每月10号史莱姆涨到120%时，卖掉多出来的史莱姆。"
+                    "只卖填了保留数量的颜色；没填的不卖。"
+                ),
+                **{
+                    key: "这种史莱姆要留多少只；卖完剩下的数量会在这个数的-5%到+10%之间。不填就不卖。"
+                    for key in SLIME_KEEP_KEYS
+                },
                 TRADE_VISION_THRESHOLD_KEY: "商店、导航与料理模板的最低匹配可信度。",
                 TRADE_OCR_THRESHOLD_KEY: "商店文字和按钮识别的最低可信度。",
                 "加载页面等待秒数": "进入卡带或传送后等待加载完成的最长秒数。",
@@ -355,8 +396,16 @@ class MapTradeTask(MapAutomationTaskBase):
         )
         # One checklist per date of the bundled price table, all ticked by
         # default; unticked items are not sold that day (user, 2026-09-26).
+        # Two tables are bundled (the game's 2026-11-19 update): the one that
+        # sells now gives the options; a date only the other one has still
+        # gets its setting, so its saved ticks are not dropped as unknown.
         self._sale_day_keys = []
-        for day, entries in bundled_sale_days().items():
+        today = bundled_sale_days()
+        # Unreadable right now: no checklist at all (load_config keeps the
+        # saved ones), never an empty one that would read as "sell nothing".
+        sale_days = every_sale_day() if today else []
+        for day in sale_days:
+            entries = today.get(day, ())
             key = sale_day_key(day)
             self._sale_day_keys.append(key)
             self.default_config[key] = day_items(entries)
@@ -364,18 +413,32 @@ class MapTradeTask(MapAutomationTaskBase):
                 "、".join(describe_entry(entry) for entry in entries)
                 + "。取消勾选的物品当天不卖。"
             )
+        self.default_config[SALE_TABLE_KEY] = table_for()
         self.config_type.update(
             {
-                "制作料理": {"sub_configs": {True: ["料理清单", "5星料理"]}},
+                "制作料理": {"sub_configs": {True: ["料理清单", "5星料理", EXTRA_COOKING_KEY]}},
+                EXTRA_COOKING_KEY: {
+                    "type": "multi_selection",
+                    "options": list(EXTRA_COOKING_RECIPES),
+                },
                 "料理清单": {"type": "multi_selection", "options": list(MAIN_COOKING_RECIPES)},
                 "5星料理": {
                     "type": "multi_selection",
                     "options": list(OPTIONAL_COOKING_RECIPES),
                 },
-                "卖": {"sub_configs": {True: list(self._sale_day_keys)}},
+                "卖": {
+                    "sub_configs": {
+                        True: [*self._sale_day_keys, SELL_CONTRACTS_KEY, SELL_SLIMES_KEY]
+                    }
+                },
+                SELL_CONTRACTS_KEY: {"sub_configs": {True: [CONTRACT_KEEP_KEY]}},
+                SELL_SLIMES_KEY: {"sub_configs": {True: list(SLIME_KEEP_KEYS)}},
                 **{
-                    sale_day_key(day): {"type": "multi_selection", "options": day_items(entries)}
-                    for day, entries in bundled_sale_days().items()
+                    sale_day_key(day): {
+                        "type": "multi_selection",
+                        "options": day_items(today.get(day, ())),
+                    }
+                    for day in sale_days
                 },
                 TRADE_VISION_THRESHOLD_KEY: {"min": 0.50, "max": 0.95, "step": 0.01},
                 TRADE_OCR_THRESHOLD_KEY: {"min": 0.05, "max": 0.95, "step": 0.01},
@@ -394,6 +457,10 @@ class MapTradeTask(MapAutomationTaskBase):
         section_values = _trade_section_migration_values(legacy)
         _migrate_collection_config(legacy)
         super().load_config()
+        if legacy and SALE_TABLE_KEY not in legacy:
+            # Saved before there were two tables: its ticks fit the old one.
+            self.config[SALE_TABLE_KEY] = OLD_TABLE
+        carry_checklists_over(self.config)
         for key, value in section_values.items():
             self.config[key] = value
         key_map = {

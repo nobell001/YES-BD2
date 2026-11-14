@@ -218,6 +218,19 @@ SALE_RESERVE_MIN_SLACK = 300
 SALE_RESERVE_SLACK_RATIO = 0.20
 SALE_MIN_POINT = (677 / FHD_1080.width, 721 / FHD_1080.height)
 SALE_MAX_POINT = (903 / FHD_1080.width, 724 / FHD_1080.height)
+# The dialog's real MIN button (MIN | -10 | +10 | MAX; SALE_MIN_POINT sits on -10,
+# which only reaches 1 from a freshly opened dialog).  Read off Leo's 2026-11-10
+# frames; used by the one-unit developer test.
+SALE_ONE_UNIT_POINT = (562 / FHD_1080.width, 721 / FHD_1080.height)
+# − and + beside the slider, -10 and +10 under it (same frames): an exact
+# count the slider's pixels cannot hit is reached with them.
+SALE_MINUS_ONE_POINT = (524 / FHD_1080.width, 666 / FHD_1080.height)
+SALE_PLUS_ONE_POINT = (938 / FHD_1080.width, 666 / FHD_1080.height)
+SALE_MINUS_TEN_POINT = (675 / FHD_1080.width, 721 / FHD_1080.height)
+SALE_PLUS_TEN_POINT = (788 / FHD_1080.width, 721 / FHD_1080.height)
+# Stepping is for the last few: further away the slider goes first.
+SALE_STEP_MAX_DELTA = 59
+SALE_STEP_ROUNDS = 3
 SALE_CONFIRM_POINT = (1312 / FHD_1080.width, 728 / FHD_1080.height)
 SALE_CLOSE_POINT = (1420 / FHD_1080.width, 323 / FHD_1080.height)
 SALE_SLIDER_REGION = (

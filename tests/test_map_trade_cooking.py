@@ -116,6 +116,9 @@ class CookingFlowTest(unittest.TestCase):
         trader._cook_one_recipe = lambda recipe: (
             calls.append(("cook", recipe)) or next(pending_outcomes)
         )
+        # One batch per dish here; the repeat has its own tests
+        # (tests/test_trade_extra_dishes.py).
+        trader._cook_remaining_batches = lambda recipe: True
         trader._leave_cooking_to_q_sp6 = lambda: calls.append("exit") or exit_ok
         return trader, progress, calls
 

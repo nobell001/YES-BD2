@@ -1888,5 +1888,200 @@
   "en": "Dispatch: no \"!\" seen",
   "ja": "派遣：「!」は見えなかった",
   "ko": "파견: 「!」가 보이지 않음"
+ },
+ "额外料理": {
+  "en": "Extra dishes",
+  "ja": "追加料理",
+  "ko": "추가 요리"
+ },
+ "最后才做": {
+  "en": "Cooked last",
+  "ja": "最後に作る",
+  "ko": "마지막에 조리"
+ },
+ "{month}/{day} 改版后才做": {
+  "en": "Cooked from the {month}/{day} update",
+  "ja": "{month}/{day} のアップデート後から",
+  "ko": "{month}/{day} 업데이트 이후부터"
+ },
+ "一道料理一次最多做 10000 个，材料还够会接着再做": {
+  "en": "One batch makes at most 10000; with ingredients left it cooks again",
+  "ja": "1 回で作れるのは最大 10000 個、材料が残っていれば続けて作ります",
+  "ko": "한 번에 최대 10000개, 재료가 남으면 이어서 만듭니다"
+ },
+ "额外料理排在最后，不想做的点一下就取消": {
+  "en": "Extra dishes come last; click one to skip it",
+  "ja": "追加料理は最後に作ります。作らないものはクリックで外せます",
+  "ko": "추가 요리는 마지막에 만듭니다. 안 만들 요리는 눌러서 빼세요"
+ },
+ "招募书": {
+  "en": "Contracts",
+  "ja": "契約書",
+  "ko": "계약서"
+ },
+ "史莱姆": {
+  "en": "Slimes",
+  "ja": "スライム",
+  "ko": "슬라임"
+ },
+ "个 5 星": {
+  "en": "5★",
+  "ja": "人の★5",
+  "ko": "명 5성"
+ },
+ "工具会自动计算招募书数量进行贩售": {
+  "en": "The tool works out how many contracts to sell",
+  "ja": "売る契約書の数はツールが自動で計算します",
+  "ko": "팔 계약서 수는 도구가 자동으로 계산합니다"
+ },
+ "不卖": {
+  "en": "Not sold",
+  "ja": "売らない",
+  "ko": "안 팜"
+ },
+ "还没填，不会卖": {
+  "en": "Nothing entered: not sold",
+  "ja": "未入力なので売りません",
+  "ko": "입력 전이라 팔지 않습니다"
+ },
+ "填 0 会全卖": {
+  "en": "0 sells everything",
+  "ja": "0 は全部売ります",
+  "ko": "0은 전부 팝니다"
+ },
+ "每月 {day} 号卖，留着能招募": {
+  "en": "Sold on day {day}; keeps enough to recruit",
+  "ja": "毎月 {day} 日に売却、募集できる分を残す",
+  "ko": "매월 {day}일 판매, 모집할 만큼 남김"
+ },
+ "每月 {day} 号卖，各留这么多": {
+  "en": "Sold on day {day}; keeps this many of each",
+  "ja": "毎月 {day} 日に売却、それぞれこの数を残す",
+  "ko": "매월 {day}일 판매, 각각 이만큼 남김"
+ },
+ "招募书、史莱姆要打开并填数量才卖，没填就不卖，填 0 是全卖": {
+  "en": "Contracts and slimes are sold only when switched on with a number; empty = not sold, 0 = sell all",
+  "ja": "契約書とスライムは、オンにして数を入れたときだけ売ります。空欄は売らない、0 は全部売る",
+  "ko": "계약서와 슬라임은 켜고 수량을 입력해야 팝니다. 비우면 안 팔고, 0은 전부 팝니다"
+ },
+ "填 0 代表全卖，请谨慎设置": {
+  "en": "0 means sell everything. Set it with care",
+  "ja": "0 は全部売るという意味です。慎重に設定してください",
+  "ko": "0은 전부 판다는 뜻입니다. 신중하게 설정하세요"
+ },
+ "全卖": {
+  "en": "Sell all",
+  "ja": "全部売る",
+  "ko": "전부 판매"
+ },
+ "留 {n} 个 5 星": {
+  "en": "Keep {n} 5★",
+  "ja": "★5 {n} 人分を残す",
+  "ko": "5성 {n}명분 보유"
+ },
+ "这是 {month}/{day} 游戏改版后的内容，到那天才能改勾选": {
+  "en": "This is the list after the {month}/{day} game update; the ticks can be changed from that day",
+  "ja": "{month}/{day} のアップデート後の内容です。チェックはその日から変更できます",
+  "ko": "{month}/{day} 업데이트 이후의 내용입니다. 체크는 그날부터 바꿀 수 있습니다"
+ },
+ "{month}/{day} 起换成改版后的内容": {
+  "en": "New list from {month}/{day}",
+  "ja": "{month}/{day} から新しい内容",
+  "ko": "{month}/{day}부터 새 내용"
+ },
+ "藏红花甜茶": {
+  "en": "Saffron Sweet Tea",
+  "ja": "サフランスイートティー",
+  "ko": "사프란 스위트 티"
+ },
+ "黑啤酒炖锅": {
+  "en": "Dark Beer Stew",
+  "ja": "黒ビールシチュー",
+  "ko": "흑맥주 스튜"
+ },
+ "土豆汤": {
+  "en": "Potato Soup",
+  "ja": "ジャガイモスープ",
+  "ko": "감자 수프"
+ },
+ "凯洛养身汤": {
+  "en": "Kailac Wellness Soup",
+  "ja": "カイラック養生スープ",
+  "ko": "카이락 보양탕"
+ },
+ "水果冰沙": {
+  "en": "Fruit Smoothie",
+  "ja": "フルーツスムージー",
+  "ko": "과일 스무디"
+ },
+ "巧克力面包": {
+  "en": "Chocolate Bread",
+  "ja": "チョコレートパン",
+  "ko": "초콜릿 빵"
+ },
+ "黄色史莱姆": {
+  "en": "Yellow Slime",
+  "ja": "黄色スライム",
+  "ko": "노란색 슬라임"
+ },
+ "蓝色史莱姆": {
+  "en": "Blue Slime",
+  "ja": "青色スライム",
+  "ko": "파란색 슬라임"
+ },
+ "红色史莱姆": {
+  "en": "Red Slime",
+  "ja": "赤色スライム",
+  "ko": "빨간색 슬라임"
+ },
+ "顶级招募契约书": {
+  "en": "Top Contract",
+  "ja": "最上級契約書",
+  "ko": "최고급 계약서"
+ },
+ "高级招募契约书": {
+  "en": "Advanced Contract",
+  "ja": "上級契約書",
+  "ko": "고급 계약서"
+ },
+ "普通招募契约书": {
+  "en": "Normal Contract",
+  "ja": "一般契約書",
+  "ko": "일반 계약서"
+ },
+ "广场卡带": {
+  "en": "Square Pack",
+  "ja": "広場カセット",
+  "ko": "광장 팩"
+ },
+ "收藏清单": {
+  "en": "Favorites chart",
+  "ja": "お気に入り早見表",
+  "ko": "즐겨찾기 표"
+ },
+ "看要收藏哪些商品": {
+  "en": "See which items to Favorite",
+  "ja": "お気に入りにする商品を確認",
+  "ko": "즐겨찾기할 상품 보기"
+ },
+ "照着在游戏商店里点星星": {
+  "en": "Tap the same stars in the in-game shop",
+  "ja": "ゲーム内ショップで同じ星をタップ",
+  "ko": "게임 상점에서 같은 별을 누르세요"
+ },
+ "要收藏": {
+  "en": "Favorite",
+  "ja": "お気に入り",
+  "ko": "즐겨찾기"
+ },
+ "不用收藏": {
+  "en": "Skip",
+  "ja": "不要",
+  "ko": "제외"
+ },
+ "出发前请把料理技能放在任一个技能格上": {
+  "en": "Before starting, put the Cooking skill in any skill slot",
+  "ja": "開始前に、料理スキルをどれかのスキル枠にセットしてください",
+  "ko": "시작 전에 요리 스킬을 아무 스킬 칸에 넣어 주세요"
  }
 }

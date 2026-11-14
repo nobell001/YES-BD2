@@ -58,6 +58,23 @@ class KeepOwnedTest(unittest.TestCase):
         self.assertEqual(["苹果"], [e.item for e in trader._keep_owned_at_max_rate(entries)])
         self.assertTrue(any("穿山甲鳞片" in message for message in logs))
 
+    def test_slimes_on_todays_list_are_not_logged_as_not_sold(self):
+        # Live 4K 2026-11-10: 「价目表另有120%但不在今日清单的：三种史莱姆（不卖）」
+        # was logged, and the slimes were then sold.
+        trader, logs = self._trader({"苹果", "黄色史莱姆", "蓝色史莱姆", "番茄"})
+        trader._sold_today = None
+        entries = [
+            CalendarEntry("苹果", "S6"),
+            CalendarEntry("黄色史莱姆", "S3", reserve=20000, asset=True),
+            CalendarEntry("蓝色史莱姆", "S3", reserve=3000, asset=True),
+        ]
+        kept = [e.item for e in trader._keep_owned_at_max_rate(entries)]
+        self.assertEqual(["苹果", "黄色史莱姆", "蓝色史莱姆"], kept)
+        extra = [message for message in logs if "不在今日清单" in message]
+        self.assertEqual(1, len(extra))
+        self.assertIn("番茄", extra[0])
+        self.assertNotIn("史莱姆", extra[0])
+
     def test_nothing_at_120_means_nothing_to_sell(self):
         trader, _ = self._trader(set())
         self.assertEqual([], trader._keep_owned_at_max_rate([CalendarEntry("苹果", "S6")]))

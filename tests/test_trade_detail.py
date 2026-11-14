@@ -19,6 +19,10 @@ class TradeDetailTest(unittest.TestCase):
         detail.add_dish("香草牛排", 260)
         detail.add_dish("透明沙拉")
         detail.add_dish("香草牛排")
+        # Two batches of one dish (10000 at most each) add up.
+        detail.add_dish("冰镇甜点", 10000)
+        detail.add_dish("冰镇甜点", 3200)
+        self.assertEqual(13200, detail.cooked.pop("冰镇甜点"))
         self.assertEqual(
             {
                 "sold": [["兽肉", 1980], ["红酒", None]],

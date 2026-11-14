@@ -130,6 +130,10 @@ LIGHT = {
     "today_ink": _LAV,
     "pick": _LAV,
     "pick_bg": _LAV_SOFT,
+    # 跑商: each 史莱姆's keep box carries its own colour along the bottom
+    "slime_yellow": "#D9A521",
+    "slime_blue": "#4C8FD6",
+    "slime_red": "#D2605C",
     # task icons: violet line icons on a soft violet circle (the draft)
     **{f"kind_{kind}": _LAV for kind in KINDS},
     **{f"kind_{kind}_bg": _LAV_SOFT for kind in KINDS},
@@ -223,6 +227,9 @@ DARK = {
     "today_ink": "#B4ABF6",
     "pick": _NIGHT,
     "pick_bg": _NIGHT_SOFT,
+    "slime_yellow": "#E3B04B",
+    "slime_blue": "#6BA6E6",
+    "slime_red": "#E07B77",
     # task icons: violet line icons on a soft violet circle (the draft)
     **{f"kind_{kind}": "#9A8FEA" for kind in KINDS},
     **{f"kind_{kind}_bg": _NIGHT_SOFT for kind in KINDS},
@@ -448,6 +455,7 @@ QLabel[role="h2"] {{ font-size: 15px; }}
 QLabel[role="h3"] {{ font-size: 14px; }}
 QLabel[role="sub"] {{ color: {t["ink2"]}; font-size: 13px; }}
 QLabel[role="muted"] {{ color: {t["ink3"]}; font-size: 12px; }}
+QLabel[role="muted"][tone="bad"] {{ color: {t["badge_must_ink"]}; }}
 QLabel[role="eyebrow"] {{ color: {t["ink3"]}; font-size: 12px; }}
 QLabel[role="guide"] {{ font-size: 16px; }}
 QLabel[role="guide_note"] {{ color: {t["ink2"]}; font-size: 15px; }}

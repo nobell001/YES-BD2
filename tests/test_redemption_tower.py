@@ -26,10 +26,12 @@ from src.tasks.RedemptionTowerTask import (
     find_castle_marker,
     highest_cleared,
     keys_empty,
+    level_tick_points,
     level_ticks,
     parse_level,
     parse_reward_count,
     quick_battle_lit,
+    row_below,
     swept_note,
 )
 
@@ -420,14 +422,13 @@ class GreyedTopLevelTest(unittest.TestCase):
         self.assertFalse(task._quick_battle())
         task.press_and_confirm.assert_not_called()
 
-    def test_lit_misread_falls_back_to_the_highest_cleared(self):
-        task = self.task([10, 9], picked=(10, True))
-        task._pick_level = mock.Mock(side_effect=[(10, True), (7, False)])
+    def test_no_dialog_picks_the_row_again_and_retries_once(self):
+        task = self.task([10, 9])
+        task._pick_level = mock.Mock(side_effect=[(7, False), (7, False)])
         opened = iter([False, True])
         task._open_dialog = lambda: next(opened)
-        with mock.patch(f"{MODULE}.quick_battle_lit", return_value=False):
-            self.assertTrue(task._quick_battle())
-        task._pick_level.assert_called_with(force_lower=True)
+        self.assertTrue(task._quick_battle())
+        task._pick_level.assert_called_with(always_click=True)
         self.note.assert_called_once_with("已扫荡救赎之塔LV7 9场")
 
 
@@ -472,6 +473,48 @@ class PickLevelTest(unittest.TestCase):
         task = self.task([load("tower_page_ticks_2k.jpg")], badge=10)
         self.assertEqual((10, True), task._pick_level())
         task._click_reference.assert_not_called()
+
+    def test_opened_on_lv7_lit_is_not_the_top_level(self):
+        # Leo 2026-11-14: after yesterday's LV7 sweep the page opens on LV7
+        # with 快速战斗 lit; v0.3.14 took that for 「LV10 cleared」 and swept
+        # MAX.  LV8-10 rows below the last ✓ say it is not the top: MAX-1.
+        frame = load("tower_page_lv10_grey_tw_2k.jpg").copy()
+        lit = load("tower_page_ticks_2k.jpg")
+        frame[940:1030, 1310:1820] = lit[940:1030, 1310:1820]  # 快速战斗 lit
+        self.assertTrue(quick_battle_lit(frame))
+        task = self.task([frame], badge=7)
+        self.assertEqual((7, False), task._pick_level())
+        task._click_reference.assert_not_called()  # already on LV7
+
+    def test_badge_unread_still_picks_the_row(self):
+        frame = load("tower_page_lv10_grey_tw_2k.jpg").copy()
+        lit = load("tower_page_ticks_2k.jpg")
+        frame[940:1030, 1310:1820] = lit[940:1030, 1310:1820]
+        task = self.task([frame, frame], badge=None)
+        self.assertEqual((7, False), task._pick_level())
+        task._click_reference.assert_called_once()
+
+
+class RowBelowTest(unittest.TestCase):
+    """Is the highest ✓ row the last level? (MAX there, MAX-1 below it.)"""
+
+    def test_lv7_has_rows_below(self):
+        frame = load("tower_page_lv10_grey_tw_2k.jpg")
+        _x, y = level_tick_points(frame)[-1]
+        self.assertTrue(row_below(frame, y))
+
+    def test_lv10_is_the_last_row(self):
+        frame = load("tower_page_ticks_2k.jpg")
+        _x, y = level_tick_points(frame)[-1]
+        self.assertFalse(row_below(frame, y))
+
+    def test_every_cleared_row_above_lv10_has_a_row_below(self):
+        for name in ("tower_page_lv10_grey_tw_2k.jpg", "tower_page_ticks_2k.jpg"):
+            frame = load(name)
+            for _x, y in level_tick_points(frame):
+                if y < 1000:
+                    with self.subTest(name=name, y=y):
+                        self.assertTrue(row_below(frame, y))
 
 
 class SeasonSettlingTest(unittest.TestCase):

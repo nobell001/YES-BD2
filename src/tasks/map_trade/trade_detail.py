@@ -26,8 +26,11 @@ class TradeDetail:
             self.sold[item] = (self.sold[item] or 0) + quantity
 
     def add_dish(self, recipe: str, quantity: int | None = None) -> None:
-        if recipe not in self.cooked or quantity is not None:
+        # A dish cooked in several batches (10000 at most each) adds up.
+        if recipe not in self.cooked:
             self.cooked[recipe] = quantity
+        elif quantity is not None:
+            self.cooked[recipe] = (self.cooked[recipe] or 0) + quantity
 
     def summary(self) -> dict:
         return {

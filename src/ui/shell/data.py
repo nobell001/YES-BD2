@@ -514,6 +514,39 @@ def sale_days() -> dict:
         return {}
 
 
+def month_sale_days(today: date | None = None) -> tuple[dict, date | None]:
+    """Each date's goods for the month on screen, and the date the table
+    changes when that still lies ahead in this month (else None)."""
+    try:
+        from src.tasks.map_trade.sale_days import month_sale_days as read
+
+        return read(today or sale_date())
+    except Exception as exc:
+        logger.error(f"read sale calendar failed: {exc}")
+        return {}, None
+
+
+def asset_sale_days(config) -> dict:
+    """day → 招募书 / 史莱姆 these settings sell that day (see asset_keep)."""
+    try:
+        from src.tasks.map_trade.asset_keep import asset_sale_days as read
+
+        return read(config)
+    except Exception as exc:
+        logger.error(f"read asset sale settings failed: {exc}")
+        return {}
+
+
+def extra_dishes_from() -> date | None:
+    """The date 额外料理 start being cooked, while that is still ahead."""
+    try:
+        from src.tasks.map_trade.sale_days import NEXT_CALENDAR_FROM, NEXT_TABLE, table_for
+
+        return None if table_for(sale_date()) == NEXT_TABLE else NEXT_CALENDAR_FROM
+    except Exception:
+        return None
+
+
 def trade_phases_done() -> dict[str, bool]:
     """买 / 制作料理 / 卖 done in their current period (the trade's own ledger)."""
     try:

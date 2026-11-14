@@ -6,6 +6,7 @@ from src.tasks.map_trade.calendar import (
 from src.tasks.map_trade.models import CalendarEntry
 from src.tasks.map_trade.navigator import Navigator
 from src.tasks.map_trade.progress import ProgressStore
+from src.tasks.map_trade.sale_days import bundled_calendar_file
 from src.tasks.map_trade.trade_detail import TradeDetail
 from src.tasks.map_trade.trader_buy import BuyFlowMixin
 from src.tasks.map_trade.trader_cartridge import ShopCartridgeNavigationMixin
@@ -72,7 +73,8 @@ class Trader(
         self._sale_title_catalog_cache = None
         self.trade_detail = TradeDetail()
         self.calendar_client = PriceCalendarClient(
-            bundled_path=CALENDAR_DIR / "price_calendar.v1.json",
+            bundled_path=bundled_calendar_file(),
+            bundled_for=bundled_calendar_file,
             sources_path=CALENDAR_DIR / "calendar_sources.json",
         )
 

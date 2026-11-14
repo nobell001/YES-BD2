@@ -27,6 +27,7 @@ class ProjectStructureTest(unittest.TestCase):
             "assets/coco_annotations.json",
             "assets/map_trade/calendar_sources.json",
             "assets/map_trade/price_calendar.v1.json",
+            "assets/map_trade/price_calendar.20261119.v1.json",
         ]
         for relative_path in expected:
             with self.subTest(path=relative_path):

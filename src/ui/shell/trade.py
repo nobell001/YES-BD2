@@ -12,6 +12,18 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 from src.ui.shell import actions, data, motion, theme
 from src.ui.shell.config_form import ConfigForm
 from src.ui.shell.page import Page, pill, set_pill
+from src.ui.shell.trade_assets import (
+    AssetBlock,
+    BalancedFlow,
+    ContractPile,
+    KeepBox,
+    SideOrStack,
+    StepRow,
+    VLine,
+    ZeroNote,
+    hold,
+)
+from src.ui.shell.trade_favorites import FavoritesCard, FavoritesRow
 from src.ui.shell.widgets import (
     Button,
     Card,
@@ -27,7 +39,6 @@ from src.ui.shell.widgets import (
     attach_hint,
     clear_layout,
     draw_fitted,
-    grid_container,
     hbox,
     t,
     tf,
@@ -38,6 +49,7 @@ TASK_NAME = "每日跑商"
 BARGAIN_TASK = "循环砍价"
 BATCH_KEY = "跑商"
 LAST_DISH = "街头烤鸡肉串"
+EXTRA_DISHES_KEY = "额外料理"
 
 
 class DishTile(QWidget):
@@ -185,8 +197,10 @@ class BargainRow(QWidget):
         row = hbox(self, (gap + 6, gap // 2, gap, gap // 2), theme.size("gap_md") + 6)
         row.addWidget(StickerButton(sticker, 42, self, hover_source=self))
         texts = vbox(None, (0, 0, 0, 0), 1)
-        texts.addWidget(Text("循环砍价", "h3"))
+        texts.addStretch(1)  # the row can be taller than its two lines
+        texts.addWidget(Text("循环砍价", "h3", elide=True))
         texts.addWidget(Text("练砍价技能", "muted", elide=True))
+        texts.addStretch(1)
         row.addLayout(texts, 1)
         row.addWidget(IconLabel("chevron-right", 16, "ink3"))
 
@@ -333,11 +347,17 @@ class TradePage(Page):
         self.body.addWidget(self.more)
         self._more_built = False
 
-        steps, grid = grid_container(250, 14, 3)
+        # Leo 2026-11-10: the three cards are equally tall; 做料理 and 卖
+        # hold more than 买 and get more of the width.
+        steps, grid = hold(StepRow)
         self.buy_card = self._step_card(grid, 1, "shopping-cart", "买", "买")
         self.cook_card = self._step_card(grid, 2, "chef-hat", "做料理", "制作料理", "每道做到最多")
         self.sell_card = self._step_card(grid, 3, "coins", "卖", "卖")
         self.body.addWidget(steps)
+        # Built when first opened: 31 small charts nobody may ever look at.
+        self.favorites_card: FavoritesCard | None = None
+        self._favorites_at = self.body.count()
+        self.zero_note = ZeroNote(self.view)
         self._build_buy()
         self._build_cook()
         self._build_sell()
@@ -412,19 +432,21 @@ class TradePage(Page):
         column = self.buy_card.column
         # Two rows of the same shape (Leo 2026-11-09 「買這邊感覺不太協調」:
         # a small cartridge low on the left, a big sticker high on the right
-        # and an empty middle).  The merchant: picture, name, one line; then
+        # and an empty middle).  收藏清单: picture, name, one line; then
         # 循环砍价 in the same shape as a button row; the tip at the bottom.
-        gap = theme.size("gap_sm")
-        merchant = hbox(None, (gap, 0, gap, 0), theme.size("gap_md"))
-        merchant.addWidget(Picture(data.cartridge_picture("S1"), fixed=QSize(54, 42)))
-        texts = vbox(None, (0, 0, 0, 0), 1)
-        texts.addWidget(Text("第一章商人", "h3", elide=True))
-        texts.addWidget(Text("砍价，买下收藏的商品", "muted", elide=True))
-        merchant.addLayout(texts, 1)
-        column.addLayout(merchant)
+        # Both rows share the card's height (Leo 2026-11-10: beside the taller
+        # 做料理 and 卖 cards the 买 card 「顯得空了」).
+        # Leo 2026-11-13: the row opens the 收藏清单 chart under the three
+        # cards (which goods to favourite in the game); it only shows, the
+        # tool still buys whatever the player has favourited.  The picture is
+        # the 广场卡带 (Leo 2026-11-10; since 2026-10-20 the run buys from the
+        # merchant in 梦幻广场, the chapter 1 one is the fallback).
+        self.favorites_row = FavoritesRow(data.cartridge_picture("SQUARE"))
+        self.favorites_row.clicked.connect(self._toggle_favorites)
+        column.addWidget(self.favorites_row, 1)
         self.bargain_button = BargainRow(data.bargain_picture())
         self.bargain_button.clicked.connect(self._open_bargain)
-        column.addWidget(self.bargain_button)
+        column.addWidget(self.bargain_button, 1)
         self.bargain_running = QWidget()
         running = hbox(self.bargain_running, (0, 0, 0, 0), 8)
         running.addWidget(IconLabel("loader-circle", 15, "primary"))
@@ -437,7 +459,6 @@ class TradePage(Page):
         self.bargain_key = Text("", "muted")
         self.bargain_key.hide()
         column.addWidget(self.bargain_key)
-        column.addStretch(1)
         # Leo (2026-10-05): the tool buys only the game's favourites.
         column.addWidget(self._tip(("先在游戏里把要买的商品加入收藏", "工具只买「收藏」里的商品")))
 
@@ -455,41 +476,55 @@ class TradePage(Page):
 
     def _build_cook(self) -> None:
         column = self.cook_card.column
-        self.dish_box = QWidget()
-        from qfluentwidgets import FlowLayout
-
-        flow = FlowLayout(self.dish_box, needAni=False)
-        flow.setContentsMargins(0, 0, 0, 0)
-        flow.setHorizontalSpacing(6)
-        flow.setVerticalSpacing(6)
-        self.dishes: dict[str, DishTile] = {}
         task = self.task()
-        options = list(
-            ((task.config_type.get("料理清单") or {}).get("options") or []) if task else []
-        )
-        for name in options:
-            tile = DishTile(name, 52)
-            tile.clicked.connect(lambda n=name: self._toggle_dish("料理清单", n))
-            flow.addWidget(tile)
-            self.dishes[name] = tile
+
+        def options(key: str) -> list[str]:
+            return list(((task.config_type.get(key) or {}).get("options") or []) if task else [])
+
+        def tiles(key: str, size: int) -> tuple[QWidget, dict[str, DishTile]]:
+            box, flow = hold(BalancedFlow, 6)
+            made = {}
+            for name in options(key):
+                tile = DishTile(name, size)
+                tile.clicked.connect(lambda k=key, n=name: self._toggle_dish(k, n))
+                flow.addWidget(tile)
+                made[name] = tile
+            return box, made
+
+        def group(title: str, note: Text, box: QWidget) -> QWidget:
+            holder = QWidget()
+            rows = vbox(holder, (0, 0, 0, 0), 8)
+            names = hbox(None, (0, 0, 0, 0), 8)
+            names.addWidget(Text(title, "sub"))
+            names.addWidget(note, 1)
+            rows.addLayout(names)
+            rows.addWidget(box)
+            return holder
+
+        # Ten dishes: one row when the card is wide, else 5 + 5.
+        self.dish_box, self.dishes = tiles("料理清单", 52)
         column.addWidget(self.dish_box)
         column.addWidget(Separator())
-        names = hbox(None, (0, 0, 0, 0), 8)
-        names.addWidget(Text("5 星料理", "sub"))
-        names.addWidget(Text("点选才做", "muted"), 1)
-        column.addLayout(names)
-        line = hbox(None, (0, 0, 0, 0), 6)
-        self.five: dict[str, DishTile] = {}
-        five_options = list(
-            ((task.config_type.get("5星料理") or {}).get("options") or []) if task else []
+        # Leo 2026-11-10: 额外料理 sit right of 5 星料理 with a little room
+        # between (under it when the card is narrow), and are cooked last.
+        five_box, self.five = tiles("5星料理", 40)
+        extra_box, self.extra = tiles(EXTRA_DISHES_KEY, 40)
+        self.extra_note = Text("最后才做", "muted", elide=True)
+        self.groups, pair = hold(SideOrStack)
+        pair.addWidget(group("5 星料理", Text("点选才做", "muted", elide=True), five_box))
+        pair.addWidget(VLine())
+        pair.addWidget(group("额外料理", self.extra_note, extra_box))
+        column.addWidget(self.groups)
+        column.addStretch(1)
+        # Leo 2026-11-10 「料理有一次做10000個的上限 要注意這點」.
+        column.addWidget(
+            self._tip(
+                (
+                    "一道料理一次最多做 10000 个，材料还够会接着再做",
+                    "额外料理排在最后，不想做的点一下就取消",
+                )
+            )
         )
-        for name in five_options:
-            tile = DishTile(name, 40)
-            tile.clicked.connect(lambda n=name: self._toggle_dish("5星料理", n))
-            line.addWidget(tile)
-            self.five[name] = tile
-        line.addStretch(1)
-        column.addLayout(line)
 
     def _toggle_dish(self, key: str, name: str) -> None:
         task = self.task()
@@ -502,19 +537,140 @@ class TradePage(Page):
         self.refresh()
 
     def _build_sell(self) -> None:
+        from src.tasks.map_trade import asset_keep as keep
+
         column = self.sell_card.column
+        # Today's goods with their pictures, as before (Leo 2026-11-10
+        # 「今天賣3件一樣要像以前一樣有圖示」), the count beside them.
+        today = hbox(None, (0, 0, 0, 0), 12)
         self.today_items_box = QWidget()
         self.today_items = hbox(self.today_items_box, (0, 0, 0, 0), 6)
-        column.addWidget(self.today_items_box)
-        self.sell_title = Text("", "h3")
-        self.sell_sub = Text("照下面的出售日历", "muted")
-        column.addWidget(self.sell_title)
-        column.addWidget(self.sell_sub)
+        today.addWidget(self.today_items_box)
+        texts = vbox(None, (0, 0, 0, 0), 1)
+        self.sell_title = Text("", "h3", elide=True)
+        self.sell_sub = Text("照下面的出售日历", "muted", elide=True)
+        texts.addWidget(self.sell_title)
+        texts.addWidget(self.sell_sub)
+        today.addLayout(texts, 1)
+        column.addLayout(today)
+
+        # 招募书: one number for all three tiers.  Only how much to keep is
+        # asked, never what the player owns (Leo: 「只要說要留多少就好」).
+        boxes = QWidget()
+        row = hbox(boxes, (0, 0, 0, 0), 8)
+        contract_pictures = [data.item_picture(item) for item in keep.CONTRACT_TIERS]
+        row.addWidget(ContractPile(contract_pictures))
+        self.contract_box = KeepBox(steppers=True, digits=3)
+        self.contract_box.setFixedWidth(self.contract_box.sizeHint().width())
+        row.addWidget(self.contract_box)
+        row.addWidget(Text("个 5 星", "sub"))
+        row.addStretch(1)
+        self.contract_block = AssetBlock(
+            keep.CONTRACTS_NAME,
+            boxes,
+            hint="工具会自动计算招募书数量进行贩售",
+            pictures=contract_pictures,
+        )
+        self._wire_keep(self.contract_box, keep.CONTRACT_KEEP_KEY)
+        self.contract_block.toggled.connect(
+            lambda on: self._switch_asset(keep.SELL_CONTRACTS_KEY, on)
+        )
+        column.addWidget(self.contract_block)
+
+        # 史莱姆: one box per colour.
+        boxes = QWidget()
+        row = hbox(boxes, (0, 0, 0, 0), 6)
+        self.slime_boxes: dict[str, KeepBox] = {}
+        for (item, key), accent in zip(keep.SLIMES, ("slime_yellow", "slime_blue", "slime_red")):
+            box = KeepBox(data.item_picture(item), item, accent)
+            self._wire_keep(box, key)
+            row.addWidget(box, 1)
+            self.slime_boxes[key] = box
+        self.slime_block = AssetBlock(
+            "史莱姆", boxes, pictures=[data.item_picture(item) for item, _key in keep.SLIMES]
+        )
+        self.slime_block.toggled.connect(lambda on: self._switch_asset(keep.SELL_SLIMES_KEY, on))
+        column.addWidget(self.slime_block)
+
         column.addStretch(1)
         column.addWidget(
-            self._tip(("只卖出售日历里当天勾选的商品", "标「留」的商品会留下那个数量，其余卖掉"))
+            self._tip(
+                (
+                    "只卖出售日历里当天勾选的商品",
+                    "招募书、史莱姆要打开并填数量才卖，没填就不卖，填 0 是全卖",
+                )
+            )
         )
         self._today_items_key = None
+
+    def _wire_keep(self, box: KeepBox, key: str) -> None:
+        box.changed.connect(lambda text, k=key, b=box: self._keep_typed(k, b, text))
+        box.settled.connect(lambda b=box: self._keep_settled(b))
+
+    def _keep_typed(self, key: str, box: KeepBox, text: str) -> None:
+        task = self.task()
+        if task is not None:
+            # Saved as typed: what the box shows is what a run uses.
+            task.config[key] = text
+        if not box.is_zero() and self.zero_note.anchor() is box:
+            self.zero_note.dismiss()
+        self.refresh()
+
+    def _keep_settled(self, box: KeepBox) -> None:
+        # Leo 2026-11-10: 0 sells everything, so say so the moment it is typed.
+        if box.is_zero() and box.isVisible():
+            self.zero_note.show_under(box)
+
+    def _switch_asset(self, key: str, on: bool) -> None:
+        self.zero_note.dismiss()
+        self._set(key, bool(on))
+
+    def _refresh_assets(self, config) -> None:
+        from src.tasks.map_trade import asset_keep as keep
+
+        selling = bool(config.get("卖", True))
+        for block in (self.contract_block, self.slime_block):
+            block.setEnabled(selling)
+
+        on = bool(config.get(keep.SELL_CONTRACTS_KEY, False))
+        self.contract_block.set_on(on)
+        self.contract_box.set_text(config.get(keep.CONTRACT_KEEP_KEY, ""))
+        amount = keep.parse_keep(config.get(keep.CONTRACT_KEEP_KEY, ""))
+        if not on:
+            self.contract_block.set_state("不卖")
+        elif amount is None:
+            self.contract_block.set_state("还没填，不会卖", alarm=True)
+        elif amount == 0:
+            self.contract_block.set_state("填 0 会全卖", alarm=True)
+        else:
+            self.contract_block.set_state(
+                tf("每月 {day} 号卖，留着能招募", day=keep.CONTRACT_SALE_DAY)
+            )
+
+        on = bool(config.get(keep.SELL_SLIMES_KEY, False))
+        self.slime_block.set_on(on)
+        amounts = []
+        for key, box in self.slime_boxes.items():
+            box.set_text(config.get(key, ""))
+            amounts.append(keep.parse_keep(config.get(key, "")))
+        if not on:
+            self.slime_block.set_state("不卖")
+        elif all(amount is None for amount in amounts):
+            self.slime_block.set_state("还没填，不会卖", alarm=True)
+        elif any(amount == 0 for amount in amounts):
+            self.slime_block.set_state("填 0 会全卖", alarm=True)
+        else:
+            self.slime_block.set_state(
+                tf("每月 {day} 号卖，各留这么多", day=keep.SLIME_SALE_DAY)
+            )
+        # The warning stays on its box (the window may have been resized) and
+        # leaves with it.
+        noted = self.zero_note.anchor()
+        if noted is not None:
+            if noted.isVisibleTo(self) and noted.is_zero():
+                self.zero_note.place()
+            else:
+                self.zero_note.dismiss()
 
     # ---------------------------------------------------------------- bargain
     # 循环砍价 (Leo 2026-10-11): a small icon in the 买 card opens the loop
@@ -659,8 +815,12 @@ class TradePage(Page):
         column = vbox(card, (18, 16, 18, 18), 12)
         head = hbox(None, (0, 0, 0, 0), 10)
         head.addWidget(Text("出售日历", "h2"))
-        self.cal_sub = Text("", "muted")
+        self.cal_sub = Text("", "muted", elide=True)
         head.addWidget(self.cal_sub, 1)
+        # Shown in the month the game's table changes, until it has.
+        self.cal_change = Text("", "pill")
+        self.cal_change.hide()
+        head.addWidget(self.cal_change)
         column.addLayout(head)
         body = hbox(None, (0, 0, 0, 0), 18)
         self.cal_box = QWidget()
@@ -678,26 +838,31 @@ class TradePage(Page):
         column.addLayout(body)
         self.body.addWidget(card)
         self._cells: dict[int, DayCell] = {}
-        self._cal_month: tuple[int, int] | None = None
+        self._cal_key = None
         self._panel_key = None
         self._panel_checks: dict[str, CheckBox] = {}
 
-    def _fill_calendar(self, today: date, days: dict) -> None:
-        month = (today.year, today.month)
-        if month == self._cal_month:
+    def _fill_calendar(self, today: date, days: dict, assets: dict | None = None) -> None:
+        assets = assets or {}
+        first_weekday, count = month_calendar.monthrange(today.year, today.month)
+        shown = {}
+        for day in range(1, count + 1):
+            items = list(dict.fromkeys(entry.item for entry in days.get(day, ())))
+            # 招募书 / 史莱姆 the player set up are sold that day too (Leo
+            # 2026-11-10 「那我的出售日曆也要列出來」).
+            shown[day] = [*items, *(line.item for line in assets.get(day, ()))]
+        key = (today.year, today.month, tuple(tuple(items) for items in shown.values()))
+        if key == self._cal_key:
             return
-        self._cal_month = month
+        self._cal_key = key
         clear_layout(self.cal_grid)
         self._cells = {}
         for column, name in enumerate("一二三四五六日"):
             label = Text(name, "muted")
             label.setAlignment(Qt.AlignCenter)
             self.cal_grid.addWidget(label, 0, column)
-        first_weekday, count = month_calendar.monthrange(today.year, today.month)
-        for day in range(1, count + 1):
+        for day, items in shown.items():
             position = first_weekday + day - 1
-            items = [entry.item for entry in days.get(day, ())]
-            items = list(dict.fromkeys(items))
             cell = DayCell(day, items)
             cell.clicked.connect(self._pick_day)
             self.cal_grid.addWidget(cell, 1 + position // 7, position % 7)
@@ -713,17 +878,30 @@ class TradePage(Page):
         self._panel_key = None
         self.refresh()
 
-    def _fill_day_panel(self, today: date, day: int, entries, task) -> None:
-        from src.tasks.map_trade.sale_days import day_items, sale_day_key
+    @staticmethod
+    def _ticked(config, day: int, entries, change: date | None) -> set[str]:
+        """The items of ``day`` that will be sold, as the settings stand."""
+        from src.tasks.map_trade.sale_days import day_items, sale_day_key, ticks_after_change
 
+        if change is not None and day >= change.day:
+            return set(ticks_after_change(config, day))
         key = sale_day_key(day)
-        if task is None:
-            selected = set()
-        elif key in task.config:
-            selected = set(task.config.get(key) or [])
-        else:
-            selected = set(day_items(entries))
-        panel_key = (day, tuple(sorted(selected)), tuple(entry.item for entry in entries))
+        if key in config:
+            return set(config.get(key) or [])
+        return set(day_items(entries))
+
+    def _fill_day_panel(
+        self, today: date, day: int, entries, task, assets=(), change: date | None = None
+    ) -> None:
+        # From the day the game's table changes, the panel shows what will be
+        # sold then; those ticks are set when the day comes, not before.
+        waiting = change is not None and day >= change.day
+        selected = set() if task is None else self._ticked(task.config, day, entries, change)
+        panel_key = (
+            day,
+            tuple(sorted(selected)),
+            (tuple(entry.item for entry in entries), tuple(assets), waiting),
+        )
         if panel_key == self._panel_key:
             return
         same_day = self._panel_key is not None and (panel_key[0], panel_key[2]) == (
@@ -742,11 +920,12 @@ class TradePage(Page):
         head = hbox(None, (0, 0, 0, 0), 8)
         head.addWidget(Text(tf("{month}月{day}日", month=today.month, day=day), "h3"))
         is_today = day == today.day
+        total = len(entries) + len(assets)
         head.addWidget(
-            Text(tf("今天 · {n} 件" if is_today else "{n} 件", n=len(entries)), "muted"), 1
+            Text(tf("今天 · {n} 件" if is_today else "{n} 件", n=total), "muted"), 1
         )
         self.day_layout.addLayout(head)
-        if not entries:
+        if not total:
             self.day_layout.addWidget(Text("这天没有要卖的", "muted"))
             return
         for entry in entries:
@@ -756,18 +935,46 @@ class TradePage(Page):
             if entry.reserve:
                 row.addWidget(Text(tf("留 {n}", n=f"{entry.reserve:,}"), "pill"))
             check = CheckBox("", entry.item in selected)
+            check.setEnabled(not waiting)
             check.toggled.connect(lambda on, d=day, item=entry.item: self._tick_item(d, item, on))
             self._panel_checks[entry.item] = check
             row.addWidget(check)
             self.day_layout.addLayout(row)
+        for line in assets:
+            # Decided by the switch and the number in the 卖 card, not a tick.
+            row = hbox(None, (0, 2, 0, 2), 10)
+            row.addWidget(ItemIcon(line.item, 34))
+            row.addWidget(Text(line.item, "h3", elide=True), 1)
+            if line.keep == 0:
+                note = Text("全卖", "pill")
+                note.setProperty("tone", "bad")
+            elif line.recruits:
+                note = Text(tf("留 {n} 个 5 星", n=line.keep), "pill")
+            else:
+                note = Text(tf("留 {n}", n=f"{line.keep:,}"), "pill")
+            row.addWidget(note, 0, Qt.AlignVCenter)
+            self.day_layout.addLayout(row)
+        if waiting:
+            self.day_layout.addWidget(
+                Text(
+                    tf(
+                        "这是 {month}/{day} 游戏改版后的内容，到那天才能改勾选",
+                        month=change.month,
+                        day=change.day,
+                    ),
+                    "muted",
+                    wrap=True,
+                )
+            )
 
     def _tick_item(self, day: int, item: str, on: bool) -> None:
         from src.tasks.map_trade.sale_days import day_items, sale_day_key
 
         task = self.task()
         entries = data.sale_days().get(day, ())
-        if task is None or not entries:
-            return
+        _days, change = data.month_sale_days()
+        if task is None or not entries or (change is not None and day >= change.day):
+            return  # the dates after the table change are ticked once it has changed
         options = day_items(entries)
         key = sale_day_key(day)
         selected = set(task.config.get(key) or []) if key in task.config else set(options)
@@ -779,6 +986,15 @@ class TradePage(Page):
         self.refresh()
 
     # ---------------------------------------------------------------- more
+
+    def _toggle_favorites(self) -> None:
+        if self.favorites_card is None:
+            self.favorites_card = FavoritesCard()
+            self.favorites_card.hide()
+            self.body.insertWidget(self._favorites_at, self.favorites_card)
+        show = not self.favorites_card.isVisible()
+        self.favorites_card.setVisible(show)
+        self.favorites_row.set_open(show)
 
     def _toggle_more(self) -> None:
         if not self._more_built:
@@ -839,41 +1055,57 @@ class TradePage(Page):
         five = set(config.get("5星料理") or [])
         for name, tile in self.five.items():
             tile.set_state(name in five, "")
+        extra = [name for name in self.extra if name in set(config.get(EXTRA_DISHES_KEY) or [])]
+        for name, tile in self.extra.items():
+            tile.set_state(name in extra, str(extra.index(name) + 1) if name in extra else "")
+        # The six are sold only by the game's new table: cooked from then on.
+        start = data.extra_dishes_from()
+        self.extra_note.set_text(
+            tf("{month}/{day} 改版后才做", month=start.month, day=start.day)
+            if start is not None
+            else "最后才做"
+        )
         cooking_on = bool(config.get("制作料理", True))
         self.dish_box.setEnabled(cooking_on)
+        self.groups.setEnabled(cooking_on)
+        self._refresh_assets(config)
 
         today = data.sale_date()
-        days = data.sale_days()
-        self._fill_calendar(today, days)
-        from src.tasks.map_trade.sale_days import day_items, sale_day_key
+        days, change = data.month_sale_days(today)
+        assets = data.asset_sale_days(config)
+        self._fill_calendar(today, days, assets)
+        self.cal_change.set_text(
+            tf("{month}/{day} 起换成改版后的内容", month=change.month, day=change.day)
+            if change is not None
+            else ""
+        )
+        self.cal_change.setVisible(change is not None)
+        from src.tasks.map_trade.sale_days import day_items
 
         for day, cell in self._cells.items():
             entries = days.get(day, ())
-            key = sale_day_key(day)
             unticked = 0
-            if entries and key in config:
-                unticked = len(set(day_items(entries)) - set(config.get(key) or []))
+            if entries:
+                unticked = len(set(day_items(entries)) - self._ticked(config, day, entries, change))
             cell.set_state(day == today.day, day == (self._picked_day or today.day), unticked)
 
         entries = days.get(today.day, ())
-        key = sale_day_key(today.day)
-        selling = [
-            entry.item
-            for entry in entries
-            if key not in config or entry.item in set(config.get(key) or [])
-        ]
+        ticked = self._ticked(config, today.day, entries, change)
+        selling = [entry.item for entry in entries if entry.item in ticked]
+        selling += [line.item for line in assets.get(today.day, ())]
         items_key = tuple(selling)
         if items_key != self._today_items_key:
             self._today_items_key = items_key
             clear_layout(self.today_items)
-            for name in selling[:6]:
+            room = 4 if len(selling) <= 4 else 3
+            for name in selling[:room]:
                 self.today_items.addWidget(ItemIcon(name, 40))
-            if len(selling) > 6:
-                self.today_items.addWidget(Text(f"+{len(selling) - 6}", "muted"))
-            self.today_items.addStretch(1)
+            if len(selling) > room:
+                self.today_items.addWidget(Text(f"+{len(selling) - room}", "muted"))
+        self.today_items_box.setVisible(bool(selling))
         self.sell_title.set_text(
             tf("今天卖 {n} 件", n=len(selling)) if selling else "今天没有要卖的"
         )
-        self._fill_day_panel(
-            today, self._picked_day or today.day, days.get(self._picked_day or today.day, ()), task
-        )
+        picked_day = self._picked_day or today.day
+        lines = tuple(assets.get(picked_day, ()))
+        self._fill_day_panel(today, picked_day, days.get(picked_day, ()), task, lines, change)

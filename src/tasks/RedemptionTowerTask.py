@@ -254,6 +254,31 @@ def highest_cleared(frame_1080: np.ndarray) -> tuple[int, tuple[int, int]] | Non
     return level_of_row(y), (x + LEVEL_LABEL_DX, y + LEVEL_LABEL_DY)
 
 
+# The thin line under each level row (Leo's 简中 and 繁中 frames: y=180, 279,
+# ... 972, one row pitch apart), seen left of the row labels where the
+# character art never reaches.
+ROW_LINE_X = (245, 300)
+ROW_LINE_BELOW_TICK = 42
+ROW_LINE_MIN_CONTRAST = 15.0
+LIST_BOTTOM_Y = 1080
+
+
+def row_below(frame_1080: np.ndarray, tick_y: int) -> bool:
+    """Another level row under the row whose ✓ is at ``tick_y``: the line
+    under that next row is drawn.  The last level (LV10 of 10) has no room
+    for one under it."""
+    line_y = tick_y + ROW_LINE_BELOW_TICK + LEVEL_ROW_PITCH
+    if line_y + 6 >= LIST_BOTTOM_Y:
+        return False
+    x0, x1 = ROW_LINE_X
+    grey = cv2.cvtColor(frame_1080[:, x0:x1, :3], cv2.COLOR_BGR2GRAY).astype(np.float32)
+    rows = grey.mean(axis=1)
+    for y in range(line_y - 4, line_y + 5):
+        if rows[y] - (rows[y - 4] + rows[y + 4]) / 2 >= ROW_LINE_MIN_CONTRAST:
+            return True
+    return False
+
+
 def parse_level(text: str) -> int | None:
     """The big badge 「LV 10」 / 「10」 → 10."""
     numbers = re.findall(r"\d+", normalize_ocr_text(text or ""))
@@ -629,16 +654,14 @@ class RedemptionTowerTask(CartridgeFieldTask):
             return False
         level, top = picked
         if not self._open_dialog():
-            # Read lit but the press opened nothing: greyed after all (a
-            # misread); the highest cleared level is picked and tried once more.
-            if not top or quick_battle_lit(self._reference(self.capture_frame())):
-                return False
-            self.log_info(f"{LABEL}：快速战斗按了没反应，它是灰的，改选已通关的最高难度。")
-            picked = self._pick_level(force_lower=True)
+            # The press opened nothing (the row pick not taken yet, a misread
+            # lit button): the row is picked once more and tried again.
+            self.log_info(f"{LABEL}：快速战斗按了没出现场数窗口，重新选 LV{level} 再按一次。")
+            picked = self._pick_level(always_click=True)
             if picked is None:
                 return False
             level, top = picked
-            if not self._open_dialog():  # 有备案：这已是改选已通关难度后的第二次
+            if not self._open_dialog():  # 有备案：这已是重新选关后的第二次
                 return False
 
         # Leo 2026-10-21 「就直接max」; 2026-11-13: on the top level MAX, on a
@@ -702,29 +725,36 @@ class RedemptionTowerTask(CartridgeFieldTask):
         """The big 「LV N」 badge at the top of the conditions."""
         return parse_level(self._text_in(self.capture_frame(), LEVEL_BADGE_ROI, "救赎之塔难度"))
 
-    def _pick_level(self, force_lower: bool = False) -> tuple[int, bool] | None:
-        """(level, top): the level the page opened on when its 快速战斗 is
-        lit (cleared this season), else the highest level with a ✓ picked
-        (Leo 2026-11-13 「沒亮的話，就選擇已通關的最高難度」).  None: no
-        lit level could be picked (why noted)."""
+    def _pick_level(self, always_click: bool = False) -> tuple[int, bool] | None:
+        """(level, top): the highest level with a ✓ is picked, and ``top``
+        says it is the last level of the list (MAX there, MAX-1 below it).
+
+        Leo 2026-11-13 「快速戰鬥有亮(代表LV10通關)，就直接掃蕩10場；沒亮的
+        話，就選擇已通關的最高難度，然後快速打(MAX-1)場」.  The page opens on
+        the level picked last time, not on the top one: after a LV7 sweep it
+        opens on LV7 with 快速战斗 lit, which v0.3.14 took for 「LV10
+        cleared」 and swept MAX (Leo 2026-11-14 「我現在推到LV7 但他全部消耗
+        掉了」).  So the opened level and its lit button decide nothing: the
+        ✓ rows and the rows under them do.  None: no lit level could be
+        picked (why noted)."""
         frame = self._reference(self.capture_frame())
         lowest = highest_cleared(frame)
-        if not force_lower and quick_battle_lit(frame):
-            level = self._badge_level() or (lowest[0] if lowest else None)
-            self.log_info(f"{LABEL}：LV{level} 快速战斗是亮的，扫荡 MAX 场。")
-            return level, True
         if lowest is None:
-            self._note_why("快速战斗是灰的，左边也没找到打过的关卡")
+            self._note_why("左边没找到打过的关卡")
             return None
         level, point = lowest
+        top = not row_below(frame, point[1] - LEVEL_LABEL_DY)
         opened_on = self._badge_level()
-        self.log_info(
-            f"{LABEL}：LV{opened_on or '?'} 快速战斗是灰的（这一期还没通关），"
-            f"改选已通关的最高难度 LV{level}。"
-        )
-        if opened_on == level:
-            self._note_why(f"LV{level} 有勾但快速战斗还是灰的")
-            return None
+        lit = quick_battle_lit(frame)
+        if top:
+            self.log_info(f"{LABEL}：最高难度 LV{level} 已通关，扫荡 MAX 场。")
+        else:
+            self.log_info(
+                f"{LABEL}：最高难度还没通关，已通关的最高难度是 LV{level}"
+                f"（页面开在 LV{opened_on or '?'}，快速战斗{'亮' if lit else '灰'}），打 MAX-1 场。"
+            )
+        if opened_on == level and lit and not always_click:
+            return level, top
         self.info_set("当前阶段", f"选择 LV{level}")
 
         def picked() -> bool:
@@ -741,7 +771,7 @@ class RedemptionTowerTask(CartridgeFieldTask):
             self._save_flow_diagnostic("redemption_tower_level_pick_failed")
             self._note_why(f"点了 LV{level} 后快速战斗还是灰的")
             return None
-        return (self._badge_level() or level), False
+        return (self._badge_level() or level), top
 
     # -- the dialog ------------------------------------------------------------------
 
