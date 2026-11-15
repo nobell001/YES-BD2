@@ -1212,19 +1212,20 @@ class SellFlowMixin:
     def _move_sale_list(self, direction: int, *, from_first_card: bool = False) -> bool:
         """Drag the list: direction < 0 shows lower items, > 0 higher ones.
 
-        ``from_first_card``: the pull down is pressed on the first item card
-        instead (see SALE_LIST_PULL_X).  The drag uses the real mouse, so it
+        ``from_first_card``: pressed in the left column of item cards instead
+        (the pull down on the first card, see SALE_LIST_PULL_X).  The drag uses the real mouse, so it
         only happens with the game in front (returns False otherwise).
         """
 
         frame = self.vision.capture()
         height, width = frame.shape[:2]
-        if from_first_card:
+        if from_first_card and direction > 0:
             x = round(SALE_LIST_PULL_X * width)
             start = (x, round(SALE_LIST_PULL_FROM_Y * height))
             end = (x, round(SALE_LIST_PULL_TO_Y * height))
         else:
-            x = round(SALE_LIST_DRAG_X * width)
+            # The left column: every row of cards fills it first.
+            x = round((SALE_LIST_PULL_X if from_first_card else SALE_LIST_DRAG_X) * width)
             top = round(SALE_LIST_DRAG_TOP * height)
             bottom = round(SALE_LIST_DRAG_BOTTOM * height)
             start, end = ((x, bottom), (x, top)) if direction < 0 else ((x, top), (x, bottom))
@@ -1248,30 +1249,40 @@ class SellFlowMixin:
 
         self._scroll_sale_list_to_end(1, SALE_LIST_TOP_ATTEMPTS)
 
+    def _drag_sale_list(self, direction: int) -> float | None:
+        """Drag the list once; how much it moved (None: the drag was refused).
+
+        The usual drag stays first (it works for nearly every player, Leo
+        2026-11-15).  When it did not move the list at all, it is made once
+        more from the first item card: the usual spot can be empty space, in
+        a shop of a few cards (葡萄 never shown, player v0.3.16 2026-11-15)
+        or in a row of two or three cards met half way down the list (咖啡豆
+        missed, Leo's 4K 2026-11-15).  Only both still means an end.
+        """
+
+        before = self._sale_list_view()
+        if not self._move_sale_list(direction):
+            return None
+        moved = float(np.mean(np.abs(self._sale_list_view() - before)))
+        if moved >= SALE_LIST_END_DIFF:
+            return moved
+        way = "下拉" if direction > 0 else "上拉"
+        self._status("出售列表滚动", f"{way}没动，改从第一列商品卡再拉一次")
+        before = self._sale_list_view()
+        if not self._move_sale_list(direction, from_first_card=True):
+            return None
+        moved = float(np.mean(np.abs(self._sale_list_view() - before)))
+        self._status("出售列表滚动", f"从第一列商品卡{way}，变化={moved:.1f}")
+        return moved
+
     def _scroll_sale_list_to_end(self, direction: int, attempts: int) -> None:
         """Drag without reading names until the list stops moving
         (direction > 0: to the top, < 0: to the bottom)."""
 
-        for attempt in range(attempts):
-            before = self._sale_list_view()
-            if not self._move_sale_list(direction):
+        for _attempt in range(attempts):
+            moved = self._drag_sale_list(direction)
+            if moved is None or moved < SALE_LIST_END_DIFF:
                 return
-            if float(np.mean(np.abs(self._sale_list_view() - before))) >= SALE_LIST_END_DIFF:
-                continue
-            if direction > 0 and attempt == 0:
-                # The usual pull did not move the list at all.  It works for
-                # nearly every player (Leo 2026-11-15), so it stays first;
-                # only then is it pulled once more from the first card, which
-                # a list of a few cards needs to show the sections below 食物.
-                before = self._sale_list_view()
-                self._status("出售列表滚动", "下拉没动，改从第一张商品卡再拉一次")
-                if not self._move_sale_list(direction, from_first_card=True):
-                    return
-                moved = float(np.mean(np.abs(self._sale_list_view() - before)))
-                self._status("出售列表滚动", f"从第一张商品卡下拉，变化={moved:.1f}")
-                if moved >= SALE_LIST_END_DIFF:
-                    continue
-            return
 
     def _find_sale_item_candidates(
         self, entry: CalendarEntry, direction: int = -1, settled: bool = False
@@ -1294,10 +1305,9 @@ class SellFlowMixin:
         if located is not None or self._last_sale_name_seen or not self._last_sale_ocr_output:
             return located
         for page in range(1, SALE_LIST_MAX_SCROLLS + 1):
-            before = self._sale_list_view()
-            if not self._move_sale_list(direction):
+            moved = self._drag_sale_list(direction)
+            if moved is None:
                 break
-            moved = float(np.mean(np.abs(self._sale_list_view() - before)))
             way = "往上" if direction > 0 else "往下"
             self._status("出售列表滚动", f"{entry.item}：{way}第{page}次，变化={moved:.1f}")
             if moved < SALE_LIST_END_DIFF:

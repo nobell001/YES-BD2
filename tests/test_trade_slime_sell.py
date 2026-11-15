@@ -508,9 +508,10 @@ class ScrollToEndTest(unittest.TestCase):
         return trader, moves
 
     def test_drags_down_until_the_list_stops(self):
-        trader, moves = self._trader([0, 50, 50, 90, 90, 90])
+        trader, moves = self._trader([0, 50, 50, 90, 90, 90, 90, 90])
         trader._scroll_sale_list_to_end(-1, 15)
-        self.assertEqual([-1, -1, -1], moves)
+        # The still drag is made once more from the first column of cards.
+        self.assertEqual([-1, -1, -1, -1], moves)
 
     def test_to_top_drags_up(self):
         # Unmoved: pulled once more from the first card (player 2026-11-15).

@@ -61,7 +61,9 @@ class SaleListSearchTest(unittest.TestCase):
         """scans: results of each on-screen search; views: list image per capture."""
         trader = object.__new__(SellFlowMixin)
         scrolls, statuses = [], []
-        trader._move_sale_list = lambda direction: scrolls.append(direction) or True
+        trader._move_sale_list = lambda direction, from_first_card=False: (
+            scrolls.append(direction) or True
+        )
         trader._status = lambda *args: statuses.append(args)
         views = iter(views)
         trader._sale_list_view = lambda: next(views)
@@ -89,9 +91,24 @@ class SaleListSearchTest(unittest.TestCase):
         import numpy as np
 
         still = np.zeros((64, 96), np.int16)
-        trader, scrolls = self.trader([(None, False)], [still, still])
+        trader, scrolls = self.trader([(None, False)], [still] * 4)
+        trader._status = lambda *_args: None
         self.assertIsNone(trader._find_sale_item_candidates(ALMOND))
-        self.assertEqual([-1], scrolls)
+        # The usual drag, then once more from the first column: both still.
+        self.assertEqual([-1, -1], scrolls)
+
+    def test_search_goes_on_when_the_first_column_drag_moves(self):
+        """Leo's 4K 2026-11-15: half way down, the usual spot was the empty
+        end of a row of two cards; the list did not move and the search
+        stopped above the item.  The drag from the first column moves it."""
+        import numpy as np
+
+        still, lower = np.zeros((64, 96), np.int16), np.full((64, 96), 50, np.int16)
+        found = (["card"], "frame")
+        trader, scrolls = self.trader([(None, False), (found, True)], [still, still, still, lower])
+        trader._status = lambda *_args: None
+        self.assertEqual(found, trader._find_sale_item_candidates(ALMOND))
+        self.assertEqual([-1, -1], scrolls)
 
     def test_no_scrolling_when_the_name_is_on_screen(self):
         trader, scrolls = self.trader([(None, True)], [])
@@ -197,6 +214,9 @@ class SaleListDragTest(unittest.TestCase):
         self.assertTrue(on_card(card_start))
         self.assertLess(card_start[1], card_end[1])
         self.assertEqual(card_end[1] - card_start[1], usual_end[1] - usual_start[1])
+        # Showing lower items from the first column: the usual drag, moved left.
+        trader._move_sale_list(-1, from_first_card=True)
+        self.assertEqual(((620, 870), (620, 330)), drags[-1])
 
 
 class SaleListTopTest(unittest.TestCase):
@@ -215,33 +235,48 @@ class SaleListTopTest(unittest.TestCase):
 
     def test_unmoved_first_pull_is_made_again_from_the_first_card(self):
         # usual pull: 0 -> 0 (did not move); first-card pull: 0 -> 30 (moved,
-        # the sections below 食物 showed); usual pull: 30 -> 30 (at the top).
-        trader, moves = self._top_trader((0, 0, 0, 30, 30, 30))
+        # the sections below 食物 showed); usual pull 30 -> 30 and first-card
+        # pull 30 -> 30: at the top.
+        trader, moves = self._top_trader((0, 0, 0, 30, 30, 30, 30, 30))
         trader._scroll_sale_list_to_top()
-        self.assertEqual([(1, False), (1, True), (1, False)], moves)
+        self.assertEqual([(1, False), (1, True), (1, False), (1, True)], moves)
 
-    def test_first_card_pull_is_skipped_when_the_usual_pull_moves(self):
-        trader, moves = self._top_trader((0, 40, 40, 40))
+    def test_first_card_pull_only_after_an_unmoved_usual_pull(self):
+        # Moved, then still: the first-card pull is made only for the still one.
+        trader, moves = self._top_trader((0, 40, 40, 40, 40, 40))
         trader._scroll_sale_list_to_top()
-        self.assertEqual([(1, False), (1, False)], moves)
+        self.assertEqual([(1, False), (1, False), (1, True)], moves)
 
-    def test_drag_to_the_bottom_never_uses_the_first_card(self):
-        trader, moves = self._top_trader((0, 0))
+    def test_mid_list_empty_spot_does_not_end_the_pull_to_the_top(self):
+        """Leo's 4K 2026-11-15: pulling back to the top, the third usual pull
+        pressed the empty end of a row of two cards (萝卜婴、包装好的海苔); the
+        list stayed near 圣石 and 咖啡豆, above, was never searched."""
+        trader, moves = self._top_trader((0, 40, 40, 40, 40, 80, 80, 80, 80, 80))
+        trader._scroll_sale_list_to_top()
+        self.assertEqual(
+            [(1, False), (1, False), (1, True), (1, False), (1, True)], moves
+        )
+
+    def test_drag_to_the_bottom_also_tries_the_first_column(self):
+        trader, moves = self._top_trader((0, 0, 0, 0))
         trader._scroll_sale_list_to_end(-1, 5)
-        self.assertEqual([(-1, False)], moves)
+        self.assertEqual([(-1, False), (-1, True)], moves)
 
     def test_scrolls_up_until_the_list_stops_moving(self):
         import numpy as np
 
         trader = object.__new__(SellFlowMixin)
         scrolls = []
-        trader._move_sale_list = lambda direction: scrolls.append(direction) or True
+        trader._move_sale_list = lambda direction, from_first_card=False: (
+            scrolls.append(direction) or True
+        )
         # Loading restored the old offset once: the first scroll moves, the
         # second moves again, the third finds the list already at the top.
-        views = iter([np.full((64, 96), v, np.int16) for v in (0, 40, 40, 80, 80, 80)])
+        views = iter([np.full((64, 96), v, np.int16) for v in (0, 40, 40, 80, 80, 80, 80, 80)])
         trader._sale_list_view = lambda: next(views)
+        trader._status = lambda *_args: None
         trader._scroll_sale_list_to_top()
-        self.assertEqual(3, len(scrolls))
+        self.assertEqual(4, len(scrolls))  # the last, still one twice
         self.assertTrue(all(direction > 0 for direction in scrolls))
 
 

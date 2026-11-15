@@ -1146,7 +1146,7 @@ class SellFlowTest(unittest.TestCase):
 
     def test_missing_120_percent_before_any_sale_skips_the_item(self):
         trader = object.__new__(Trader)
-        trader._move_sale_list = lambda _direction: True
+        trader._move_sale_list = lambda _direction, from_first_card=False: True
         trader._scroll_sale_list_to_top = lambda: None
         trader.task = SimpleNamespace(
             operate_click=lambda *_args, **_kwargs: None,
@@ -1179,7 +1179,7 @@ class SellFlowTest(unittest.TestCase):
         candidate = SimpleNamespace(center=(620, 572))
         scans = [([candidate], frame), None]
         trader = object.__new__(Trader)
-        trader._move_sale_list = lambda _direction: True
+        trader._move_sale_list = lambda _direction, from_first_card=False: True
         trader._scroll_sale_list_to_top = lambda: None
         trader.task = SimpleNamespace(
             config={},
@@ -1222,7 +1222,7 @@ class SellFlowTest(unittest.TestCase):
         candidate = SimpleNamespace(center=(620, 572))
         scans = [([candidate], frame), None]
         trader = object.__new__(Trader)
-        trader._move_sale_list = lambda _direction: True
+        trader._move_sale_list = lambda _direction, from_first_card=False: True
         trader._scroll_sale_list_to_top = lambda: None
         trader.task = SimpleNamespace(
             config={},
@@ -1262,7 +1262,7 @@ class SellFlowTest(unittest.TestCase):
         candidate = SimpleNamespace(center=(620, 572))
         locate_calls = []
         trader = object.__new__(Trader)
-        trader._move_sale_list = lambda _direction: True
+        trader._move_sale_list = lambda _direction, from_first_card=False: True
         trader._scroll_sale_list_to_top = lambda: None
         trader.task = SimpleNamespace(
             config={},
@@ -1332,7 +1332,7 @@ class SellFlowTest(unittest.TestCase):
         client_clicks = []
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         trader = object.__new__(Trader)
-        trader._move_sale_list = lambda _direction: True
+        trader._move_sale_list = lambda _direction, from_first_card=False: True
         trader._scroll_sale_list_to_top = lambda: None
         trader.task = SimpleNamespace(
             config={"出售保险": False},
@@ -1377,7 +1377,7 @@ class SellFlowTest(unittest.TestCase):
     def _reserve_trader(self, owned_counts):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         trader = object.__new__(Trader)
-        trader._move_sale_list = lambda _direction: True
+        trader._move_sale_list = lambda _direction, from_first_card=False: True
         trader._scroll_sale_list_to_top = lambda: None
         messages = []
         trader.task = SimpleNamespace(
@@ -1552,7 +1552,7 @@ class SellFlowTest(unittest.TestCase):
         scans = [([first], frame), ([second], frame), None]
         clicked = []
         trader = object.__new__(Trader)
-        trader._move_sale_list = lambda _direction: True
+        trader._move_sale_list = lambda _direction, from_first_card=False: True
         trader._scroll_sale_list_to_top = lambda: None
         trader.task = SimpleNamespace(
             config={},log_info=lambda *_args: None)
