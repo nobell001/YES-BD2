@@ -1213,8 +1213,9 @@ class SellFlowMixin:
         """Drag the list: direction < 0 shows lower items, > 0 higher ones.
 
         ``from_first_card``: pressed in the left column of item cards instead
-        (the pull down on the first card, see SALE_LIST_PULL_X).  The drag uses the real mouse, so it
-        only happens with the game in front (returns False otherwise).
+        (the pull down on the first card, see SALE_LIST_PULL_X).  The drag
+        uses the real mouse, so it only happens with the game in front
+        (returns False otherwise).
         """
 
         frame = self.vision.capture()
