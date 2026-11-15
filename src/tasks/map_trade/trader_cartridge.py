@@ -263,6 +263,8 @@ class ShopCartridgeNavigationMixin:
             frame = self.vision.capture()
             top_row_index = self._shop_list_top_row_index(frame)
             if top_row_index is None:
+                if self._target_cartridge_in_view(shop_id, target, frame):
+                    return self._select_purchase_cartridge(shop_id)
                 self._sell_cartridge_page = None
                 labels = "、".join(
                     SHOP_PURCHASE_REFERENCES[value].label
@@ -281,6 +283,8 @@ class ShopCartridgeNavigationMixin:
                     after_sleep=SHOP_UP_SCROLL_RECOGNITION_INTERVAL,
                 )
             if not self._wait_for_shop_page(page.confirmation_shop_ids):
+                if self._target_cartridge_in_view(shop_id, target):
+                    return self._select_purchase_cartridge(shop_id)
                 # 修正滚动后落点仍未确认，页号已失真，作废以强制下次重新定位。
                 self._sell_cartridge_page = None
                 labels = "、".join(
@@ -293,6 +297,29 @@ class ShopCartridgeNavigationMixin:
                 return False
         self._sell_cartridge_page = target
         return self._select_purchase_cartridge(shop_id)
+
+    def _target_cartridge_in_view(
+        self, shop_id: str, target_page: int, frame: np.ndarray | None = None
+    ) -> bool:
+        """The cartridge to sell in is itself on screen: that is enough.
+
+        The page check wants two boundary cartridges of the page (第2页:
+        角色游戏卡1 and 剧情游戏卡11).  A player who has not unlocked one of
+        them never shows it, and 卖 stopped although the cartridge needed was
+        right there (player v0.3.16 2026-11-15: 奶酪 in 剧情游戏卡19, 「向下滚动
+        后未确认第2页边界卡带」).  Leo's rule: an extra cue may only help.
+        """
+
+        if frame is None:
+            frame = self.vision.capture()
+        if not self._cartridge_visible(shop_id, frame):  # 有备案：卖会回清单最上面再找一次，再跳过
+            return False
+        self.task.log_info(
+            f"卖：没认到第{target_page + 1}页的边界卡带，但要找的"
+            f"「{SHOP_PURCHASE_REFERENCES[shop_id].label}」就在画面上，直接选它。"
+        )
+        self._sell_cartridge_page = target_page
+        return True
 
     def _scroll_shop_cartridges(
         self,

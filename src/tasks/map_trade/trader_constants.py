@@ -196,6 +196,16 @@ SALE_LIST_DRAG_X = 1300 / FHD_1080.width
 SALE_LIST_DRAG_TOP = 330 / FHD_1080.height
 SALE_LIST_DRAG_BOTTOM = 870 / FHD_1080.height
 SALE_LIST_DRAG_SECONDS = 0.5
+# A second pull down, pressed on the first item card (left column, first
+# row), only when the usual one at (SALE_LIST_DRAG_X, SALE_LIST_DRAG_TOP)
+# did not move the list at all.  The game shows the sections below 食物 only
+# after a pull (Leo 「每次點開卡帶 程式都會下拉一下 讓其他種類載入」); with only
+# a few cards the usual spot is empty space, the list did not move and 葡萄,
+# in the section below, was never shown (player v0.3.16 2026-11-15,
+# 剧情游戏卡3 with two 食物 cards).
+SALE_LIST_PULL_X = 620 / FHD_1080.width
+SALE_LIST_PULL_FROM_Y = 225 / FHD_1080.height
+SALE_LIST_PULL_TO_Y = 765 / FHD_1080.height
 SALE_LIST_MAX_SCROLLS = 15
 # Drag up in steps until the list stops moving (it is at the top).
 SALE_LIST_TOP_ATTEMPTS = 8

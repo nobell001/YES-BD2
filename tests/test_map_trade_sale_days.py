@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from src.tasks.map_trade.models import CalendarEntry
@@ -158,7 +159,77 @@ class SaleListDragTest(unittest.TestCase):
         self.assertLess(up_start[1], up_end[1])
 
 
+    def test_second_pull_starts_on_the_first_card_of_a_short_list(self):
+        """Player v0.3.16 2026-11-15, 剧情游戏卡3 with two 食物 cards: the pull
+        that makes the game show the sections below 食物 (Leo 「每次點開卡帶
+        程式都會下拉一下 讓其他種類載入」) pressed (1300, 330), empty space,
+        the list never moved and 葡萄 was called missing.  That pull stays
+        as it was (it works for nearly everyone); the second one, made only
+        when it did not move the list, starts on the first card."""
+        import cv2
+
+        path = (
+            Path(__file__).parent
+            / "fixtures/map_trade/trade_shop/sell_short_list_player_1080_v0316.jpg"
+        )
+        frame = cv2.imread(str(path))
+        self.assertIsNotNone(frame)
+        trader = object.__new__(SellFlowMixin)
+        drags = []
+        trader.task = SimpleNamespace(
+            drag_client=lambda start, end, **kwargs: drags.append((start, end)) or True,
+        )
+        trader.vision = SimpleNamespace(capture=lambda: frame)
+        trader._move_sale_list(1)
+        trader._move_sale_list(1, from_first_card=True)
+        trader._move_sale_list(-1)
+        (usual_start, usual_end), (card_start, card_end), (down_start, down_end) = drags
+
+        def on_card(point) -> bool:
+            x, y = point
+            patch = cv2.cvtColor(frame[y - 15 : y + 15, x - 30 : x + 30], cv2.COLOR_BGR2GRAY)
+            # The empty list background is one flat dark grey.
+            return float(patch.std()) > 10.0
+
+        self.assertEqual(((1300, 330), (1300, 870)), (usual_start, usual_end))  # unchanged
+        self.assertEqual(((1300, 870), (1300, 330)), (down_start, down_end))  # unchanged
+        self.assertFalse(on_card(usual_start))  # why 葡萄 never showed
+        self.assertTrue(on_card(card_start))
+        self.assertLess(card_start[1], card_end[1])
+        self.assertEqual(card_end[1] - card_start[1], usual_end[1] - usual_start[1])
+
+
 class SaleListTopTest(unittest.TestCase):
+    def _top_trader(self, view_values):
+        import numpy as np
+
+        trader = object.__new__(SellFlowMixin)
+        moves = []
+        trader._move_sale_list = lambda direction, from_first_card=False: (
+            moves.append((direction, from_first_card)) or True
+        )
+        views = iter([np.full((64, 96), v, np.int16) for v in view_values])
+        trader._sale_list_view = lambda: next(views)
+        trader._status = lambda *_args: None
+        return trader, moves
+
+    def test_unmoved_first_pull_is_made_again_from_the_first_card(self):
+        # usual pull: 0 -> 0 (did not move); first-card pull: 0 -> 30 (moved,
+        # the sections below 食物 showed); usual pull: 30 -> 30 (at the top).
+        trader, moves = self._top_trader((0, 0, 0, 30, 30, 30))
+        trader._scroll_sale_list_to_top()
+        self.assertEqual([(1, False), (1, True), (1, False)], moves)
+
+    def test_first_card_pull_is_skipped_when_the_usual_pull_moves(self):
+        trader, moves = self._top_trader((0, 40, 40, 40))
+        trader._scroll_sale_list_to_top()
+        self.assertEqual([(1, False), (1, False)], moves)
+
+    def test_drag_to_the_bottom_never_uses_the_first_card(self):
+        trader, moves = self._top_trader((0, 0))
+        trader._scroll_sale_list_to_end(-1, 5)
+        self.assertEqual([(-1, False)], moves)
+
     def test_scrolls_up_until_the_list_stops_moving(self):
         import numpy as np
 

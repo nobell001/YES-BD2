@@ -572,6 +572,7 @@ class SellFlowTest(unittest.TestCase):
             info_set=lambda *_args: None,
         )
         trader._sell_cartridge_page = 0
+        trader._cartridge_visible = lambda _shop_id, _frame: False
         trader._wait_for_shop_page = lambda _shop_ids: False
         trader._scroll_shop_cartridges = lambda scroll_amount, count, interval, after_sleep: (
             scrolls.append((scroll_amount, count, interval, after_sleep))
@@ -597,6 +598,7 @@ class SellFlowTest(unittest.TestCase):
             info_set=lambda *_args: None,
         )
         trader._sell_cartridge_page = 1
+        trader._cartridge_visible = lambda _shop_id, _frame: False
         trader._wait_for_shop_page = lambda _shop_ids: False
         trader._scroll_shop_cartridges = lambda scroll_amount, count, interval, after_sleep: (
             scrolls.append((scroll_amount, count, interval, after_sleep))
@@ -609,6 +611,36 @@ class SellFlowTest(unittest.TestCase):
         self.assertFalse(trader.select_shop_tab("E7:戏水女王"))
         self.assertEqual([(-1, 11, 0.0, 0.5)], scrolls)
         self.assertIsNone(trader._sell_cartridge_page)
+
+    def test_sell_shop_selection_uses_target_seen_without_page_markers(self):
+        """Player v0.3.16 2026-11-15: 「向下滚动后未确认第2页边界卡带：角色游戏卡1
+        杰登之门、剧情游戏卡11 虚假游戏」 stopped 奶酪 (剧情游戏卡19).  The page's
+        boundary cartridges are only one way to know where the list is; the
+        cartridge to sell in, seen on screen, is enough."""
+
+        for top_row in (5, None):
+            with self.subTest(top_row=top_row):
+                trader = object.__new__(Trader)
+                logs, picked = [], []
+                trader.task = SimpleNamespace(
+                    log_info=logs.append,
+                    log_warning=lambda *_args: None,
+                    info_set=lambda *_args: None,
+                )
+                trader._sell_cartridge_page = 0
+                trader._wait_for_shop_page = lambda _shop_ids: False
+                trader._scroll_shop_cartridges = lambda **_kw: None
+                trader.vision = SimpleNamespace(
+                    capture=lambda: np.zeros((1080, 1920, 3), dtype=np.uint8)
+                )
+                trader._shop_list_top_row_index = lambda _frame, row=top_row: row
+                trader._cartridge_visible = lambda shop_id, _frame: shop_id == "S19"
+                trader._select_purchase_cartridge = lambda shop_id: picked.append(shop_id) or True
+
+                self.assertTrue(trader.select_shop_tab("S19:被遗忘的战争"))
+                self.assertEqual(["S19"], picked)
+                self.assertEqual(1, trader._sell_cartridge_page)
+                self.assertTrue(any("就在画面上" in message for message in logs))
 
     def test_sell_shop_selection_resets_page_when_reanchor_fails(self):
         scrolls = []
@@ -650,6 +682,70 @@ class SellFlowTest(unittest.TestCase):
             selected,
         )
         self.assertEqual(["a_item", "c_item", "b_item"], sold)
+
+    def _locked_cartridge_trader(self, select_results):
+        """A seller whose cartridge picks answer from ``select_results``."""
+
+        trader = object.__new__(Trader)
+        logs, warnings, calls, sold = [], [], [], []
+        answers = list(select_results)
+        trader.task = SimpleNamespace(
+            config={},
+            log_info=logs.append,
+            log_warning=lambda message, **_kw: warnings.append(message),
+            info_set=lambda *_args: None,
+        )
+
+        def select(shop):
+            calls.append((shop, trader._sell_cartridge_page))
+            return answers.pop(0) if answers else True
+
+        trader.select_shop_tab = select
+        trader._sell_selected_entry = lambda entry: sold.append(entry.item) or True
+        trader._sale_date_changed = lambda: False
+        return trader, logs, warnings, calls, sold
+
+    def test_locked_cartridge_skips_its_item_and_sells_the_rest(self):
+        """Player v0.3.16 2026-11-14: 芥末 sells in 剧情游戏卡16, which the
+        player has not unlocked.  「商店卡带选择失败」 failed the whole 卖, which
+        went home and searched every item again, the same way (the shop
+        opened, thought and closed over and over).  Now the item is skipped
+        with the reason and the rest are sold; 卖 does not fail."""
+
+        trader, _logs, warnings, calls, sold = self._locked_cartridge_trader(
+            [True, False, False, True]
+        )
+        entries = [
+            CalendarEntry("胡萝卜", "S7:愤怒天使"),
+            CalendarEntry("芥末", "S16:三国同盟"),
+            CalendarEntry("奶酪", "S19:被遗忘的战争"),
+        ]
+
+        result = trader._sell_resolved_entries(entries)
+
+        self.assertIs(True, result)
+        self.assertEqual(["胡萝卜", "奶酪"], sold)
+        # Tried once more from the top of the list (page unknown = None).
+        self.assertEqual(
+            ["S7:愤怒天使", "S16:三国同盟", "S16:三国同盟", "S19:被遗忘的战争"],
+            [shop for shop, _page in calls],
+        )
+        self.assertIsNone(calls[2][1])
+        self.assertTrue(
+            any("剧情游戏卡16" in message and "可能还没解锁" in message for message in warnings)
+        )
+        self.assertFalse(any("最高价出售失败" in message for message in warnings))
+
+    def test_cartridge_found_on_second_look_is_sold(self):
+        trader, logs, _warnings, calls, sold = self._locked_cartridge_trader([False, True])
+        trader._sell_cartridge_page = 0
+
+        result = trader._sell_resolved_entries([CalendarEntry("芥末", "S16:三国同盟")])
+
+        self.assertIs(True, result)
+        self.assertEqual(["芥末"], sold)
+        self.assertEqual(2, len(calls))
+        self.assertTrue(any("回卡带清单最上面再找一次" in message for message in logs))
 
     def test_run_sell_stops_before_calendar_when_sell_page_is_not_confirmed(self):
         trader = object.__new__(Trader)

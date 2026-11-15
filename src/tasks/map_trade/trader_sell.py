@@ -78,6 +78,9 @@ from src.tasks.map_trade.trader_constants import (
     SALE_LIST_DRAG_X,
     SALE_LIST_END_DIFF,
     SALE_LIST_MAX_SCROLLS,
+    SALE_LIST_PULL_FROM_Y,
+    SALE_LIST_PULL_TO_Y,
+    SALE_LIST_PULL_X,
     SALE_LIST_SCROLL_WAIT_TIMEOUT,
     SALE_LIST_SETTLE_SECONDS,
     SALE_LIST_TOP_ATTEMPTS,
@@ -676,9 +679,17 @@ class SellFlowMixin:
                 self.task.log_warning(f"卖：出售途中价表已刷新，剩余商品不再出售：{rest}。")
                 break
             if entry.shop != selected_shop:
-                if not self.select_shop_tab(entry.shop):
-                    failed.append(entry)
-                    not_sold_details.append(f"{entry.item}（商店卡带选择失败）")
+                if not self._select_sale_cartridge(entry):
+                    # A cartridge the player has not unlocked is never in the
+                    # shop (player v0.3.16 2026-11-14: 芥末 in 剧情游戏卡16).
+                    # Counted as a failure it sent the whole 卖 home and back
+                    # to search every item again, the same way, so the
+                    # player watched the shop open, think and close over and
+                    # over.  It is skipped with the reason instead, the rest
+                    # are still sold.
+                    detail = f"{entry.item}（{self._cartridge_missing_reason(entry)}）"
+                    unavailable.append(detail)
+                    not_sold_details.append(detail)
                     self._status("未出售商品", "、".join(not_sold_details))
                     selected_shop = ""
                     continue
@@ -730,6 +741,34 @@ class SellFlowMixin:
                 "未确认↑120%标志，不记为今日已卖，下次再试：" + "、".join(unconfirmed)
             )
         return True
+
+    def _select_sale_cartridge(self, entry: CalendarEntry) -> bool:
+        """Pick the item's cartridge; once more from the top of the list.
+
+        The step's own start is the top of the cartridge list: a scroll that
+        landed wrong is fixed there, in the shop, instead of from home.
+        """
+
+        if self.select_shop_tab(entry.shop):
+            return True
+        self.task.log_info(f"卖：{entry.item}的商店卡带没选到，回卡带清单最上面再找一次。")
+        # Where the list stands is not known after a miss.
+        self._sell_cartridge_page = None
+        if self.select_shop_tab(entry.shop):
+            return True
+        self._sell_cartridge_page = None
+        self.task.log_warning(
+            f"卖：{entry.item}：{self._cartridge_missing_reason(entry)}，跳过它，继续卖下一项。"
+        )
+        return False
+
+    @staticmethod
+    def _cartridge_missing_reason(entry: CalendarEntry) -> str:
+        try:
+            label = shop_purchase_reference(entry.shop).label
+        except KeyError:
+            label = str(entry.shop)
+        return f"商店左边的卡带清单里找不到「{label}」，可能还没解锁"
 
     def _sell_entry_with_retry(self, entry: CalendarEntry) -> bool:
         """Sell one entry; after a failure, retry it once on the spot.
@@ -1170,19 +1209,25 @@ class SellFlowMixin:
         grey = cv2.cvtColor(crop[:, :, :3], cv2.COLOR_BGR2GRAY)
         return cv2.resize(grey, (96, 64), interpolation=cv2.INTER_AREA).astype(np.int16)
 
-    def _move_sale_list(self, direction: int) -> bool:
+    def _move_sale_list(self, direction: int, *, from_first_card: bool = False) -> bool:
         """Drag the list: direction < 0 shows lower items, > 0 higher ones.
 
-        The drag uses the real mouse, so it only happens with the game in
-        front (returns False otherwise).
+        ``from_first_card``: the pull down is pressed on the first item card
+        instead (see SALE_LIST_PULL_X).  The drag uses the real mouse, so it
+        only happens with the game in front (returns False otherwise).
         """
 
         frame = self.vision.capture()
         height, width = frame.shape[:2]
-        x = round(SALE_LIST_DRAG_X * width)
-        top = round(SALE_LIST_DRAG_TOP * height)
-        bottom = round(SALE_LIST_DRAG_BOTTOM * height)
-        start, end = ((x, bottom), (x, top)) if direction < 0 else ((x, top), (x, bottom))
+        if from_first_card:
+            x = round(SALE_LIST_PULL_X * width)
+            start = (x, round(SALE_LIST_PULL_FROM_Y * height))
+            end = (x, round(SALE_LIST_PULL_TO_Y * height))
+        else:
+            x = round(SALE_LIST_DRAG_X * width)
+            top = round(SALE_LIST_DRAG_TOP * height)
+            bottom = round(SALE_LIST_DRAG_BOTTOM * height)
+            start, end = ((x, bottom), (x, top)) if direction < 0 else ((x, top), (x, bottom))
         if self.task.drag_client(
             start,
             end,
@@ -1207,12 +1252,26 @@ class SellFlowMixin:
         """Drag without reading names until the list stops moving
         (direction > 0: to the top, < 0: to the bottom)."""
 
-        for _attempt in range(attempts):
+        for attempt in range(attempts):
             before = self._sale_list_view()
             if not self._move_sale_list(direction):
                 return
-            if float(np.mean(np.abs(self._sale_list_view() - before))) < SALE_LIST_END_DIFF:
-                return
+            if float(np.mean(np.abs(self._sale_list_view() - before))) >= SALE_LIST_END_DIFF:
+                continue
+            if direction > 0 and attempt == 0:
+                # The usual pull did not move the list at all.  It works for
+                # nearly every player (Leo 2026-11-15), so it stays first;
+                # only then is it pulled once more from the first card, which
+                # a list of a few cards needs to show the sections below 食物.
+                before = self._sale_list_view()
+                self._status("出售列表滚动", "下拉没动，改从第一张商品卡再拉一次")
+                if not self._move_sale_list(direction, from_first_card=True):
+                    return
+                moved = float(np.mean(np.abs(self._sale_list_view() - before)))
+                self._status("出售列表滚动", f"从第一张商品卡下拉，变化={moved:.1f}")
+                if moved >= SALE_LIST_END_DIFF:
+                    continue
+            return
 
     def _find_sale_item_candidates(
         self, entry: CalendarEntry, direction: int = -1, settled: bool = False

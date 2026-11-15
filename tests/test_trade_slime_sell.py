@@ -501,7 +501,10 @@ class ScrollToEndTest(unittest.TestCase):
         moves = []
         frames = iter(views)
         trader._sale_list_view = lambda: np.full((4, 4), next(frames), np.int16)
-        trader._move_sale_list = lambda direction: moves.append(direction) or True
+        trader._move_sale_list = lambda direction, from_first_card=False: (
+            moves.append(direction) or True
+        )
+        trader._status = lambda *_args: None
         return trader, moves
 
     def test_drags_down_until_the_list_stops(self):
@@ -510,6 +513,7 @@ class ScrollToEndTest(unittest.TestCase):
         self.assertEqual([-1, -1, -1], moves)
 
     def test_to_top_drags_up(self):
-        trader, moves = self._trader([0, 0])
+        # Unmoved: pulled once more from the first card (player 2026-11-15).
+        trader, moves = self._trader([0, 0, 0, 0])
         trader._scroll_sale_list_to_top()
-        self.assertEqual([1], moves)
+        self.assertEqual([1, 1], moves)
