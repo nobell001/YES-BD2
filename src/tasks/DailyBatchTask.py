@@ -62,6 +62,13 @@ CLOSE_CLONE_KEY = "完成日常后关闭分身"
 # Leo 2026-11-08 「像玩家直接關閉視窗那樣 關遊戲 或是 在桌面程式端重開」: the
 # same two ways the clone window's X offers.
 CLOSE_CLONE_HOW_KEY = "关闭分身方式"
+# A player asked (2026-11-16, Leo forwarded it): 打开就自动跑日常 can run in
+# the 桌面分身 instead of on the player's own desktop.  Shown on 首页 under the
+# box; 定时启动 has its own choice (scheduled_start.Settings.in_clone).
+AUTO_WHERE_KEY = "打开就跑在哪"
+AUTO_WHERE_HERE = "在桌面跑"
+AUTO_WHERE_CLONE = "在桌面分身跑"
+AUTO_WHERE_OPTIONS = (AUTO_WHERE_HERE, AUTO_WHERE_CLONE)
 # Shown first on the 桌面分身 window's switch: the clone is left open.
 CLOSE_CLONE_KEEP = "不关"
 CLOSE_CLONE_JUST = "关闭游戏"
@@ -259,6 +266,7 @@ class ChildBatchTask(BaseTask):
                 STATUS_BAR_NOTICE_KEY: False,
                 # Ticked on 首页 (src/ui/shell/autorun.py, Leo 2026-10-09).
                 "打开工具时自动开始": False,
+                AUTO_WHERE_KEY: AUTO_WHERE_HERE,
                 **{key: True for key in child_keys},
             }
         )
@@ -305,6 +313,10 @@ class ChildBatchTask(BaseTask):
                 CLOSE_CLONE_HOW_KEY: {
                     "type": "drop_down",
                     "options": list(CLOSE_CLONE_HOW_OPTIONS),
+                },
+                AUTO_WHERE_KEY: {
+                    "type": "drop_down",
+                    "options": list(AUTO_WHERE_OPTIONS),
                 },
             }
         )
@@ -1384,9 +1396,11 @@ class WeeklyBatchTask(ChildBatchTask):
             STATUS_BAR_NOTICE_KEY,
             "完成日常后自动关机",
             "打开工具时自动开始",
+            AUTO_WHERE_KEY,
         ):
             self.default_config.pop(key, None)
             self.config_description.pop(key, None)
+            self.config_type.pop(key, None)
 
     period_done_note = "本周已经做完"
 

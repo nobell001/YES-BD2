@@ -4282,3 +4282,27 @@ msgid "救赎之塔只剩 1 把钥匙，留着打 LV{lv} 以上，今天没扫�
 msgstr ""
 "Only 1 Tower of Redemption key left, kept for LV{lv} or higher: no sweep "
 "today"
+
+msgid "{why}，这次改在桌面跑"
+msgstr "{why}: running on the desktop this time"
+
+msgid "桌面分身还没设定好"
+msgstr "Clone Desktop is not set up yet"
+
+msgid "桌面分身没有记住登录，没人在电脑前打不了密码"
+msgstr "Clone Desktop did not save the sign-in, and nobody is at the PC to type the password"
+
+msgid "工具没有以管理员身份打开，打开分身要按 Windows 确认"
+msgstr "The tool is not running as administrator, so opening the clone needs a Windows confirmation"
+
+msgid "桌面分身没有打开"
+msgstr "Clone Desktop did not open"
+
+msgid "要在桌面分身跑，但分身没能打开：{why}。这次没有跑。"
+msgstr "Set to run on the Clone Desktop, but it could not open: {why}. Nothing ran this time."
+
+msgid "打开工具自动跑时在桌面分身跑；不勾就在桌面跑"
+msgstr "When the tool runs dailies on open, run them on the Clone Desktop; unticked runs on your desktop"
+
+msgid "定时启动时在桌面分身跑；不勾就在桌面跑"
+msgstr "Scheduled Start runs on the Clone Desktop; unticked runs on your desktop"

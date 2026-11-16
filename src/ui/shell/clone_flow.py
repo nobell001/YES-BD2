@@ -41,9 +41,11 @@ class _Launch(QObject):
         self.timer = QTimer(self)
         self.timer.timeout.connect(guarded("clone launch check", self._poll, self.timer.stop))
         self.window = None
+        self.scheduled = False
 
-    def start(self, window) -> None:
+    def start(self, window, scheduled: bool = False) -> None:
         self.window = window
+        self.scheduled = scheduled
         self.started_at = time.monotonic()
         self.timer.start(1000)
 
@@ -57,6 +59,7 @@ class _Launch(QObject):
             if waited > WAIT_SECONDS or (waited > 30 and not clone_desktop.viewer_running()):
                 self.timer.stop()
                 clone_desktop.clear_job()
+                self._scheduled_failed("桌面分身没有打开")
             return
         self.timer.stop()
         if result.startswith(("started", "running")):
@@ -66,6 +69,16 @@ class _Launch(QObject):
         else:
             clone_desktop.clear_job()
             message(self.window, launch_failure_text(result), error=True)
+            self._scheduled_failed(launch_failure_text(result))
+
+    def _scheduled_failed(self, why: str) -> None:
+        """定时启动 sent it: the 跑完通知 says why nothing ran, now."""
+        if not self.scheduled:
+            return
+        self.scheduled = False
+        from src.ui.shell import schedule_ui
+
+        schedule_ui.clone_failed(why)
 
 
 def launch_failure_text(result: str) -> str:
@@ -215,7 +228,42 @@ def busy_in_clone() -> bool:
     )
 
 
-def hand_to_clone(window, task, run_mode: str | None = None) -> bool:
+# Why an automatic start (打开就自动跑 / 定时启动) cannot go to the 桌面分身
+# by itself; it then runs on the desktop as before (the run is the goal).
+AUTO_NOT_SET_UP = "桌面分身还没设定好"
+AUTO_NO_SAVED_SIGN_IN = "桌面分身没有记住登录，没人在电脑前打不了密码"
+AUTO_NOT_ADMIN = "工具没有以管理员身份打开，打开分身要按 Windows 确认"
+
+
+def auto_problem(scheduled: bool) -> str | None:
+    """None when an automatic start can open the 桌面分身 with nobody at the
+    PC; else why not, in player words.
+
+    定时启动 often comes with nobody there: a Windows sign-in box or a
+    Windows confirmation would wait for ever, so those must not be needed.
+    """
+    if not available() or not ready_to_go():
+        return AUTO_NOT_SET_UP
+    if scheduled and not clone_desktop.saved_sign_in():
+        return AUTO_NO_SAVED_SIGN_IN
+    if scheduled and not clone_desktop.is_admin():
+        return AUTO_NOT_ADMIN
+    return None
+
+
+def auto_start(window, task, run_mode: str | None, scheduled: dict | None = None) -> bool:
+    """打开就自动跑 / 定时启动 chose 在桌面分身跑: open it (or hand the run to
+    the tool already open there).  ``scheduled``: the slot's own items and
+    settings, for the tool in the clone (another process)."""
+    auto = {"scheduled": scheduled}
+    logger.info(
+        f"clone: automatic start of {getattr(task, 'name', task)} in the 桌面分身"
+        f"{' (定时启动)' if scheduled is not None else ''}"
+    )
+    return open_clone(window, task, run_mode, auto)
+
+
+def hand_to_clone(window, task, run_mode: str | None = None, auto: dict | None = None) -> bool:
     """Outside: the tool is open in the clone and free, so it runs ``task``.
 
     Leo 2026-10-07: 继续 after a run in the clone stopped should go on there,
@@ -226,7 +274,7 @@ def hand_to_clone(window, task, run_mode: str | None = None) -> bool:
         return False
     if clone_outdated():
         return False
-    _request_job(window, task, run_mode)
+    _request_job(window, task, run_mode, auto)
     logger.info(f"clone: handed {task.name} (mode {run_mode or '-'}) to the tool in the clone")
     if window is not None:
         message(window, "交给桌面分身里的工具跑，进度在这里看")
@@ -301,11 +349,14 @@ def clone_outdated() -> bool:
     return bool(mine) and theirs != mine
 
 
-def _request_job(window, task, run_mode: str | None) -> None:
+def _request_job(window, task, run_mode: str | None, auto: dict | None = None) -> None:
     """No window is 打开就自动跑 on the desktop: the clone must not take it
-    for a press, which skips the wait after a failure (#153)."""
-    if window is None:
-        clone_desktop.request_job(str(task.name), run_mode, by_player=False)
+    for a press, which skips the wait after a failure (#153).  ``auto``:
+    打开就自动跑 / 定时启动 sent it (see :func:`auto_start`)."""
+    if window is None or auto is not None:
+        scheduled = (auto or {}).get("scheduled")
+        extra = {} if scheduled is None else {"scheduled": scheduled}
+        clone_desktop.request_job(str(task.name), run_mode, by_player=False, **extra)
     else:
         clone_desktop.request_job(str(task.name), run_mode)
 
@@ -325,8 +376,10 @@ def _end_outdated_clone(window) -> bool:
     return False
 
 
-def open_clone(window, task=None, run_mode: str | None = None) -> bool:
-    """Open the clone and start the tool in it; with ``task``, it runs that task."""
+def open_clone(window, task=None, run_mode: str | None = None, auto: dict | None = None) -> bool:
+    """Open the clone and start the tool in it; with ``task``, it runs that task.
+
+    ``auto``: 打开就自动跑 / 定时启动 sent it, nobody pressed (:func:`auto_start`)."""
     global _launch
     if not clone_desktop.ready():
         message(window, "桌面分身还没设定好，请先到「设置」按「第一次设定」", error=True)
@@ -336,13 +389,13 @@ def open_clone(window, task=None, run_mode: str | None = None) -> bool:
     if (
         task is not None
         and clone_desktop.viewer_running()
-        and hand_to_clone(window, task, run_mode)
+        and hand_to_clone(window, task, run_mode, auto)
     ):
         # Already open with the tool in it: opening the viewer again only
         # showed 「桌面分身已經開著了」 (Leo 2026-10-07).
         return True
     if task is not None:
-        _request_job(window, task, run_mode)
+        _request_job(window, task, run_mode, auto)
     else:
         clone_desktop.clear_job()
     if not clone_desktop.open_viewer():
@@ -361,7 +414,7 @@ def open_clone(window, task=None, run_mode: str | None = None) -> bool:
         return False
     if _launch is None:
         _launch = _Launch()
-    _launch.start(window)
+    _launch.start(window, scheduled=(auto or {}).get("scheduled") is not None)
     return True
 
 
@@ -477,6 +530,7 @@ def _run_pending_job() -> None:
             return
         run_mode = job.get("run_mode")
         by_player = job.get("by_player", True) is not False
+        _take_scheduled(job.get("scheduled"))
         _reload_settings()
         log_in_this_run()
         actions.rearm_login_for_closed_game()
@@ -510,6 +564,27 @@ def _run_pending_job() -> None:
     )
     # A press on the desktop, unless 打开就自动跑 there handed it over.
     actions.start(task, None, run_mode, by_player=by_player)
+
+
+def _take_scheduled(scheduled) -> None:
+    """定时启动 sent this job from outside: its own items, settings and
+    做完关闭游戏 / 做完关机 apply to the run here, as on the desktop."""
+    if not isinstance(scheduled, dict):
+        return
+    from src.utils import scheduled_start
+
+    tasks = scheduled.get("tasks")
+    settings = scheduled.get("settings")
+    scheduled_start.mark_run_pending(
+        True,
+        tasks=list(tasks) if isinstance(tasks, list) else None,
+        settings=settings if isinstance(settings, dict) else None,
+    )
+    try:
+        scheduled_start.queued = max(0, int(scheduled.get("queued") or 0))
+    except (TypeError, ValueError):
+        scheduled_start.queued = 0
+    logger.info("clone job: started by 定时启动")
 
 
 def _check_started_job() -> bool:
@@ -1005,6 +1080,10 @@ def log_in_this_run() -> None:
 
 
 def message(window, text: str, error: bool = False) -> None:
+    if window is None:
+        # An automatic start: no window to show it in, the log keeps it.
+        (logger.warning if error else logger.info)(f"clone: {text}")
+        return
     from qfluentwidgets import InfoBar, InfoBarPosition
 
     show = InfoBar.warning if error else InfoBar.success

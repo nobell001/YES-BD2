@@ -900,7 +900,15 @@ class ScheduleDialog(Floating):
         self.close_when = OptionSwitch(*CLOSE_WHEN_OPTIONS, _close_when())
         self.close_when.setVisible(self.working.close_game)
         self.close_game.toggled.connect(self.close_when.setVisible)
+        # 玩家 2026-11-16, Leo 「開啟程式就跑 和定時跑 都可以選擇」: 定时启动's
+        # own choice, a box like the others here, on PCs that have the 桌面分身.
+        from src.ui.shell import clone_flow
+
+        self.in_clone = CheckBox("在桌面分身跑", self.working.in_clone)
+        self.in_clone.setToolTip(t("定时启动时在桌面分身跑；不勾就在桌面跑"))
+        self.in_clone.setVisible(clone_flow.available())
         options = hbox(None, (0, 2, 0, 0), OPTION_GAP)
+        options.addWidget(self.in_clone)
         options.addWidget(self.wake)
         pair = hbox(None, (0, 0, 0, 0), 10)
         pair.addWidget(self.close_game, 0, Qt.AlignVCenter)
@@ -1022,6 +1030,8 @@ class ScheduleDialog(Floating):
         self.working.wake = self.wake.isChecked()
         self.working.close_game = self.close_game.isChecked()
         self.working.shutdown = self.shutdown.isChecked()
+        if not self.in_clone.isHidden():
+            self.working.in_clone = self.in_clone.isChecked()
         why = store(self.working)
         if why:
             self.message.set_text(why)

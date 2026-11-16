@@ -137,6 +137,7 @@ LOCKED_NOTE = (
 )
 NOT_STARTED_NOTE = "一键日常没能开始（可能有别的任务正在跑），这次没有跑。"
 NO_LOGIN_NOTE = "等了 {m} 分钟，游戏还是没打开或没登录进去，这次没有跑。"
+CLONE_FAILED_NOTE = "要在桌面分身跑，但分身没能打开：{why}。这次没有跑。"
 # Opening the game and logging in (a patch download included) is done well
 # within this; AutoLoginTask gives a stuck login up after 3 x 5 minutes.
 WATCHDOG_MINUTES = 25
@@ -190,13 +191,24 @@ def after_start(started: bool) -> None:
     QTimer.singleShot(WATCHDOG_MINUTES * 60_000, guarded("scheduled start check", _check_begun))
 
 
+def clone_failed(why: str) -> None:
+    """定时启动 chose the 桌面分身 and it did not open: say so now, not when
+    the watchdog gives up."""
+    global _watch_started
+    _watch_started = None
+    report_failure(CLONE_FAILED_NOTE.format(why=why.rstrip("。")))
+
+
 def begun_since(since: float) -> bool:
     from src.tasks import run_report
-    from src.ui.shell import data
+    from src.ui.shell import clone_flow, data
 
     batch = data.task_by_name(data.DAILY_BATCH)
     label = getattr(batch, "batch_label", None) or "一键完成日常"
-    for report in (run_report.active(), run_report.load(label)):
+    # The run in the 桌面分身 is only saved when it ends; while it goes, the
+    # tool there publishes it.
+    here_or_clone = clone_flow.active_run()[0]
+    for report in (here_or_clone, run_report.active(), run_report.load(label)):
         if report and report.get("label") == label and (report.get("started") or 0) >= since:
             return True
     return False
@@ -208,7 +220,9 @@ def _check_begun(rechecks: int = 0) -> None:
     since = _watch_started
     if since is None or begun_since(since):
         return
-    if data.busy() and rechecks < WATCHDOG_RECHECKS:
+    from src.ui.shell import clone_flow
+
+    if (data.busy() or clone_flow.busy_in_clone()) and rechecks < WATCHDOG_RECHECKS:
         QTimer.singleShot(
             WATCHDOG_RECHECK_MINUTES * 60_000,
             guarded("scheduled start check", lambda: _check_begun(rechecks + 1)),

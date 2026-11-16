@@ -308,6 +308,20 @@ class NeverStartedTest(SettingsFileCase):
         self.assertFalse(run_notify.after_run(self._report(), start=lambda _go: None))
         self.assertTrue(run_notify.after_run(_report(), start=lambda _go: None))
 
+    def test_not_twice_when_the_tool_in_the_clone_said_it(self):
+        # Leo 2026-11-16 「微信通知 一樣要通知」: the tool in the 桌面分身 is
+        # another process; its login message must still stop the desktop
+        # tool's 定时启动 watchdog from saying the same again.
+        run_notify.set_sendkey(TURBO_KEY)
+        run_notify.set_enabled(True)
+        self.addCleanup(setattr, run_notify, "_problem_day", None)
+        run_notify._problem_day = None
+        self.assertTrue(run_notify.after_problem(run_notify.LOGIN_STUCK, start=lambda _go: None))
+        run_notify._problem_day = None  # the other process
+        self.assertFalse(run_notify.after_problem(run_notify.LOGIN_STUCK, start=lambda _go: None))
+        self.assertFalse(run_notify.after_run(self._report(), start=lambda _go: None))
+        self.assertTrue(run_notify.after_run(_report(), start=lambda _go: None))
+
     def test_maintenance_is_its_own_message(self):
         run_notify.set_sendkey(TURBO_KEY)
         run_notify.set_enabled(True)

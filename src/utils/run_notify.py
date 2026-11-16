@@ -292,6 +292,14 @@ def summary(report: dict) -> tuple[str, str]:
 LOGIN_STUCK = "登录卡住了，游戏一直没进到主页，一键日常没有开始跑。请看一下游戏画面"
 # Game day a problem before the run was already sent for (once a day is enough).
 _problem_day: str | None = None
+# The same, kept in the settings file: the tool in the 桌面分身 and the one on
+# the desktop are two processes, and either may say it (Leo 2026-11-16 「微信
+# 通知 一樣要通知」, without the same news twice).
+PROBLEM_DAY_KEY = "problem_day"
+
+
+def _problem_said(day_key: str) -> bool:
+    return _problem_day == day_key or _read().get(PROBLEM_DAY_KEY) == day_key
 
 
 def after_problem(why: str, start=None) -> bool:
@@ -301,12 +309,15 @@ def after_problem(why: str, start=None) -> bool:
     from src.tasks import run_report
 
     day_key = run_report.game_day_key()
-    if _problem_day == day_key or not enabled():
+    if _problem_said(day_key) or not enabled():
         return False
     key = sendkey()
     if not valid(key):
         return False
     _problem_day = day_key
+    saved = _read()
+    saved[PROBLEM_DAY_KEY] = day_key
+    _write(saved)
     day = day_key[5:].replace("-", "/")
 
     def go() -> None:
@@ -341,7 +352,7 @@ def after_run(report: dict | None, start=None) -> bool:
     if (
         not _started(report)
         and not report.get("maintenance")
-        and _problem_day == run_report.game_day_key()
+        and _problem_said(run_report.game_day_key())
     ):
         # after_problem already said why today; 游戏维护 is its own news
         # (定时启动 writes that report when the login screen says 维护).

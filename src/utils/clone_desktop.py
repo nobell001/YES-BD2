@@ -723,13 +723,22 @@ def turn_off_hello_only(wait: float = 20.0) -> bool:
     return bool(wait_for(lambda: not hello_only(), wait, sleep=time.sleep, poll=0.5))
 
 
-def request_job(task: str, run_mode: str | None = None, by_player: bool = True) -> None:
+def request_job(
+    task: str,
+    run_mode: str | None = None,
+    by_player: bool = True,
+    scheduled: dict | None = None,
+) -> None:
     """``by_player`` False: 打开就自动跑 handed it over, not a press (a job
-    file without the key is a press, as before)."""
+    file without the key is a press, as before).  ``scheduled``: 定时启动
+    started it; the slot's own items and settings go with it, since the
+    tool in the clone is another process."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     job = {"task": task, "run_mode": run_mode, "at": time.time()}
     if not by_player:
         job["by_player"] = False
+    if scheduled is not None:
+        job["scheduled"] = scheduled
     JOB_FILE.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
 
 

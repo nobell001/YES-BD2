@@ -776,7 +776,22 @@ class HomePage(Page):
             t("打开启动器或工具后自动开始一键日常，只跑今天还没做的；游戏没开会自己打开并登录")
         )
         self.autorun_box.toggled.connect(autorun.set_enabled)
-        buttons.addWidget(self.autorun_box, 0, Qt.AlignHCenter)
+        # 玩家 2026-11-16, Leo 「開啟程式就跑 和定時跑 都可以選擇是要在桌面
+        # 還是桌面分身」, 「設計的有點違和了」: a second box like the first,
+        # under it, on PCs that have the 桌面分身.  Leo 「要上面那個勾選才可以勾
+        # 不然就文字變淡」: it is there all the time, usable (and its words
+        # dark) only while the box above is ticked.  定时启动 has its own box.
+        self.autorun_clone = CheckBox("在桌面分身跑", autorun.in_clone_chosen())
+        self.autorun_clone.setToolTip(t("打开工具自动跑时在桌面分身跑；不勾就在桌面跑"))
+        self.autorun_clone.toggled.connect(autorun.set_in_clone)
+        self._show_autorun_clone(autorun.enabled())
+        self.autorun_box.toggled.connect(self._show_autorun_clone)
+        # Both boxes start at the same left edge, the pair in the middle.
+        boxes = QWidget()
+        column = vbox(boxes, (0, 0, 0, 0), 6)
+        column.addWidget(self.autorun_box, 0, Qt.AlignLeft)
+        column.addWidget(self.autorun_clone, 0, Qt.AlignLeft)
+        buttons.addWidget(boxes, 0, Qt.AlignHCenter)
         buttons.addStretch(1)
         hero.addLayout(buttons)
         layout.addWidget(self.hero)
@@ -871,6 +886,8 @@ class HomePage(Page):
         # Still usable then: the tool in the clone takes the run when it is free.
         self.start_clone.setEnabled(not data.busy())
         self.autorun_box.set_checked_quietly(autorun.enabled())
+        self.autorun_clone.set_checked_quietly(autorun.in_clone_chosen())
+        self._show_autorun_clone(autorun.enabled())
         # Leo 2026-10-09: players must see that it is about to start by itself.
         left = autorun.seconds_left()
         self.cancel_autorun.setVisible(left is not None)
@@ -1087,6 +1104,19 @@ class HomePage(Page):
         if run_mode is not None:
             actions.start(batch, self.window(), run_mode)
             self.refresh()
+
+    def _show_autorun_clone(self, on: bool) -> None:
+        self.autorun_clone.setVisible(clone_flow.available())
+        self.autorun_clone.setEnabled(bool(on))
+        # The ticked square faded with its words, so it does not look in use.
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+
+        if on:
+            self.autorun_clone.setGraphicsEffect(None)
+        elif not isinstance(self.autorun_clone.graphicsEffect(), QGraphicsOpacityEffect):
+            faded = QGraphicsOpacityEffect(self.autorun_clone)
+            faded.setOpacity(0.45)
+            self.autorun_clone.setGraphicsEffect(faded)
 
     def _start_in_clone(self) -> None:
         batch = data.task_by_name(data.DAILY_BATCH)

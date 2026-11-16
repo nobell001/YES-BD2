@@ -87,6 +87,46 @@ def set_launcher_auto_start(on: bool) -> bool:
         return False
 
 
+def where() -> str:
+    """在桌面跑 or 在桌面分身跑 for 打开就自动跑 (玩家 2026-11-16); 定时启动
+    has its own (scheduled_start.Settings.in_clone)."""
+    from src.tasks.DailyBatchTask import AUTO_WHERE_HERE, AUTO_WHERE_KEY, AUTO_WHERE_OPTIONS
+
+    batch = data.task_by_name(data.DAILY_BATCH)
+    value = (getattr(batch, "config", None) or {}).get(AUTO_WHERE_KEY, AUTO_WHERE_HERE)
+    return value if value in AUTO_WHERE_OPTIONS else AUTO_WHERE_HERE
+
+
+def set_where(value: str) -> None:
+    from src.tasks.DailyBatchTask import AUTO_WHERE_KEY, AUTO_WHERE_OPTIONS
+
+    batch = data.task_by_name(data.DAILY_BATCH)
+    if batch is not None and value in AUTO_WHERE_OPTIONS:
+        batch.config[AUTO_WHERE_KEY] = value
+
+
+def set_in_clone(on: bool) -> None:
+    """首页's 在桌面分身跑 box under 打开就自动跑日常."""
+    from src.tasks.DailyBatchTask import AUTO_WHERE_CLONE, AUTO_WHERE_HERE
+
+    set_where(AUTO_WHERE_CLONE if on else AUTO_WHERE_HERE)
+
+
+def in_clone_chosen(scheduled: bool = False) -> bool:
+    """The player chose 在桌面分身跑 (for 打开就跑, or for 定时启动 when
+    ``scheduled``) and this PC has the 桌面分身."""
+    from src.tasks.DailyBatchTask import AUTO_WHERE_CLONE
+    from src.ui.shell import clone_flow
+
+    if not clone_flow.available():
+        return False
+    if scheduled:
+        from src.utils import scheduled_start
+
+        return bool(scheduled_start.load().in_clone)
+    return where() == AUTO_WHERE_CLONE
+
+
 def remaining() -> list:
     """What is left today: of the slot's own items when it has them."""
     batch = data.task_by_name(data.DAILY_BATCH)
@@ -134,6 +174,8 @@ def maybe_start(scheduled: bool = False) -> bool:
         return False
     from src.tasks.DailyBatchTask import RUN_MODE_INCOMPLETE
 
+    if in_clone_chosen(scheduled) and _start_in_clone(scheduled):
+        return True
     if not actions.game_running():
         clone_flow.log_in_this_run()  # opens the game and logs in, without asking
     logger.info("auto-run on open: starting 一键完成日常 (only what is left)")
@@ -142,6 +184,55 @@ def maybe_start(scheduled: bool = False) -> bool:
     if scheduled:
         schedule_ui.after_start(started)
     return started
+
+
+def _start_in_clone(scheduled: bool) -> bool:
+    """The run goes to the 桌面分身; False when it cannot (then it runs on
+    the desktop as before: 「目標是完成任務」)."""
+    from src.tasks.DailyBatchTask import RUN_MODE_INCOMPLETE
+    from src.ui.shell import clone_flow, schedule_ui
+    from src.ui.shell.widgets import t, tf
+    from src.utils import scheduled_start
+
+    why = clone_flow.auto_problem(scheduled)
+    if why is not None:
+        logger.warning(f"auto-run on open: not in the 桌面分身 ({why}), running on the desktop")
+        clone_flow.message(_main_window(), tf("{why}，这次改在桌面跑", why=t(why)), error=True)
+        return False
+    payload = None
+    if scheduled:
+        # The tool in the clone is another process: what before_start set up
+        # for this run here goes with the job instead.
+        payload = {
+            "tasks": scheduled_start.take_run_tasks(),
+            "settings": scheduled_start.take_run_settings(),
+            "queued": scheduled_start.queued,
+        }
+        scheduled_start.mark_run_pending(False)
+    batch = data.task_by_name(data.DAILY_BATCH)
+    started = clone_flow.auto_start(_main_window(), batch, RUN_MODE_INCOMPLETE, payload)
+    if not started:
+        logger.warning("auto-run on open: the 桌面分身 did not open, running on the desktop")
+        if payload is not None:
+            # Back as it was, for the run here.
+            scheduled_start.mark_run_pending(
+                True, tasks=payload["tasks"], settings=payload["settings"]
+            )
+        return False
+    if scheduled:
+        schedule_ui.after_start(True)
+    return True
+
+
+def _main_window():
+    """The tool's window, for the short notes an automatic start shows."""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    for widget in app.topLevelWidgets() if app is not None else ():
+        if hasattr(widget, "switchTo") and widget.isVisible():
+            return widget
+    return None
 
 
 def _why_not(scheduled: bool) -> str | None:
@@ -391,11 +482,12 @@ def _follow(since: float) -> None:
     global _other_run_seen
     waited = time.time() - since
     begun = schedule_ui.begun_since(since)
-    if data.busy():
+    from src.ui.shell import clone_flow
+
+    busy = data.busy() or clone_flow.busy_in_clone()
+    if busy:
         _other_run_seen = time.time()
-    if waited < QUEUE_WAIT_MINUTES * 60 and (
-        data.busy() or (not begun and waited < BEGIN_LIMIT_S)
-    ):
+    if waited < QUEUE_WAIT_MINUTES * 60 and (busy or (not begun and waited < BEGIN_LIMIT_S)):
         QTimer.singleShot(WAIT_RETRY_MS, guarded("scheduled start queue", lambda: _follow(since)))
         return
     _next()

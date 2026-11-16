@@ -231,6 +231,9 @@ class Settings:
     # 帳號 switched off on the week calendar (Leo 2026-10-29 「點帳號可以讓
     # 該帳號變淺變深 變淺該帳號行程隱藏(失效)」): their slots do not run.
     paused: list[str] = field(default_factory=list)
+    # 在桌面分身跑 instead of the desktop (玩家 2026-11-16, Leo 「開啟程式就跑
+    # 和定時跑 都可以選擇」): its own choice, apart from 首页's 打开就跑.
+    in_clone: bool = False
     migrated: bool = field(default=False, compare=False, repr=False)
 
     def to_json(self) -> dict:
@@ -241,6 +244,7 @@ class Settings:
             "shutdown": self.shutdown,
             "slots": [slot.to_json() for slot in self.slots],
             **({"paused": list(self.paused)} if self.paused else {}),
+            **({"in_clone": True} if self.in_clone else {}),
         }
 
     @classmethod
@@ -261,6 +265,7 @@ class Settings:
             bool(value.get("close_game", True)),
             bool(value.get("shutdown", False)),
             [str(each) for each in value.get("paused") or [] if each],
+            bool(value.get("in_clone", False)),
         )
         # A dropped 「游戏每天重置后」 or a minute moved to its quarter: the
         # file and the Windows task are written again (schedule_ui).
