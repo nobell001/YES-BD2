@@ -104,7 +104,17 @@ jobs:
             Remove-Item "Env:\$_" -ErrorAction SilentlyContinue
           }
 
-          python -m unittest discover -s tests -v
+          # 2026-11-15/16: the run died silently in the first real OCR test
+          # (test_affinity_talk, OpenVINO inference) 3 times in 5, with no
+          # traceback.  Print the runner CPU and let faulthandler dump the
+          # stack of a native crash, so the next one says where it died.
+          Get-CimInstance Win32_Processor | ForEach-Object { "CPU: $($_.Name)" }
+          python -X faulthandler -m unittest discover -s tests -v
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            "unittest exit code: $code (0x{0:X8})" -f $code
+            exit $code
+          }
 
       - name: Inline ok-script for update repository
         run: |
