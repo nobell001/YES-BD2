@@ -190,6 +190,10 @@ PREV, NEXT = "stage_prev", "stage_next"
 STEP_SLOT_CHARS = 11  # the longest step 推主线 says: 「商店或花费页面，已暂停」
 # The capsule's 置顶 (Leo 2026-11-07 「膠囊右邊多一個置頂的圖案」).
 PIN = "pin"
+# The capsule's eye: hides it until the 推剧情 page shows it again (Leo
+# 2026-11-17 「過劇情功能的懸浮視窗可以隱藏嗎」).  Only the capsule goes: the
+# state runs on, 停止 stays on the page and on its key.
+HIDE = "hide"
 
 
 def with_picker(status: Status, picker) -> Status:
@@ -225,7 +229,7 @@ def step_stage(picker, action: str) -> None:
     picker.pick(shown)
 
 
-PIN_BUTTON = ((PIN, "置顶", ""),)
+PIN_BUTTON = ((PIN, "置顶", ""), (HIDE, "隐藏", ""))
 # Steps too quick to be worth a word on the capsule (Leo 2026-11-07 「跳過對話
 # 跳過對話確認 膠囊不用顯示出來」, 「不要跳等鼠標停下」): it keeps saying the
 # step before them.
@@ -740,6 +744,15 @@ class StatusBar(QWidget):
             pill = QRectF(x, mid - parts["button_h"] / 2, width, parts["button_h"])
             hover = self._hover == action
             stop = action == hotkeys.STOP
+            if action == HIDE:
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QColor(255, 255, 255, 52 if hover else 26))
+                painter.drawRoundedRect(pill, pill.height() / 2, pill.height() / 2)
+                ink = QColor(255, 255, 255, 255 if hover else 200)
+                icons.paint(painter, QRectF(pill.center().x() - icon / 2, mid - icon / 2, icon, icon), "eye-off", ink, 2.2)
+                self._button_rects.append((action, pill))
+                x = pill.right() + round(4 * unit)
+                continue
             if action == PIN:
                 fill = QColor("#7467C4") if self.pinned else QColor(255, 255, 255, 52 if hover else 26)
                 if self.pinned and hover:
@@ -1146,9 +1159,17 @@ class Watch(QObject):
         status = self._status(now)
         # A task that is a state the player plays along with (推主线) shows
         # the bar whatever 设置 says: its 停止 is how the player ends it.
+        # The player may still hide it with its eye (Leo 2026-11-17); then
+        # 停止 is on the 推剧情 page and on its key.
         forced = bool(getattr(data.current_task() if data.busy() else None, "status_bar_always", False))
-        if status is None or not (forced or game_status_bar.enabled()):
-            self._hide("no run" if status is None else "turned off in 设置")
+        if status is None:
+            self._hide("no run")
+            return
+        if forced and not game_status_bar.story_shown():
+            self._hide("hidden by the player (推剧情 page shows it again)")
+            return
+        if not (forced or game_status_bar.enabled()):
+            self._hide("turned off in 设置")
             return
         window = getattr(getattr(data.og(), "device_manager", None), "hwnd_window", None)
         pinned = forced and game_status_bar.pinned()
@@ -1173,6 +1194,10 @@ class Watch(QObject):
         if action == PIN:
             if self.bar is not None:
                 self.bar.set_pinned(not self.bar.pinned)
+            self.tick()
+            return
+        if action == HIDE:
+            game_status_bar.set_story_shown(False)
             self.tick()
             return
         if action in (PREV, NEXT):

@@ -105,6 +105,21 @@ def set_offset(dx: int, dy: int) -> None:
     _save(**{OFFSET_KEY: [int(dx), int(dy)]})
 
 
+STORY_KEY = "story_shown"
+
+
+def story_shown() -> bool:
+    """推剧情's capsule shows (Leo 2026-11-17 「過劇情功能的懸浮視窗可以隱藏嗎」).
+    On unless the player hid it (the capsule's eye or the 推剧情 page); the
+    设置 switch above is for the other tasks and does not touch it."""
+    return bool(_read().get(STORY_KEY, True))
+
+
+def set_story_shown(on: bool) -> None:
+    _save(**{STORY_KEY: bool(on)})
+    logger.info(f"game status bar: 推剧情 capsule {'shown' if on else 'hidden'} by the player")
+
+
 def register(hwnd: int) -> None:
     if hwnd:
         _handles.add(int(hwnd))

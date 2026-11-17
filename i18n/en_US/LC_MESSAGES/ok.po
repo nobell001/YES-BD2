@@ -4327,3 +4327,23 @@ msgstr "This week's Farming records are cleared. The next run starts from the fi
 
 msgid "跑图记录现在存不进去（文件可能被占用），没有清掉，请稍后再按一次"
 msgstr "Couldn't save the Farming records right now (the file may be in use). Nothing was cleared; try again in a moment."
+
+msgid "小条"
+msgstr "Status bar"
+
+msgid "游戏上显示小条"
+msgstr "Show the bar on the game"
+
+msgid "小条右边的眼睛可以把它藏起来"
+msgstr "The eye on the bar's right hides it"
+
+msgid "已隐藏：用这页的按钮停止，或按 {key}"
+msgstr "Hidden: stop with the button on this page, or press {key}"
+
+msgid "已隐藏：用这页的按钮停止"
+msgstr "Hidden: stop with the button on this page"
+
+msgid "按小条或这页的「继续」接着跑"
+msgstr "Press Continue on the bar or this page to go on"
+msgid "在分身窗口进到剧情；在主页会先暂停，进去后按继续"
+msgstr "Enter the story in the clone window; it pauses on the home screen, press Continue once you're in"

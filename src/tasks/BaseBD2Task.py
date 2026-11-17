@@ -209,8 +209,16 @@ def _run_watched(task, run, args, kwargs, stepped_in=False, watched=False):
     first_why = ""
     for attempt in (1, 2):
         task._frozen_watch = FrozenWatch()
+        task._no_redo_why = ""
         try:
             result = _run_again_after_step_in(task, run, args, kwargs, stepped_in)
+            no_redo = str(getattr(task, "_no_redo_why", "") or "")
+            if result is False and attempt == 1 and redo_failed and no_redo:
+                # The run said doing it again from 主页 would meet the same
+                # thing (player v0.3.20 2026-11-17: a window kept in front of
+                # the game, 每日跑商 round and round for 23 minutes).
+                task.log_warning(f"{name}：{no_redo}，回主页重做也一样，不再重做。")
+                return result
             if result is not False or attempt == 2 or not redo_failed:
                 if result is False and attempt == 2 and first_why:
                     _keep_first_why(task, first_why)
@@ -458,6 +466,33 @@ def _what_is_in_front() -> str:
         return f"最前面是 {program or '另一个程序'}（{kind}），Windows 拒绝把游戏换到前面"
     except Exception as exc:
         return f"看不出最前面是什么：{exc!r}"
+
+
+def _window_at_words(point) -> str:
+    """The window over a screen point, in player words: its program's file
+    name and window kind, never its title (as :func:`_what_is_in_front`)."""
+    try:
+        import win32gui
+        import win32process
+
+        from src.utils import game_status_bar
+
+        hwnd = game_status_bar.window_at(tuple(int(value) for value in point))
+        if not hwnd:
+            return "屏幕外或看不到的地方（游戏窗口可能有一部分在屏幕外）"
+        root = win32gui.GetAncestor(hwnd, 2) or hwnd  # GA_ROOT
+        _thread, pid = win32process.GetWindowThreadProcessId(root)
+        program = ""
+        try:
+            import psutil
+
+            program = psutil.Process(pid).name()
+        except Exception:
+            pass
+        kind = win32gui.GetClassName(root) or "?"
+        return f" {program or '另一个程序'}（{kind}）的窗口"
+    except Exception as exc:
+        return f"别的窗口（看不出是什么：{exc!r}）"
 
 
 def _input_desktop_open() -> bool:
@@ -1459,18 +1494,31 @@ class BaseBD2Task(BaseTask):
     ) -> bool:
         """Drag with the real mouse, only onto the game in the foreground.
 
-        The drag presses the user's real left button, so it is skipped
-        (returns False) unless the game is the foreground window and the
-        start point is on it; otherwise it could drag in another program.
+        The drag presses the user's real left button, so it is only pressed
+        when the game is the foreground window and the start point is on it;
+        otherwise it could drag in another program.  Then the drag is posted
+        to the game window instead (:meth:`_post_drag`, the way clicks reach a
+        game behind other windows).  False only when neither could be made;
+        :attr:`drag_refused_why` then says what kept the game from the front.
+
+        Player v0.3.20 2026-11-17 (2560x1440 at 150%, no clone): every sale
+        drag was refused while clicks went on, each 卖 failed, went home and
+        came back the same, so 单独运行 每日跑商 went round for 23 minutes and
+        the report never said which window was in the way.
         """
 
         dragged = []
+        refused: list[str] = []
 
         def action():
             import win32api
             import win32con
 
             if not self._bring_game_to_foreground():
+                refused.append(
+                    "游戏窗口没能换到最前面"
+                    + (f"（{why}）" if (why := getattr(self, "_foreground_why", "")) else "")
+                )
                 return
             interaction = getattr(self.executor, "interaction", None)
             if interaction is not None and hasattr(interaction, "force_activate"):
@@ -1487,6 +1535,9 @@ class BaseBD2Task(BaseTask):
             start_abs = to_screen(start)
             end_abs = to_screen(end)
             if not self._point_on_game(start_abs):
+                refused.append(
+                    f"游戏画面被{_window_at_words(start_abs)}盖住（屏幕位置 {start_abs[0]},{start_abs[1]}）"
+                )
                 return
             dragged.append(True)
             steps = max(6, round(duration / 0.03))
@@ -1509,14 +1560,70 @@ class BaseBD2Task(BaseTask):
         with game_status_bar.hold_clicks():
             self.operate(action, block=True, restore_cursor=True)
         if not dragged:
-            self.info_set("拖动", "未拖动：游戏窗口不在最前面或被其他窗口遮住")
+            why = refused[0] if refused else "游戏窗口不在最前面或被其他窗口盖住"
+            if self._post_drag(start, end, duration):
+                self.drag_refused_why = ""
+                self.info_set("拖动", f"后台拖动（{why}）")
+                if why != getattr(self, "_post_drag_logged", ""):
+                    # Once per cause, so a report says what was in front.
+                    self._post_drag_logged = why
+                    self.log_info(f"拖动：{why}，不用真滑鼠，改用后台方式拖动。")
+                self.sleep(after_sleep)
+                return True
+            self.drag_refused_why = why
+            self.info_set("拖动", f"未拖动：{why}")
             self.log_warning(
-                "游戏窗口不在最前面，已停止拖动，避免操作到其他窗口。"
-                "运行需要拖动的任务时请让游戏保持在最前面。"
+                f"没法拖动：{why}。已停止拖动，避免操作到其他窗口。"
+                "运行需要拖动的任务时请让游戏留在最前面，不要被其他窗口盖住。"
             )
             return False
+        self.drag_refused_why = ""
         self.sleep(after_sleep)
         return True
+
+    def _post_drag(
+        self, start: tuple[int, int], end: tuple[int, int], duration: float
+    ) -> bool:
+        """The drag posted to the game window (``BD2Interaction.post_swipe``),
+        no real button: it can only reach the game, wherever the game sits.
+        False when there is no such way or the game is minimized."""
+
+        interaction = getattr(self.executor, "interaction", None)
+        swipe = getattr(interaction, "post_swipe", None)
+        if swipe is None:
+            return False
+        handles = self._game_window_handles()
+        if not handles:
+            return False
+        try:
+            import win32gui
+
+            if any(win32gui.IsIconic(handle) for handle in handles):
+                return False  # nothing to drag on a minimized game
+        except Exception:
+            pass
+        try:
+            swipe(
+                int(start[0]),
+                int(start[1]),
+                int(end[0]),
+                int(end[1]),
+                duration=max(0.2, float(duration)),
+            )
+        except Exception as exc:
+            self.log_info(f"后台拖动没做成：{exc!r}")
+            return False
+        return True
+
+    def no_redo(self, why: str) -> None:
+        """This run failed for a reason going home and doing it again would
+        meet the same way (a window kept in front of the game): the redo
+        from 主页, here and in the task's own phases, is not made, and
+        ``why`` is the run's reason on the report."""
+
+        self._no_redo_why = str(why)
+        if not str(getattr(self, "_why", "") or ""):
+            self._why = str(why)
 
     def wheel_client_real(
         self,
@@ -1587,7 +1694,18 @@ class BaseBD2Task(BaseTask):
             root = win32gui.GetAncestor(hwnd, 2)  # GA_ROOT
         except Exception:
             return False
-        return hwnd in handles or root in handles
+        if hwnd in handles or root in handles:
+            return True
+        # Another window of the game's own program (not the one the tool
+        # captures) is still the game: the drag cannot land in another
+        # program there.
+        try:
+            import win32process
+
+            ours = {win32process.GetWindowThreadProcessId(handle)[1] for handle in handles}
+            return bool(root) and win32process.GetWindowThreadProcessId(root)[1] in ours
+        except Exception:
+            return False
 
     def _game_window_handles(self) -> set[int]:
         interaction = getattr(self.executor, "interaction", None)

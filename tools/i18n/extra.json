@@ -2083,5 +2083,40 @@
   "en": "Before starting, put the Cooking skill in any skill slot",
   "ja": "開始前に、料理スキルをどれかのスキル枠にセットしてください",
   "ko": "시작 전에 요리 스킬을 아무 스킬 칸에 넣어 주세요"
+ },
+ "小条": {
+  "en": "Status bar",
+  "ja": "ステータスバー",
+  "ko": "상태 바"
+ },
+ "游戏上显示小条": {
+  "en": "Show the bar on the game",
+  "ja": "ゲーム上にバーを表示",
+  "ko": "게임 위에 바 표시"
+ },
+ "小条右边的眼睛可以把它藏起来": {
+  "en": "The eye on the bar's right hides it",
+  "ja": "バー右端の目のアイコンで隠せます",
+  "ko": "바 오른쪽 눈 아이콘으로 숨길 수 있어요"
+ },
+ "已隐藏：用这页的按钮停止，或按 {key}": {
+  "en": "Hidden: stop with the button on this page, or press {key}",
+  "ja": "非表示中：このページのボタンか {key} で停止",
+  "ko": "숨김: 이 페이지 버튼이나 {key}로 정지"
+ },
+ "已隐藏：用这页的按钮停止": {
+  "en": "Hidden: stop with the button on this page",
+  "ja": "非表示中：このページのボタンで停止",
+  "ko": "숨김: 이 페이지 버튼으로 정지"
+ },
+ "按小条或这页的「继续」接着跑": {
+  "en": "Press Continue on the bar or this page to go on",
+  "ja": "バーかこのページの「続行」で再開",
+  "ko": "바나 이 페이지의 「계속」으로 이어서 진행"
+ },
+ "在分身窗口进到剧情；在主页会先暂停，进去后按继续": {
+  "en": "Enter the story in the clone window; it pauses on the home screen, press Continue once you're in",
+  "ja": "分身ウィンドウでストーリーに入ってください。ホームでは一時停止し、入ったら「続行」を押します",
+  "ko": "분신 창에서 스토리로 들어가세요. 홈에서는 일시정지되며, 들어간 뒤 계속을 누르세요"
  }
 }

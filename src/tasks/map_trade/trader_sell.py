@@ -840,12 +840,20 @@ class SellFlowMixin:
             if located is None and self._sale_drag_refused:
                 # Not "item missing": the list could not be moved, and every
                 # later item needs it too, so the sell stops as a failure.
+                # Going home and coming back finds the same window in the
+                # way (player v0.3.20 2026-11-17: 单独运行 went round for 23
+                # minutes), so it is not redone: the run ends saying why.
+                why = str(getattr(self.task, "drag_refused_why", "") or "游戏窗口不在最前面")
                 self._last_sale_unavailable = False
-                self._last_sale_reason = "游戏窗口不在最前面，无法拖动出售列表"
+                self._last_sale_reason = f"出售列表拖不动（{why}）"
                 self.task.log_warning(
-                    f"卖：{entry.item}需要拖动出售列表，但游戏窗口不在最前面，停止出售。",
+                    f"卖：{entry.item}要拖动出售列表才找得到，但拖不动：{why}。"
+                    "停止出售，请让游戏留在最前面、不要被其他窗口盖住后再跑一次。",
                     notify=True,
                 )
+                no_redo = getattr(self.task, "no_redo", None)
+                if callable(no_redo):
+                    no_redo(f"卖：出售列表拖不动（{why}）")
                 return False
             if located is None:
                 if sold_count and self._last_sale_page_empty:
@@ -1238,7 +1246,8 @@ class SellFlowMixin:
         ):
             return True
         self._sale_drag_refused = True
-        self._status("出售列表滚动", "游戏窗口不在最前面，未拖动列表")
+        why = str(getattr(self.task, "drag_refused_why", "") or "游戏窗口不在最前面")
+        self._status("出售列表滚动", f"未拖动列表：{why}")
         return False
 
     def _scroll_sale_list_to_top(self) -> None:

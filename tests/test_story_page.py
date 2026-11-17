@@ -51,5 +51,52 @@ class StoryPageTest(unittest.TestCase):
         self.assertEqual(page.switch.property("kind"), "primary")
 
 
+class StoryBarCardTest(unittest.TestCase):
+    """Leo 2026-11-17 「過劇情功能的懸浮視窗可以隱藏嗎」: the page shows the
+    capsule again, and 继续 here when paused (the capsule may be hidden)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        from src.utils import game_status_bar
+
+        self.bar = game_status_bar
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        patch = mock.patch.object(game_status_bar, "SETTINGS_FILE", Path(folder.name) / "bar.json")
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_switch_follows_the_capsule_and_turns_it_back_on(self):
+        page = StoryPage()
+        self.assertTrue(page.bar_card.toggle.isChecked())
+        self.bar.set_story_shown(False)  # the capsule's eye
+        with mock.patch.object(story_page.data, "task_by_class_name", return_value=None):
+            page.refresh()
+        self.assertFalse(page.bar_card.toggle.isChecked())
+        self.assertIn("F10", page.bar_card.line.text())
+        page.bar_card.toggle.click()
+        self.assertTrue(self.bar.story_shown())
+
+    def test_paused_shows_continue(self):
+        task = mock.Mock(paused=True)
+        page = StoryPage()
+        page.show()
+        self.addCleanup(page.close)
+        with mock.patch.object(story_page.data, "task_by_class_name", return_value=task), \
+                mock.patch.object(story_page.data, "busy", return_value=True), \
+                mock.patch.object(story_page.data, "current_task", return_value=task), \
+                mock.patch("src.tasks.BaseBD2Task.task_info_snapshot", return_value={"状态": "已暂停"}):
+            page.refresh()
+            self.assertTrue(page.resume.isVisible())
+            page.resume.click()
+        task.unpause.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,9 @@ Leo 2026-11-07 「介面特色用有質感的卡片 shadcn」: the mockup he saw
 (/mnt/project-files/main-story-ui/推主線頁-卡片-v1.png): a hero card with the
 switch on its right, four 它会做 cards with their key (the one at work lights
 up), four 要知道 cards.
+Leo 2026-11-17 「桌面分身也要可以跑劇情」: 「在桌面分身跑」 under the switch, the
+same start as 首页's (that one only ran 一键日常); a run in the clone shows
+here and 停止 here stops it.
 """
 
 from __future__ import annotations
@@ -16,11 +19,12 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QGridLayout, QSizePolicy, QWidget
 
-from src.ui.shell import actions, data, icons, theme
+from src.ui.shell import actions, clone_flow, data, hotkeys, icons, theme
 from src.ui.shell.floating import Floating, Panel
 from src.ui.shell.page import Page, pill, set_pill
 from src.ui.shell.run_confirm import HeroIcon
-from src.ui.shell.widgets import Button, Card, Text, hbox, t, vbox
+from src.ui.shell.widgets import Button, Card, Text, Toggle, hbox, t, tf, vbox
+from src.utils import game_status_bar
 
 TASK = "MainStoryTask"
 DIFFICULTIES = ("普通", "困难", "超困难")
@@ -38,7 +42,7 @@ NOTES = (
     ("swords", "战斗你来打", "一分钟没开打才帮你点一次自动；打输会等你重打"),
     ("hand", "要手动的步骤", "停下来等你，做完自己接着跑"),
     ("copy", "被盖住也照跑", "可以看网页、看影片；打字可能会被干扰"),
-    ("house", "回主页会暂停", "要停请按游戏上方小条的「停止」"),
+    ("house", "回主页会暂停", "按小条或这页的「继续」接着跑"),
 )
 
 
@@ -63,6 +67,11 @@ class Tile(QWidget):
     def set_on(self, on: bool) -> None:
         if on != self._on:
             self._on = on
+            self.update()
+
+    def set_icon(self, icon_name: str) -> None:
+        if icon_name != self._icon:
+            self._icon = icon_name
             self.update()
 
     def paintEvent(self, _event):
@@ -136,6 +145,42 @@ class NoteCard(OutlinedCard):
         row.addLayout(texts, 1)
 
 
+class BarCard(OutlinedCard):
+    """「過劇情功能的懸浮視窗可以隱藏嗎」 (Leo 2026-11-17): the capsule on the game
+    shows or not.  The capsule's own eye turns this off; here it comes back."""
+
+    def __init__(self):
+        super().__init__()
+        row = hbox(self, (16, 14, 16, 14), 12)
+        self.tile = Tile("eye", 30)
+        row.addWidget(self.tile, 0, Qt.AlignVCenter)
+        texts = vbox(None, (0, 0, 0, 0), 2)
+        texts.addWidget(Text("游戏上显示小条", "h3"))
+        self.line = Text("", "card_desc", wrap=True)
+        texts.addWidget(self.line)
+        row.addLayout(texts, 1)
+        self.toggle = Toggle(game_status_bar.story_shown())
+        self.toggle.toggled.connect(self._toggled)
+        row.addWidget(self.toggle, 0, Qt.AlignVCenter)
+        self.refresh()
+
+    def _toggled(self, on: bool) -> None:
+        game_status_bar.set_story_shown(on)
+        self.refresh()
+
+    def refresh(self) -> None:
+        on = game_status_bar.story_shown()
+        self.toggle.set_checked_quietly(on)
+        self.tile.set_icon("eye" if on else "eye-off")
+        if on:
+            self.line.set_text(t("小条右边的眼睛可以把它藏起来"))
+            return
+        key = hotkeys.keys().get(hotkeys.STOP, hotkeys.NONE)
+        self.line.set_text(
+            tf("已隐藏：用这页的按钮停止，或按 {key}", key=t(key)) if key != hotkeys.NONE else t("已隐藏：用这页的按钮停止")
+        )
+
+
 def _grid(cards, columns: int) -> QWidget:
     host = QWidget()
     grid = QGridLayout(host)
@@ -155,14 +200,16 @@ class StartReminder(Floating):
     MARGIN = 64
     PAD = (24, 20)
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None, clone: bool = False):
         super().__init__(parent)
         column = self.column
         head = hbox(None, (0, 0, 0, 0), 12)
         head.addWidget(HeroIcon("scroll-text", 40), 0, Qt.AlignTop)
         titles = vbox(None, (0, 0, 0, 0), 2)
-        titles.addWidget(Text("开启推剧情", "h2"))
-        titles.addWidget(Text("请先进到剧情的场地或对话里再开", "sub", wrap=True))
+        titles.addWidget(Text("在桌面分身跑" if clone else "开启推剧情", "h2"))
+        # The game in a clone just opened is on 主页, where 推剧情 pauses.
+        sub = "在分身窗口进到剧情；在主页会先暂停，进去后按继续" if clone else "请先进到剧情的场地或对话里再开"
+        titles.addWidget(Text(sub, "sub", wrap=True))
         head.addLayout(titles, 1)
         column.addLayout(head)
         for icon_name, title, line in NOTES:
@@ -185,8 +232,8 @@ class StartReminder(Floating):
         super().mouseReleaseEvent(event)
 
 
-def confirm_start(window: QWidget | None) -> bool:
-    return bool(StartReminder(window).exec())
+def confirm_start(window: QWidget | None, clone: bool = False) -> bool:
+    return bool(StartReminder(window, clone).exec())
 
 
 def _section(text: str) -> Text:
@@ -208,6 +255,9 @@ class StoryPage(Page):
         title_row.addWidget(Text("推剧情", "card_title"))
         self.state = pill()
         title_row.addWidget(self.state, 0, Qt.AlignVCenter)
+        self.where = pill(t("桌面分身"))
+        self.where.hide()
+        title_row.addWidget(self.where, 0, Qt.AlignVCenter)
         title_row.addStretch(1)
         texts.addLayout(title_row)
         self.now = Text("", "card_desc", wrap=True)
@@ -218,9 +268,13 @@ class StoryPage(Page):
         chips.addStretch(1)
         texts.addLayout(chips)
         row.addLayout(texts, 1)
+        # Paused (主页, a shop): 继续 here too, for a capsule the player hid.
+        self.resume = Button("继续", "secondary", "play", "lg", on_click=self.toggle_pause)
+        self.resume.setVisible(False)
+        row.addWidget(self.resume, 0, Qt.AlignVCenter)
         # Leo 2026-11-06: a toggle says its current choice inside the button.
         self.switch = Button("开启推剧情", "primary", "play", "lg", on_click=self.toggle)
-        row.addWidget(self.switch, 0, Qt.AlignVCenter)
+        row.addLayout(self._starts(), 0)
         self.body.addWidget(hero)
 
         self.body.addWidget(_section("它会做"))
@@ -229,23 +283,81 @@ class StoryPage(Page):
 
         self.body.addWidget(_section("要知道"))
         self.body.addWidget(_grid([NoteCard(*note) for note in NOTES], 2))
+
+        self.body.addWidget(_section("小条"))
+        self.bar_card = BarCard()
+        self.body.addWidget(self.bar_card)
         self.body.addStretch(1)
+
+    def _starts(self):
+        """The switch, and 「在桌面分身跑」 under it like 首页's two starts."""
+        column = vbox(None, (0, 0, 0, 0), 6)
+        column.addStretch(1)
+        column.addWidget(self.switch)
+        self.start_clone = Button("在桌面分身跑", "secondary", "monitor", on_click=self.start_in_clone)
+        self.start_clone.setToolTip(
+            t("纯后台执行：游戏在独立的分身窗口里跑，缩小也照跑；你照常用电脑，鼠标键盘不会被抢")
+        )
+        self.start_clone.setVisible(clone_flow.available())
+        column.addWidget(self.start_clone)
+        column.addStretch(1)
+        return column
 
     def task(self):
         return data.task_by_class_name(TASK)
 
+    def remote(self):
+        """The 推剧情 run in the 桌面分身 (seen from outside), else None."""
+        task = self.task()
+        if task is None or data.busy():
+            return None
+        remote = clone_flow.remote_task()
+        if remote is None or remote.name != task.name:
+            return None
+        return remote
+
     def running(self) -> bool:
         task = self.task()
-        return task is not None and data.busy() and data.current_task() is task
+        if task is None:
+            return False
+        return (data.busy() and data.current_task() is task) or self.remote() is not None
 
     def toggle(self) -> None:
         task = self.task()
         if task is None:
             return
-        if self.running():
+        if self.remote() is not None:
+            clone_flow.log_remote_press("stop", "推剧情页")
+            clone_flow.remote_control("stop")
+        elif self.running():
             actions.stop(task)
         elif confirm_start(self.window()):
             actions.start(task, self.window())
+        self.refresh()
+
+    def toggle_pause(self) -> None:
+        # The page's 继续 reaches the run in the 桌面分身 too (#567 + #569),
+        # the same way 首页's 暂停 does.
+        remote = self.remote()
+        if remote is not None:
+            command = "resume" if remote.paused else "pause"
+            clone_flow.log_remote_press(command, "推剧情页")
+            clone_flow.remote_control(command)
+        else:
+            task = self.task()
+            if task is not None and self.running():
+                actions.toggle_pause(task)
+        self.refresh()
+
+    def start_in_clone(self) -> None:
+        task = self.task()
+        if task is None or data.busy() or clone_flow.busy_in_clone():
+            return
+        if not clone_flow.ready_to_go():
+            # First-time setup and sign-in fixes go through their notes (首页's too).
+            clone_flow.ask_and_start(self.window(), task)
+        elif confirm_start(self.window(), clone=True):
+            clone_flow.open_clone(self.window(), task)
         self.refresh()
 
     def _set_switch(self, on: bool) -> None:
@@ -255,23 +367,32 @@ class StoryPage(Page):
 
     def refresh(self) -> None:
         task = self.task()
+        remote = self.remote()
         on = self.running()
-        paused = on and bool(getattr(task, "paused", False))
+        paused = on and bool(getattr(remote or task, "paused", False))
         status = ""
-        if on:
+        if remote is not None:
+            status = str(remote.info.get("状态") or "")
+        elif on:
             try:
                 from src.tasks.BaseBD2Task import task_info_snapshot
 
                 status = str(task_info_snapshot(task).get("状态") or "")
             except Exception:
                 status = ""
+        if on:
             set_pill(self.state, t("已暂停" if paused else "推剧情中"), None if paused else "ok")
             self.now.set_text(t("现在：") + t(status) if status else t("推剧情中"))
         else:
             set_pill(self.state, t("关闭"))
             self.now.set_text(t("先进到剧情的场地或对话里，再按开启"))
         self._set_switch(on)
+        self.resume.setVisible(paused)
+        self.bar_card.refresh()
         lit = lit_card(status) if on and not paused else None
         for index, card in enumerate(self.features):
             card.set_on(index == lit)
         self.switch.setEnabled(task is not None and (on or actions.can_start()))
+        self.where.setVisible(remote is not None)
+        self.start_clone.setVisible(clone_flow.available() and not on)
+        self.start_clone.setEnabled(task is not None and actions.can_start() and not clone_flow.busy_in_clone())

@@ -490,6 +490,12 @@ class MapTradeTask(MapAutomationTaskBase):
             result = False
         if bool(getattr(result, "success", result)):
             return result
+        no_redo = str(getattr(self, "_no_redo_why", "") or "")
+        if no_redo:
+            # Home and back meets the same window in the way (player v0.3.20
+            # 2026-11-17: 卖 failed, went home, failed the same, round and round).
+            self.log_warning(f"{name}：没有成功（{no_redo}），回主页重来也一样，不再重来。")
+            return result
         self.log_info(f"{name}：没有成功，回主页{again}。")
         if self._return_home_after_phases(navigator):
             trader.left_shop()
@@ -497,6 +503,7 @@ class MapTradeTask(MapAutomationTaskBase):
         return result
 
     def run(self):
+        self._no_redo_why = ""
         vision = Vision(self)
         navigator = Navigator(self, vision)
         progress = ProgressStore()

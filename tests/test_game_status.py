@@ -78,7 +78,7 @@ class RunningLineTest(unittest.TestCase):
         self.assertEqual(status.detail, "战斗中")
         self.assertNotIn("0.98", status.title + status.detail)
         # Leo 2026-11-07 「膠囊右邊多一個置頂的圖案」
-        self.assertEqual(status.buttons, (("pause", "暂停", "F9"), ("stop", "停止", "F10"), ("pin", "置顶", "")))
+        self.assertEqual(status.buttons, (("pause", "暂停", "F9"), ("stop", "停止", "F10"), ("pin", "置顶", ""), ("hide", "隐藏", "")))
         self.assertEqual(paused.tone, game_status.PAUSE)
         self.assertEqual(paused.detail, "已暂停 · 战斗中")
         self.assertEqual(paused.buttons[0], ("pause", "继续", "F9"))
@@ -191,7 +191,7 @@ class RunningLineTest(unittest.TestCase):
 
     def test_capsule_has_the_pin_button(self):
         bar, _area = self._capsule()
-        self.assertEqual([action for action, _rect in bar._button_rects], ["pause", "stop", "pin"])
+        self.assertEqual([action for action, _rect in bar._button_rects], ["pause", "stop", "pin", "hide"])
         for _action, rect in bar._button_rects:
             self.assertTrue(bar.rect().contains(rect.toRect()), rect)
 
@@ -269,6 +269,72 @@ class SettingTest(unittest.TestCase):
                 self.assertTrue(game_status_bar.enabled())
                 game_status_bar.set_enabled(False)
                 self.assertFalse(game_status_bar.enabled())
+
+
+class StoryHideTest(unittest.TestCase):
+    """Leo 2026-11-17 「過劇情功能的懸浮視窗可以隱藏嗎」: the capsule's eye hides
+    推剧情's capsule; the run goes on and the page shows it again."""
+
+    def setUp(self):
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.instance() or QApplication([])
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        patch = mock.patch.object(game_status_bar, "SETTINGS_FILE", Path(folder.name) / "bar.json")
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def _watch(self, task):
+        from PySide6.QtCore import QRect
+
+        watch = game_status.Watch(None)
+        watch._timer.stop()
+        status = game_status.Status(game_status.RUN, "推剧情", "自动移动中", "01:00",
+                                    buttons=game_status.buttons(False) + game_status.PIN_BUTTON, compact=True)
+        patches = (
+            mock.patch.object(game_status.data, "busy", return_value=True),
+            mock.patch.object(game_status.data, "current_task", return_value=task),
+            mock.patch.object(watch, "_status", return_value=status),
+            mock.patch.object(game_status, "game_area_why", return_value=(QRect(0, 0, 1920, 1080), "")),
+            mock.patch.object(game_status.data, "og", return_value=None),
+            mock.patch.object(game_status.StatusBar, "prepare", return_value=True),
+        )
+        for each in patches:
+            each.start()
+            self.addCleanup(each.stop)
+        return watch
+
+    def test_shown_by_default_even_with_the_setting_off(self):
+        self.assertTrue(game_status_bar.story_shown())
+        self.assertFalse(game_status_bar.enabled())
+        watch = self._watch(SimpleNamespace(status_bar_always=True, enabled=True, paused=False))
+        watch.tick()
+        self.assertTrue(watch.bar.isVisible())
+
+    def test_eye_hides_it_and_the_run_is_not_touched(self):
+        task = SimpleNamespace(status_bar_always=True, enabled=True, paused=False)
+        keys = []
+        watch = self._watch(task)
+        watch._on_key = keys.append
+        watch.tick()
+        watch._on_press(game_status.HIDE)
+        self.assertFalse(game_status_bar.story_shown())
+        self.assertFalse(watch.bar.isVisible())
+        self.assertEqual(keys, [])  # no pause, no stop
+        self.assertTrue(task.enabled)
+        watch.tick()
+        self.assertFalse(watch.bar.isVisible())
+        game_status_bar.set_story_shown(True)  # the 推剧情 page's switch
+        watch.tick()
+        self.assertTrue(watch.bar.isVisible())
+
+    def test_other_tasks_keep_the_settings_switch(self):
+        game_status_bar.set_story_shown(False)
+        game_status_bar.set_enabled(True)
+        watch = self._watch(SimpleNamespace(enabled=True, paused=False))
+        watch.tick()
+        self.assertTrue(watch.bar.isVisible())
 
 
 class LooksThroughBarTest(unittest.TestCase):
