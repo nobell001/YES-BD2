@@ -8,7 +8,15 @@ from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QGridLayout, QSizePolicy, QWidget
 
-from src.ui.shell import actions, data, icons, motion, skill_interval_dialog, theme
+from src.ui.shell import (
+    actions,
+    data,
+    icons,
+    map_week_reset,
+    motion,
+    skill_interval_dialog,
+    theme,
+)
 from src.ui.shell.config_form import ConfigForm
 from src.ui.shell.page import Page, pill, set_pill
 from src.ui.shell.widgets import (
@@ -214,7 +222,19 @@ class MapPage(Page):
         top, grid = grid_container(300, 14, 2)
         week = Card()
         column = vbox(week, (18, 16, 18, 16), 8)
-        column.addWidget(Text("本周进度", "h3"))
+        week_head = hbox(None, (0, 0, 0, 0), 8)
+        week_head.addWidget(Text("本周进度", "h3"), 1)
+        # A player 2026-11-16: every card still showed last week's done;
+        # start this week's records over by hand.
+        # Leo 2026-11-17: 「用圖標就好不用寫重新開始」; the words are in the tip.
+        self.restart_week = Button(
+            "", "chip", "rotate-ccw", size="sm", on_click=self._restart_week
+        )
+        self.restart_week.setToolTip(
+            t("重新开始") + " · " + t("清掉这周的卡带记录，下次跑图会从第一张卡带重新看。")
+        )
+        week_head.addWidget(self.restart_week)
+        column.addLayout(week_head)
         line = hbox(None, (0, 0, 0, 0), 6)
         self.week_value = Text("", "huge")
         self.week_unit = Text("", "muted")
@@ -416,6 +436,13 @@ class MapPage(Page):
             task.config[RANGE_KEY] = "全部"
         self.refresh()
 
+    def _restart_week(self) -> None:
+        if data.busy():
+            return
+        map_week_reset.ask(self.window())
+        self._progress_at = 0.0
+        self.refresh()
+
     # ---------------------------------------------------------------- refresh
 
     def showEvent(self, event):
@@ -432,6 +459,7 @@ class MapPage(Page):
         else:
             set_pill(self.status, "一键日常里不跑")
         self.start_button.setEnabled(actions.can_start() and task is not None)
+        self.restart_week.setEnabled(not data.busy())
         if task is not None:
             self.limit.set_value(str(int(task.config.get(LIMIT_KEY, 0) or 0)))
         self._show_interval()

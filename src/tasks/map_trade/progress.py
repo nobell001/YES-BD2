@@ -1413,6 +1413,28 @@ class ProgressStore:
             state.verified_cards.remove(card_id)
         self.save()
 
+    def restart_collection_week(self) -> Path | None:
+        """The player's 「重新开始本周」 on the 跑图 page (player 2026-11-16:
+        every card still showed last week's done): forget which cards and
+        maps this week are done, so the next run looks at each card again.
+
+        Today's skill counts and action records stay (they are what the
+        game's daily counts were spent on), and so do 跑商's records.  A copy
+        of the file is kept first.  Returns the copy's path."""
+        backup = None
+        if self.path.exists():
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            backup = self.path.with_suffix(f".before-week-restart-{stamp}.json")
+            shutil.copy2(self.path, backup)
+        state = self.load()
+        for card_id in list(state.cards):
+            if card_id in VALID_CARD_IDS:
+                self._settle_card_actions(card_id)
+        state.cards = {}
+        state.verified_cards = []
+        self.save()
+        return backup
+
     def forget_collection_week(self) -> Path | None:
         """Drop this week's 跑图 records after the player said they belong to
         another game account (GitHub issue #4): the cards, the day's counts and

@@ -196,7 +196,8 @@ def dialogs(shell):
     from qfluentwidgets import MessageBox
 
     from src.ui.shell import accounts_ui, actions, clone_flow, data, new_setting_notice
-    from src.ui.shell import run_confirm, skill_interval_dialog, wait_settings_dialog
+    from src.ui.shell import map_week_reset, run_confirm, skill_interval_dialog
+    from src.ui.shell import wait_settings_dialog
 
     window = shell.window
     batch = data.task_by_name(data.DAILY_BATCH)
@@ -329,6 +330,7 @@ def dialogs(shell):
         ("run-confirm-clone", lambda: run_confirm.ask(window, batch, clone=True)),
         ("skill-interval", lambda: skill_interval_dialog.ask(window, 1.0, (0.3, 5.0), 1.0)),
         ("wait-settings", lambda: wait_settings_dialog.ask(window)),
+        ("map-week-restart", lambda: map_week_reset.WeekResetDialog(window).exec()),
         ("accounts", lambda: accounts_ui.ManageDialog(window).exec()),
         ("accounts-5", five_accounts),
         ("schedule", lambda: schedule_ui.ScheduleDialog(window).exec()),

@@ -108,6 +108,14 @@ class FloatingFitTest(unittest.TestCase):
             self.assertEqual([], problems(dialog.panel))
             dialog.close()
 
+    def test_map_week_restart(self):
+        from src.ui.shell.map_week_reset import WeekResetDialog
+
+        for _ in self._each_look():
+            dialog = self._open(WeekResetDialog)
+            self.assertEqual([], problems(dialog.panel))
+            dialog.close()
+
     def test_accounts_list_with_five_then_one_deleted(self):
         from src.ui.shell.accounts_ui import ManageDialog, _ManageRow
 

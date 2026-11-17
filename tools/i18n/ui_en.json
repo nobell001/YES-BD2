@@ -595,7 +595,14 @@
   "桌面分身没有打开": "Clone Desktop did not open",
   "要在桌面分身跑，但分身没能打开：{why}。这次没有跑。": "Set to run on the Clone Desktop, but it could not open: {why}. Nothing ran this time.",
   "打开工具自动跑时在桌面分身跑；不勾就在桌面跑": "When the tool runs dailies on open, run them on the Clone Desktop; unticked runs on your desktop",
-  "定时启动时在桌面分身跑；不勾就在桌面跑": "Scheduled Start runs on the Clone Desktop; unticked runs on your desktop"
+  "定时启动时在桌面分身跑；不勾就在桌面跑": "Scheduled Start runs on the Clone Desktop; unticked runs on your desktop",
+  "重新开始": "Start over",
+  "重新开始本周跑图？": "Start this week's Farming over?",
+  "清掉这周的卡带记录，下次跑图会从第一张卡带重新看。": "Clears this week's pack records. The next Farming run checks every pack again from the first one.",
+  "今天的技能次数和跑商记录不会动。": "Today's skill uses and Trade Run records stay as they are.",
+  "游戏里卡带图示已经是完成的，还是会记成完成，不会重跑。": "Packs whose icons in the game already show done are still recorded as done and not run again.",
+  "本周跑图记录已清掉，下次跑图从第一张卡带开始": "This week's Farming records are cleared. The next run starts from the first pack.",
+  "跑图记录现在存不进去（文件可能被占用），没有清掉，请稍后再按一次": "Couldn't save the Farming records right now (the file may be in use). Nothing was cleared; try again in a moment."
  },
  "not_on_souseha": {
   "小屋": "House",
