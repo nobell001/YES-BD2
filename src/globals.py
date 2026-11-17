@@ -32,3 +32,7 @@ class Globals(QObject):
         from src.compat.taskbar_icon import apply_to_main_window
 
         apply_to_main_window(main_window)
+
+        from src.compat.startup_speed import finish_building
+
+        finish_building()

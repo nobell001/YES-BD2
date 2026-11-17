@@ -18,6 +18,7 @@ from src.compat.quiet_scheduled_open import install as install_quiet_scheduled_o
 from src.compat.start_watchdog import install_start_watchdog
 from src.compat.starter_guard import enable_starter_launch_guard
 from src.compat.starter_launch import enable_starter_launch_uri
+from src.compat.startup_speed import install as install_startup_speed
 from src.compat.update_card_ui import install_update_card_ui
 from src.compat.windows_graphics import WGC_MIN_CAPTURE_SIZE, enable_windows_10_wgc
 from src.game_path import calculate_pc_exe_path
@@ -61,6 +62,8 @@ install_quiet_scheduled_open()
 install_quest_ui()
 install_update_card_ui()
 install_about_tab_layout()
+# Opening: ok's hidden old pages no longer slow the window down (Leo 2026-11-17).
+install_startup_speed()
 
 DX11_OPTION = "Launch with DX11"
 

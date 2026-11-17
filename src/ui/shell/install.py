@@ -25,6 +25,59 @@ MIN_HEIGHT = 600
 KEEP_AWAKE_CHECK_MS = 5000
 
 
+LATER_PAGES_DELAY_MS = 100
+
+
+class LaterPages(dict):
+    """The shell's pages; some are made later (see Shell.__init__).
+
+    ``pages[key]`` / ``pages.get(key)`` for a page not made yet makes all the
+    waiting ones first, in their order, so a caller never misses one.
+    ``items()`` / ``values()`` list the pages made so far.
+    """
+
+    def __init__(self, add_page):
+        super().__init__()
+        self._waiting: list[tuple[str, object]] = []
+        self._add_page = add_page
+
+    def later(self, key: str, make) -> None:
+        self._waiting.append((key, make))
+
+    def waiting(self) -> list[str]:
+        return [key for key, _ in self._waiting]
+
+    def build_waiting(self) -> None:
+        while self._waiting:
+            key, make = self._waiting.pop(0)
+            try:
+                page = make()
+            except Exception as exc:
+                logger.error(f"page {key} could not be built", exc)
+                continue
+            dict.__setitem__(self, key, page)
+            self._add_page(page)
+
+    def __getitem__(self, key):
+        if not dict.__contains__(self, key) and self._waiting:
+            self.build_waiting()
+        return dict.__getitem__(self, key)
+
+    def get(self, key, default=None):
+        if not dict.__contains__(self, key) and self._waiting:
+            self.build_waiting()
+        return dict.get(self, key, default)
+
+    def __contains__(self, key):
+        return dict.__contains__(self, key) or key in self.waiting()
+
+
+def guarded_build(pages: LaterPages):
+    from src.ui.shell.safe import guarded
+
+    return guarded("build the other pages", pages.build_waiting)
+
+
 class Shell(QObject):
     """Owns the sidebar and the new pages; keeps the sidebar on the shown page."""
 
@@ -41,18 +94,23 @@ class Shell(QObject):
         from src.ui.shell.trade import TradePage
 
         self.window = window
-        self.pages: dict[str, QWidget] = {
-            "home": HomePage(self.open_task, self.navigate),
-            "report": ReportPage(),
-            "daily": TaskPage(
+        # 首页, 关于 and 使用说明 are built before the window shows; the rest
+        # right after it showed, or at once when something asks for one
+        # (Leo 2026-11-17 「啟動工具的速度可不可以再快一點」: they took 0.7 s).
+        self.pages = LaterPages(self._add_later_page)
+        self.pages["home"] = HomePage(self.open_task, self.navigate)
+        self.pages.later("report", ReportPage)
+        self.pages.later(
+            "daily",
+            lambda: TaskPage(
                 "shellDaily", "任务设定", batch_name=data.DAILY_BATCH, navigate=self.navigate
             ),
-            "trade": TradePage(),
-            "map": MapPage(),
-            "story": StoryPage(),
-            "talos": TalosPage(),
-            "settings": SettingsPage(window),
-        }
+        )
+        self.pages.later("trade", TradePage)
+        self.pages.later("map", MapPage)
+        self.pages.later("story", StoryPage)
+        self.pages.later("talos", TalosPage)
+        self.pages.later("settings", lambda: SettingsPage(window))
         self.sidebar = Sidebar()
         self.sidebar.navigate.connect(self._sidebar_clicked)
         from src.ui.shell.about_page import AboutPage
@@ -63,10 +121,10 @@ class Shell(QObject):
         self.pages["guide"] = GuidePage(self.navigate, self.sidebar)
         from src.ui.shell.clone_guide_page import CloneGuidePage
 
-        self.pages["clone"] = CloneGuidePage()
+        self.pages.later("clone", CloneGuidePage)
         from src.ui.shell.problem_page import ProblemPage
 
-        self.pages["problem"] = ProblemPage()
+        self.pages.later("problem", ProblemPage)
 
         # Everything above only builds widgets; from here on the window changes.
         stack = window.stackedWidget
@@ -122,6 +180,12 @@ class Shell(QObject):
         # Settings an update changed, shown once (Leo 2026-10-12).
         new_setting_notice.schedule(self)
         self._start_keep_awake()
+        # Once the window has painted.
+        QTimer.singleShot(LATER_PAGES_DELAY_MS, guarded_build(self.pages))
+
+    def _add_later_page(self, page: QWidget) -> None:
+        page.setProperty("isStackedTransparent", True)
+        self.window.stackedWidget.addWidget(page)
 
     # ------------------------------------------------------------ keep awake
 
