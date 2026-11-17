@@ -1018,6 +1018,28 @@ def close_startup_programs() -> list[str]:
 PLAY_GAMES_SERVICE = os.path.normcase(r"Google\Play Games\current\service\Service.exe")
 
 
+# True when the last look left Play Games open because it still had the
+# starter or the game under it (for the clone's log).
+play_games_waiting = False
+
+
+def _game_and_starter_names() -> set[str]:
+    from src.game_path import get_game_exe_names, get_launcher_exe_names
+
+    return {name.lower() for name in get_game_exe_names() + get_launcher_exe_names()}
+
+
+def _starting_the_game(children, names: set[str]) -> bool:
+    """Play Games still has the game's starter or the game under it."""
+    for child in children:
+        try:
+            if (child.name() or "").lower() in names:
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def close_play_games_launcher() -> list[int]:
     """In the clone, close Google Play Games' own launcher once the game runs.
 
@@ -1026,13 +1048,24 @@ def close_play_games_launcher() -> list[int]:
     remote sessions, so it shows error SE102 over the game.  BD2 itself is
     started by the system-wide Play Games service and keeps running.  Only
     this clone session's copy is closed; the one on the real desktop stays.
+
+    Live 2026-11-17 (4K, Leo): the Neowiz starter can hand the start to Play
+    Games, whose Service.exe then runs Browndust2Starter.exe as its child,
+    and the starter runs the game.  Closing Service.exe with everything
+    under it then closed the game too (twice, each followed by a 3-minute
+    wait).  While the starter or the game is still under Play Games it is
+    left alone; it is closed on a later look, once the starter is done.
+    The game and the starter are never closed here.
     """
+    global play_games_waiting
     if not in_clone():
         return []
     try:
         import psutil
     except ImportError:
         return []
+    keep = _game_and_starter_names()
+    waiting = False
     own = ctypes.c_ulong(0)
     ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(own))
     closed = []
@@ -1048,7 +1081,11 @@ def close_play_games_launcher() -> list[int]:
                 continue
             if session.value != own.value:
                 continue
-            for child in process.children(recursive=True):
+            children = process.children(recursive=True)
+            if _starting_the_game(children, keep):
+                waiting = True
+                continue
+            for child in children:
                 try:
                     child.terminate()
                 except Exception:
@@ -1057,4 +1094,5 @@ def close_play_games_launcher() -> list[int]:
             closed.append(process.info["pid"])
         except Exception:
             continue
+    play_games_waiting = waiting
     return closed

@@ -244,6 +244,85 @@ class TimeoutTest(_WatchdogCase):
         self.assertEqual([("controller", False)], opened)
 
 
+class GameGoneTest(_WatchdogCase):
+    """等游戏可以截图 stops waiting once the game is gone (live 2026-11-17:
+    Play Games closed the game in a 桌面分身 and ok waited 180 s twice)."""
+
+    def _wait(self, running, hold=False, checks=100):
+        controller = _Controller()
+        run = watchdog.StartRun(controller, None, False)
+        run.hold_timeouts = hold
+        with watchdog._runs_lock:
+            watchdog._runs[run.thread_ident] = run
+        self.addCleanup(watchdog._runs.pop, run.thread_ident, None)
+        clock = [0.0]
+        looks = []
+        check = watchdog._wrap_check_device_error(lambda self: "BrownDust II.exe is not connected")
+
+        def ok_wait(self):  # ok's loop: a look every 2 s until start_timeout
+            for _ in range(checks):
+                clock[0] += 2.0
+                looks.append(clock[0])
+                check(self)
+            self_signals.starting_emulator.emit(True, "Start game timeout!", 0)
+            return False
+
+        self_signals = self.signals
+        wait = watchdog._step(watchdog.STEP_READY, watchdog._wrap_wait_ready(ok_wait))
+        states = iter(running)
+        last = [None]
+
+        def game_running():
+            last[0] = next(states, last[0])
+            return last[0]
+
+        start_controller = SimpleNamespace(communicate=self.signals)
+        real_import = watchdog.import_module
+        with (
+            mock.patch.object(watchdog, "monotonic", lambda: clock[0]),
+            mock.patch("src.utils.game_process.game_running", game_running),
+            mock.patch.object(
+                watchdog,
+                "import_module",
+                lambda name: start_controller if name == "ok.core.start_controller" else real_import(name),
+            ),
+        ):
+            result = wait(controller)
+        return result, run, looks
+
+    def test_a_game_that_closed_ends_the_wait_after_20_s(self):
+        result, run, looks = self._wait([True, True, False], hold=True)
+        self.assertFalse(result)
+        self.assertTrue(run.game_gone)
+        self.assertLessEqual(looks[-1], 4 + watchdog.GAME_GONE_SECONDS + 2)
+        self.assertEqual(watchdog.STEP_READY, run.held_timeout)  # the next round opens it again
+        self.assertEqual([], self.bus.emitted("starting"))
+
+    def test_the_last_round_says_the_game_closed(self):
+        result, run, _looks = self._wait([False])
+        self.assertFalse(result)
+        done, error, _ = self.bus.emitted("starting")[-1]
+        self.assertTrue(done)
+        self.assertEqual(watchdog.GAME_GONE_MESSAGE, error)
+
+    def test_a_running_game_waits_the_whole_time(self):
+        _result, run, looks = self._wait([True])
+        self.assertEqual(100, len(looks))
+        self.assertFalse(run.game_gone)
+
+    def test_a_short_gap_while_the_starter_reopens_the_game_is_waited_out(self):
+        _result, run, looks = self._wait([True, False, False, False, False, True])
+        self.assertEqual(100, len(looks))
+        self.assertFalse(run.game_gone)
+
+    def test_when_it_cannot_tell_nothing_changes(self):
+        _result, run, looks = self._wait([None])
+        self.assertEqual(100, len(looks))
+        self.assertFalse(run.game_gone)
+        done, error, _ = self.bus.emitted("starting")[-1]
+        self.assertIn("等了 180 秒", error)
+
+
 class StartAgainTest(unittest.TestCase):
     def test_a_new_press_does_not_wait_behind_a_stuck_start(self):
         ran = threading.Event()
@@ -386,6 +465,48 @@ class RealStartFlowTest(unittest.TestCase):
         self.assertIn((True, None, 0), starting)
         ((message, *_rest),) = bus.emitted("notification")
         self.assertIn("「截一张游戏画面」卡了", message)
+
+
+    def test_ok_wait_ends_once_the_game_is_gone(self):
+        """ok's own 等游戏可以截图 loop, with the game closed after it opened."""
+        from ok import og
+        from ok.core import start_controller
+
+        watchdog.install_start_watchdog()
+        bus = _Bus()
+        clock = [1000.0]
+        fake_time = SimpleNamespace(
+            time=lambda: clock[0],
+            sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+        )
+        device_manager = SimpleNamespace(
+            do_refresh=lambda *a: None,
+            get_preferred_device=lambda: {"connected": False, "device": "windows", "nick": "BD2"},
+            capture_method=SimpleNamespace(connected=lambda: False),
+            device_connected=lambda: True,
+        )
+        controller = start_controller.StartController.__new__(start_controller.StartController)
+        controller.config = {}
+        controller.exit_event = threading.Event()
+        controller.start_timeout = 180
+        run = watchdog.StartRun(controller, None, False)
+        run.hold_timeouts = True
+        with watchdog._runs_lock:
+            watchdog._runs[run.thread_ident] = run
+        self.addCleanup(watchdog._runs.pop, run.thread_ident, None)
+        with (
+            mock.patch.object(og, "device_manager", device_manager, create=True),
+            mock.patch.object(start_controller, "time", fake_time),
+            mock.patch.object(watchdog, "monotonic", lambda: clock[0]),
+            mock.patch.object(
+                start_controller.communicate.starting_emulator, "_signal", bus.starting_emulator
+            ),
+            mock.patch("src.utils.game_process.game_running", lambda: False),
+        ):
+            self.assertFalse(controller._wait_until_device_ready())
+        self.assertLess(clock[0] - 1000.0, 30)  # not the whole 180 s
+        self.assertTrue(run.game_gone)
+        self.assertEqual(watchdog.STEP_READY, run.held_timeout)
 
 
 if __name__ == "__main__":

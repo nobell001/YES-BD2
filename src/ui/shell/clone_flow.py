@@ -748,9 +748,12 @@ def _close_play_games_error() -> None:
     if time.time() - _play_games_check["at"] < 5 or _game_window() is None:
         return
     _play_games_check["at"] = time.time()
+    was_waiting = clone_desktop.play_games_waiting
     closed = clone_desktop.close_play_games_launcher()
     if closed:
         logger.info(f"clone: closed Google Play Games launcher (SE102) {closed}")
+    if clone_desktop.play_games_waiting and not was_waiting:
+        logger.info("clone: Google Play Games is still starting the game, left open for now")
 
 
 def _publish() -> None:

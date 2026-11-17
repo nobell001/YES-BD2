@@ -65,6 +65,10 @@ ANNOUNCED_STEPS = (STEP_LAUNCH, STEP_WINDOW, STEP_READY, STEP_GPU, STEP_EXECUTOR
 SLOW_STEP_SECONDS = 5.0
 POLL_SECONDS = 1.0
 READY_CHECK_SECONDS = 10.0
+# 等游戏可以截图 ends early once the game has been gone this long.  The
+# starter may close its first game window and open the game again (via
+# Google Play Games): about 8 s without a game (live 2026-11-17).
+GAME_GONE_SECONDS = 20.0
 
 SETTING_HINT = "网络或电脑慢的话，可以在「设置 → 网络慢时的等待」把时间调长。"
 TIMEOUT_MESSAGE = "打开游戏等了 {seconds} 秒，{what}。" + SETTING_HINT
@@ -72,6 +76,10 @@ STUCK_TAKEN_OVER = "打开游戏时「{step}」卡了 {seconds} 秒没反应；�
 STUCK_MESSAGE = (
     "打开游戏时「{step}」卡了 {seconds} 秒没反应，{state}，这次没有开始。"
     "请关掉游戏再按开始；还是一样的话，把「看日志」里的 ok-bd2.log 传给开发者。"
+)
+GAME_GONE_MESSAGE = (
+    "游戏打开后又关掉了，这次没有开始。请再按一次开始；"
+    "一直这样的话，先自己打开一次游戏，看看游戏有没有跳出错误。"
 )
 STATE_NOT_CONNECTED = "游戏也还没连上"
 STATE_EXECUTOR = "任务没能开始执行"
@@ -98,6 +106,8 @@ class StartRun:
         self.held_timeout: str | None = None
         self.last_reason: str | None = None
         self.waited = 0.0
+        self.game_gone_since: float | None = None
+        self.game_gone = False
 
     # ------------------------------------------------------------- steps
 
@@ -143,6 +153,8 @@ class StartRun:
     # ------------------------------------------------------------ messages
 
     def timeout_message(self, step: str) -> str:
+        if step == STEP_READY and self.game_gone:
+            return GAME_GONE_MESSAGE
         what = WAITING_FOR.get(step, "还没准备好")
         if step == STEP_READY and self.last_reason:
             what = f"{what}（{self.last_reason}）"
@@ -298,6 +310,33 @@ def _wait_again(controller, original):
     return True
 
 
+class GameGone(Exception):
+    """The game closed while 等游戏可以截图 waited for it."""
+
+
+def _note_game_gone(run: StartRun, error) -> None:
+    """Raise GameGone once the game has been gone GAME_GONE_SECONDS in this wait.
+
+    Only while 等游戏可以截图 waits and the window is not connected; when it
+    cannot tell whether the game runs, nothing changes.
+    """
+    if error is None or run.current_wait() != STEP_READY:
+        run.game_gone_since = None
+        return
+    from src.utils.game_process import game_running
+
+    if game_running() is not False:
+        run.game_gone_since = None
+        return
+    now = monotonic()
+    if run.game_gone_since is None:
+        run.game_gone_since = now
+        return
+    if now - run.game_gone_since >= GAME_GONE_SECONDS:
+        run.game_gone_since = None
+        raise GameGone()
+
+
 def _wrap_check_device_error(original):
     @wraps(original)
     def check_device_error_noted(self):
@@ -305,9 +344,35 @@ def _wrap_check_device_error(original):
         run = _run_here()
         if run is not None:
             run.last_reason = str(error) if error else None
+            _note_game_gone(run, error)
         return error
 
     return check_device_error_noted
+
+
+def _wrap_wait_ready(original):
+    """ok waits the whole 打开游戏最长等多久 even when the game is gone
+    (live 2026-11-17: 180 s twice in a 桌面分身).  Once it is gone, this
+    wait ends as a timeout, so the next round opens the game again at once."""
+
+    @wraps(original)
+    def wait_until_device_ready(self, *args, **kwargs):
+        run = _run_here()
+        if run is not None:
+            run.game_gone = False
+            run.game_gone_since = None
+        try:
+            return original(self, *args, **kwargs)
+        except GameGone:
+            if run is not None:
+                run.game_gone = True
+            logger.info(f"启动：游戏开了又关掉（{GAME_GONE_SECONDS:.0f} 秒没在跑），不再等这一轮")
+            import_module("ok.core.start_controller").communicate.starting_emulator.emit(
+                True, "Start game timeout!", 0
+            )
+            return False
+
+    return wait_until_device_ready
 
 
 # ------------------------------------------------------------------ watchdog
@@ -460,7 +525,9 @@ def install_start_watchdog() -> None:
     controller._wait_until_started_window_stable = _step(
         STEP_WINDOW, controller._wait_until_started_window_stable
     )
-    controller._wait_until_device_ready = _step(STEP_READY, controller._wait_until_device_ready)
+    controller._wait_until_device_ready = _step(
+        STEP_READY, _wrap_wait_ready(controller._wait_until_device_ready)
+    )
     controller.check_device_error = _step(
         STEP_CHECK, _wrap_check_device_error(controller.check_device_error)
     )
