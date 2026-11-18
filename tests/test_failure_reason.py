@@ -180,6 +180,71 @@ class FailedRunTest(unittest.TestCase):
         noted.assert_called_once()
 
 
+class StuckRunReasonReachesTheSummaryTest(unittest.TestCase):
+    """Player v0.3.23 (2026-11-17): 停在 「活动每日战斗 · 挑战战斗15：准备快速战斗 ·
+    启动活动每日战斗，已回主页」.  A stuck watch ended the run, so 状态 still
+    held run()'s start line 「启动活动每日战斗。」, which was taken for a reason;
+    the real one (「10 秒没走到下一步」) never reached the summary."""
+
+    WHY = "在活动页（挑战战斗15：准备快速战斗） 10 秒没走到下一步（点了没反应或认不出画面），已按 Esc"
+
+    def test_the_start_line_is_no_reason(self):
+        self.assertTrue(failure_reason.started_only("启动活动每日战斗。", "活动每日战斗"))
+        self.assertTrue(failure_reason.started_only("活动每日战斗：启动", "活动每日战斗"))
+        self.assertFalse(failure_reason.started_only("启动画面没出来", "活动每日战斗"))
+        self.assertFalse(failure_reason.started_only("活动每日战斗：领取失败", "活动每日战斗"))
+
+    def test_ensure_gives_the_noted_reason_not_the_start_line(self):
+        task = SimpleNamespace(name="活动每日战斗", _why=self.WHY, info={"状态": "启动活动每日战斗。"})
+        task.info_set = lambda key, value: task.info.__setitem__(key, value)
+        task.log_warning = mock.Mock()
+        with mock.patch.object(problem_report, "recent_lines", return_value=[]):
+            text = failure_reason.ensure(task, 0.0, None)
+        self.assertEqual(f"失败：{self.WHY}", text)
+        self.assertNotIn("启动活动每日战斗", text)
+
+    def test_the_batch_row_note_is_the_reason(self):
+        from src.tasks.DailyBatchTask import failure_note
+
+        task = SimpleNamespace(name="活动每日战斗", _why=self.WHY, info={"状态": "启动活动每日战斗。"})
+        task.info_snapshot = lambda: dict(task.info)
+        note = failure_note(task)
+        self.assertIn("10 秒没走到下一步", note)
+        self.assertNotIn("启动活动每日战斗", note)
+        task._why = ""
+        self.assertEqual("没有做完", failure_note(task))
+
+    def test_the_problem_record_carries_the_reason(self):
+        from src.tasks.BaseBD2Task import BaseBD2Task
+
+        why = self.WHY
+
+        class Task(BaseBD2Task):
+            def __init__(self):
+                self._action_interval_lock = None
+                self.name = "活动每日战斗"
+                self.info = {}
+
+            def info_set(self, key, value):
+                self.info[key] = value
+
+            def log_warning(self, message, notify=False):
+                pass
+
+            def run(self):
+                self.info_set("状态", "启动活动每日战斗。")
+                self._why = why  # what _run_watched notes after a stuck watch
+                return False
+
+        task = Task()
+        with (
+            mock.patch.object(problem_report, "recent_lines", return_value=[]),
+            mock.patch.object(problem_report, "note_problem") as noted,
+        ):
+            self.assertFalse(task.run())
+        self.assertIn("10 秒没走到下一步", noted.call_args.args[2])
+
+
 class SummaryLastLineTest(unittest.TestCase):
     """「最后」 repeated the 停在 line once the reason went into both."""
 

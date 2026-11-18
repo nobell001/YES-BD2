@@ -578,7 +578,10 @@ TRADE_MERCHANT_TALENTS_REGION = reference_rect_to_relative_roi(
 # position moves with the camera (live: (1153,321), (1008,397) at 1080p).
 # In 梦幻广场 the same 对话/商店 + 砍价 merchant is 「F 洛兹」 (live 4K
 # 2026-10-20: with only 收集狂大叔, 17 of 21 square moves failed).
-MERCHANT_PROMPT_PATTERN = r"收集狂大叔|洛[兹茲]"
+# The 繁中 client calls him 「無聊的收藏狂大叔」: OCR reads 无聊的收藏狂大叔, cut
+# 「无聊的收藏狂」 or 「收藏狂人叔」 (2K clone 2026-11-18: the 收集-only pattern
+# never saw him, cooking failed and the run fled to the square).
+MERCHANT_PROMPT_PATTERN = r"收[集藏]狂[大人]?叔|无聊的?收[集藏]狂|洛[兹茲]"
 MERCHANT_PROMPT_OCR_ROI = (380, 120, 640, 260)
 MERCHANT_PROMPT_FAILURE_MESSAGE = "未识别到商人（洛兹／无聊收集狂大叔）的互动按钮"
 # Navigation toast when the destination is the area the character is in,

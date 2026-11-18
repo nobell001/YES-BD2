@@ -294,11 +294,33 @@ class Collector(SkillExecutionMixin):
             # without pressing anything there.
             done_here: set[str] = set()
             battled_here: dict[str, int] = {}
+            fled_before_step = 0
             index = 0
             while index < len(order):
                 target = order[index]
                 role = CollectionMapRole(target.key)
                 arrived = self._go_to_collection_target(card, current, target)
+                if (
+                    arrived is not None
+                    and getattr(arrived, "fled_battle", False)
+                    and fled_before_step < BATTLE_REDOS_MAX
+                ):
+                    # A monster met before leaving this map (player summary
+                    # v0.3.20 2026-11-17, 第14章): run from, then clear the
+                    # map it stands on, 压制 first (Leo 2026-11-18 「撞怪後
+                    # 逃跑 然後清怪」), then go on as planned.
+                    fled_before_step += 1
+                    here_key = self.navigator.current_collection_target(card)
+                    here = next((t for t in card.targets if t.key == here_key), None)
+                    if here is not None and CollectionMapRole(here.key) is not CollectionMapRole.MAIN_AREA:
+                        battled_here[here.key] = battled_here.get(here.key, 0) + 1
+                        done_here.discard(here.key)
+                        current = here
+                        order.insert(index, here)
+                        self._status("采集进度", f"{card.card_id} 撞到怪逃跑后先清怪：{here.title}")
+                    elif here is not None:
+                        current = here
+                    continue
                 if arrived is not None and not arrived.success:
                     if restarted:
                         if target.key == restart_failed_at:

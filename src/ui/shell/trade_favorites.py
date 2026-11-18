@@ -134,7 +134,8 @@ class FavoritesRow(QWidget):
         self._open = False
         gap = theme.size("gap_sm")
         row = hbox(self, (gap + 4, gap, gap - 2, gap), theme.size("gap_md"))
-        row.addWidget(Picture(picture, fixed=QSize(52, 44), radius=6))
+        self.picture = Picture(picture, fixed=QSize(52, 44), radius=6)
+        row.addWidget(self.picture)
         texts = vbox(None, (0, 0, 0, 0), 1)
         texts.addStretch(1)
         texts.addWidget(Text("收藏清单", "h3", elide=True))
@@ -143,6 +144,12 @@ class FavoritesRow(QWidget):
         row.addLayout(texts, 1)
         self.arrow = ExpandTile()
         row.addWidget(self.arrow)
+
+    def set_picture(self, picture: str | None) -> None:
+        """The cartridge of the place the run trades at (跑商地点)."""
+        if picture != getattr(self, "_picture_path", None):
+            self._picture_path = picture
+            self.picture.set_path(picture)
 
     def set_open(self, on: bool) -> None:
         self._open = on

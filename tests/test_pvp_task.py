@@ -2942,7 +2942,7 @@ class PVPTaskHelperTest(unittest.TestCase):
         task._wait_for_ocr_patterns = lambda *_a, **_k: (False, "")
         searched = []
         task._click_template_until = lambda *a, **k: searched.append(a) or False
-        task._stage_in_view = lambda: None  # the red shape is not seen either
+        task._stage_in_view = lambda *_a: None  # the red shape is not seen either
         self.assertFalse(PVPTask._click_pvp_stage_once(task, 10.0))
         self.assertEqual(1, len(searched))
 

@@ -403,6 +403,25 @@ class EventBattleTask(_ClaimTaskBase):
         if getattr(self, "_page_deadline", None) is not None:
             self._page_deadline = monotonic() + PAGE_STUCK_SECONDS
 
+    def _recognised(self) -> None:
+        """What a step waited for was read (a page, a dialog, a count): both
+        10 s watches start over, the page guard and the still-screen watch.
+
+        A player's v0.3.23 run (1920x1080 at 125%, 2026-11-17) pressed
+        快速战斗, saw the dialog open, and was stopped 「10 秒没走到下一步」
+        while looking at its 仅使用免费活动AP switch: reading the big dialog
+        area (the 活动AP不足 check, then the dialog check) took that PC about
+        9 s, and the dialog showing never counted, so the 10 s ran from the
+        press (replayed in tests/test_event_quick_dialog_slow_pc.py).  Leo 2026-10-15 「我說的10秒是卡死 或者辨識
+        不到」: a page that is being read is not stuck.  Not called on a press
+        (operate): the still-screen watch's 「点了几次都没变化」 count must keep
+        going there.
+        """
+        self._progressed()
+        note = getattr(self, "note_progress", None)
+        if callable(note):
+            note()
+
     def _hold_guard(self, seconds: float) -> None:
         """A step's own wait of ``seconds`` is running: the guard does not end it."""
         deadline = getattr(self, "_page_deadline", None)
@@ -721,7 +740,7 @@ class EventBattleTask(_ClaimTaskBase):
                 text = self._boxes_text(boxes)
                 self.info_set("活动页 OCR", text or "-")
                 if self._hub_shown(frame, text):
-                    self._progressed()
+                    self._recognised()
                     return True
             if self._page_wait_over(wait, frame):
                 return False
@@ -867,7 +886,7 @@ class EventBattleTask(_ClaimTaskBase):
                 # art makes unreadable must not keep the run off a page it is
                 # on (Leo 2026-11-09 「一定得去普通戰鬥或挑戰戰鬥嘗試」).
                 if parse_stage_number(panel, mode) is not None or self._stage_buttons_shown(frame):
-                    self._progressed()
+                    self._recognised()
                     return True
             if self._page_wait_over(wait, frame):
                 break
@@ -1013,6 +1032,8 @@ class EventBattleTask(_ClaimTaskBase):
             "quick": keyword_match_count(buttons, (QUICK_BATTLE_TEXT,)) >= 1,
         }
         self.info_set(f"{mode}状态", str(state))
+        if state["stage"] is not None or state["auto"] or state["quick"]:
+            self._recognised()  # the stage page was read: not stuck
         return state
 
     def _usable_ap(self, state: dict) -> int:
@@ -1210,7 +1231,10 @@ class EventBattleTask(_ClaimTaskBase):
 
     def _dialog_open(self) -> bool:
         boxes = self._roi_boxes(self.capture_frame(), DIALOG_ROI, "自动战斗窗口")
-        return keyword_match_count(self._boxes_text(boxes), DIALOG_KEYWORDS) >= 2
+        if keyword_match_count(self._boxes_text(boxes), DIALOG_KEYWORDS) >= 2:
+            self._recognised()
+            return True
+        return False
 
     def _in_battle(self, frame) -> bool:
         progress = self._boxes_text(self._roi_boxes(frame, PROGRESS_ROI, "自动战斗进度"))
@@ -1276,6 +1300,8 @@ class EventBattleTask(_ClaimTaskBase):
     def _dialog_cost(self) -> int | None:
         cost, text = self._button_cost(DIALOG_START_ROI, "自动战斗开始")
         self.info_set("自动战斗场数", cost if cost is not None else f"- (OCR {text or '-'})")
+        if cost is not None:
+            self._recognised()
         return cost
 
     def _count_by_presses(self, cost, wanted: int, free, min_point, plus_point, read):
@@ -1390,6 +1416,8 @@ class EventBattleTask(_ClaimTaskBase):
             return 0.0
         ratio = switch_yellow_ratio(crop)
         self.info_set("免费AP开关", f"黄色占比 {ratio:.3f}")
+        if ratio > FREE_AP_SWITCH_YELLOW_RATIO:
+            self._recognised()
         return ratio
 
     def _ensure_free_ap_switch_on(
@@ -1587,9 +1615,12 @@ class EventBattleTask(_ClaimTaskBase):
         self.log_info("活动每日战斗：失败画面多次尝试仍未离开。")
         return False
 
-    def _dismiss_ap_shortage(self) -> bool:
-        """Cancel the 活动AP不足 popup; its other button (补充) spends paid resources."""
-        boxes = self._roi_boxes(self.capture_frame(), DIALOG_ROI, "AP不足")
+    def _dismiss_ap_shortage(self, boxes=None) -> bool:
+        """Cancel the 活动AP不足 popup; its other button (补充) spends paid resources.
+
+        ``boxes``: a read of DIALOG_ROI just made (one OCR for two checks)."""
+        if boxes is None:
+            boxes = self._roi_boxes(self.capture_frame(), DIALOG_ROI, "AP不足")
         if keyword_match_count(self._boxes_text(boxes), (AP_SHORT_TEXT,)) < 1:
             return False
         self.log_info("活动每日战斗：活动AP不足，取消（不补充）。")
@@ -1733,9 +1764,13 @@ class EventBattleTask(_ClaimTaskBase):
                 return True
         return False
 
-    def _quick_dialog_open(self) -> bool:
-        boxes = self._roi_boxes(self.capture_frame(), QUICK_DIALOG_ROI, "快速战斗窗口")
-        return keyword_match_count(self._boxes_text(boxes), QUICK_DIALOG_KEYWORDS) >= 2
+    def _quick_dialog_open(self, boxes=None) -> bool:
+        if boxes is None:
+            boxes = self._roi_boxes(self.capture_frame(), QUICK_DIALOG_ROI, "快速战斗窗口")
+        if keyword_match_count(self._boxes_text(boxes), QUICK_DIALOG_KEYWORDS) >= 2:
+            self._recognised()
+            return True
+        return False
 
     def _open_quick_dialog(self) -> bool:
         for attempt in range(1, START_CLICK_ATTEMPTS + 1):
@@ -1749,9 +1784,13 @@ class EventBattleTask(_ClaimTaskBase):
             looked = False  # 至少看一次：时间已到也先看一眼再说没看到
             while not looked or monotonic() <= end_at:
                 looked = True
-                if self._dismiss_ap_shortage():
+                # One OCR per look: the quick dialog lies inside DIALOG_ROI,
+                # where the 活动AP不足 popup is read.  Two reads of that big,
+                # text-full area took about 9 s on a player's PC (2026-11-17).
+                boxes = self._roi_boxes(self.capture_frame(), DIALOG_ROI, "快速战斗窗口")
+                if self._dismiss_ap_shortage(boxes):
                     return False
-                if self._quick_dialog_open():
+                if self._quick_dialog_open(boxes):
                     return True
                 self.sleep(0.4)
             self.log_info(f"活动每日战斗：第{attempt}次点击快速战斗未打开窗口。")
@@ -1760,6 +1799,8 @@ class EventBattleTask(_ClaimTaskBase):
     def _quick_cost(self) -> int | None:
         cost, text = self._button_cost(QUICK_DIALOG_START_ROI, "快速战斗开始")
         self.info_set("快速战斗场数", cost if cost is not None else f"- (OCR {text or '-'})")
+        if cost is not None:
+            self._recognised()
         return cost
 
     def _set_quick_count(self, wanted: int, state: dict) -> int | None:

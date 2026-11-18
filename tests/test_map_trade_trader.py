@@ -2962,7 +2962,17 @@ class BuyEntryTest(unittest.TestCase):
 
         self.assertIs(merchant, navigator._merchant_prompt_box(frame))
         self.assertEqual([(frame, "商人互动按钮", MERCHANT_PROMPT_OCR_ROI)], ocr_calls)
-        self.assertEqual(r"收集狂大叔|洛[兹茲]", MERCHANT_PROMPT_PATTERN)
+
+        # The 繁中 client's 「無聊的收藏狂大叔」 as OCR read it on the 2K clone
+        # (2026-11-18): whole, cut short, and 大 misread as 人.
+        for name in ("F 无聊的收藏狂大叔", "无聊的收藏狂", "无聊的收藏狂人叔", "F無聊的收藏狂大叔"):
+            with self.subTest(name=name):
+                boxes["value"] = [
+                    SimpleNamespace(name=name, x=1000, y=380, width=160, height=40)
+                ]
+                navigator.vision.simplify = lambda value: value.replace("無聊", "无聊")
+                self.assertIs(boxes["value"][0], navigator._merchant_prompt_box(frame))
+        navigator.vision.simplify = lambda value: value
 
         # 梦幻广场's merchant (live 4K 2026-10-20).
         for name in ("F 洛兹", "洛兹", "F洛茲"):
@@ -3339,6 +3349,110 @@ class TradeMerchantNavigationTest(unittest.TestCase):
         self.assertEqual(["card"], events)
         self.assertTrue(any("剧情游戏卡1" in line for line in self.infos))
 
+    # 跑商地点 = 第一章 (Leo 2026-11-18: players said the square gets stuck) --
+
+    def _chapter1_navigator(self, **overrides):
+        from src.tasks.map_trade.trade_place import PLACE_CHAPTER1, TRADE_PLACE_KEY
+
+        navigator = self._navigator(
+            SimpleNamespace(capture=lambda: None),
+            config={"加载页面等待秒数": 45.0, TRADE_PLACE_KEY: PLACE_CHAPTER1},
+            clear_field_followers=lambda: "absent",
+            **overrides,
+        )
+        navigator._merchant_prompt_box = lambda _frame: None
+        return navigator
+
+    def test_chapter1_pick_goes_to_the_story_card_without_the_square(self):
+        events = []
+        navigator = self._chapter1_navigator()
+        navigator._enter_square = lambda: self.fail("第一章 picked and reached: no square")
+        navigator._enter_trade_card = lambda: (
+            events.append("card") or NavigationResult(True, ScreenState.SANDBOX, MERCHANT_CARD_ID)
+        )
+        navigator._wait_for_merchant_prompt = lambda timeout: events.append("prompt") or True
+        stages = []
+        navigator._status = lambda key, value: stages.append(value) if key == "当前阶段" else None
+
+        self.assertTrue(navigator.go_to_trade_merchant().success)
+        self.assertEqual(["card", "prompt"], events)
+        self.assertEqual(["找商人无聊收集狂大叔"], stages)
+        self.assertEqual([], self.infos)
+
+    def test_chapter1_pick_names_his_stage_before_the_trip(self):
+        # enter_q_sp6_buy_flow shows 当前阶段 before going: the picked merchant.
+        self.assertEqual("找商人无聊收集狂大叔", self._chapter1_navigator()._merchant_stage())
+        self.assertEqual("找商人洛兹", self._navigator()._merchant_stage())
+
+    def test_chapter1_pick_falls_back_to_the_square_when_the_card_fails(self):
+        events = []
+        navigator = self._chapter1_navigator()
+        navigator._enter_trade_card = lambda: (
+            events.append("card") or NavigationResult(False, ScreenState.CARD_MENU, "角标没认出")
+        )
+        navigator._enter_square = lambda: (
+            events.append("square") or NavigationResult(True, ScreenState.SANDBOX, "梦幻广场")
+        )
+        navigator._wait_for_merchant_prompt = lambda timeout: True
+
+        self.assertTrue(navigator.go_to_trade_merchant().success)
+        self.assertEqual(["card", "square"], events)
+        self.assertTrue(
+            any("没能进入剧情游戏卡1" in line and "梦幻广场" in line for line in self.infos)
+        )
+
+    def test_chapter1_pick_falls_back_to_the_square_when_his_walk_fails(self):
+        # The square's entry goes back to 主页 itself.
+        events = []
+        navigator = self._chapter1_navigator()
+        navigator._enter_trade_card = lambda: (
+            events.append("card") or NavigationResult(True, ScreenState.SANDBOX, MERCHANT_CARD_ID)
+        )
+        navigator._enter_square = lambda: (
+            events.append("square") or NavigationResult(True, ScreenState.SANDBOX, "梦幻广场")
+        )
+        walks = iter([False, True])
+        navigator._wait_for_merchant_prompt = lambda timeout: False
+        navigator._walk_to_merchant = lambda: events.append("walk") or next(walks)
+        navigator.classify = lambda *_a: ScreenState.SANDBOX
+
+        self.assertTrue(navigator.go_to_trade_merchant().success)
+        self.assertEqual(["card", "walk", "square", "walk"], events)
+        self.assertTrue(any("剧情游戏卡1里没走到商人旁" in line for line in self.infos))
+
+    def test_chapter1_pick_reports_the_square_failure_when_both_fail(self):
+        navigator = self._chapter1_navigator()
+        navigator._enter_trade_card = lambda: NavigationResult(False, ScreenState.CARD_MENU, "x")
+        failure = NavigationResult(False, ScreenState.HOME, "点广场卡带后没认出梦幻广场")
+        navigator._enter_square = lambda: failure
+
+        self.assertIs(failure, navigator.go_to_trade_merchant())
+
+    def test_square_walk_failing_with_no_way_home_does_not_try_the_card(self):
+        navigator = self._navigator(
+            SimpleNamespace(capture=lambda: None), clear_field_followers=lambda: "absent"
+        )
+        navigator._merchant_prompt_box = lambda _frame: None
+        navigator._enter_square = lambda: NavigationResult(True, ScreenState.SANDBOX, "梦幻广场")
+        navigator._wait_for_merchant_prompt = lambda timeout: False
+        navigator._walk_to_merchant = lambda: False
+        navigator.classify = lambda *_a: ScreenState.SANDBOX
+        navigator.return_home = lambda: NavigationResult(False, ScreenState.UNKNOWN, "回不去")
+        navigator._enter_trade_card = lambda: self.fail("no way home: no story card")
+
+        result = navigator.go_to_trade_merchant()
+
+        self.assertFalse(result.success)
+        self.assertEqual(MERCHANT_PROMPT_FAILURE_MESSAGE, result.message)
+
+    def test_unknown_trade_place_is_the_square(self):
+        from src.tasks.map_trade.trade_place import PLACE_SQUARE, TRADE_PLACE_KEY, trade_place
+
+        self.assertEqual(PLACE_SQUARE, trade_place({}))
+        self.assertEqual(PLACE_SQUARE, trade_place(None))
+        self.assertEqual(PLACE_SQUARE, trade_place({TRADE_PLACE_KEY: "第九章"}))
+        self.assertEqual("第一章", trade_place({TRADE_PLACE_KEY: " 第一章 "}))
+
     def _square_navigator(self, landings, recent_is_pvp=False, menu_ok=True, page_left=True):
         events = []
         navigator = self._navigator(
@@ -3704,13 +3818,31 @@ class TradeMerchantNavigationTest(unittest.TestCase):
             self.events[2:],
         )
 
-    def test_walk_to_merchant_fails_when_area_map_icon_is_missing(self):
-        navigator = self._walk_navigator()
-        navigator._confirm_travel = lambda: "unreachable"
-        navigator._walk_via_area_map = lambda: False
-        navigator._wait_for_merchant_prompt = lambda _timeout: self.fail("no walk started")
+    def test_no_map_icon_in_his_room_still_finds_him_where_he_stands(self):
+        # 2K 繁中 2026-11-18, 剧情游戏卡1: 「现在无法移动的区域」 right beside
+        # him, and his map icon hidden under the player's own marker.  Giving
+        # up sent the run to the square; now his name or F decides.
+        for prompt, field, expected in (
+            (True, ScreenState.SANDBOX, True),
+            (False, ScreenState.SANDBOX, True),
+            (False, ScreenState.UNKNOWN, False),
+        ):
+            with self.subTest(prompt=prompt, field=field):
+                navigator = self._walk_navigator()
+                navigator._confirm_travel = lambda: "unreachable"
+                navigator._walk_via_area_map = lambda: False
+                waits = []
+                navigator._wait_for_merchant_prompt = lambda timeout, p=prompt: (
+                    waits.append(timeout) or p
+                )
+                navigator.classify = lambda *_a, f=field: f
 
-        self.assertFalse(navigator._walk_to_merchant())
+                self.assertEqual(expected, navigator._walk_to_merchant())
+                self.assertEqual([MERCHANT_ARRIVAL_TIMEOUT], waits)
+                self.assertEqual(
+                    not prompt and field == ScreenState.SANDBOX,
+                    getattr(navigator, "_merchant_prompt_unread", False),
+                )
 
     def test_walk_to_merchant_fails_when_prompt_never_appears(self):
         navigator = self._walk_navigator()

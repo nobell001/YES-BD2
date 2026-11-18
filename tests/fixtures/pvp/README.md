@@ -23,3 +23,12 @@ contrast was stretched up to the template's.
 The game's 「與伺服器連接中斷。重新開始遊戲 (-6)」 notice over a dimmed 主页.
 Live, 2560x1440 繁中 client, 2026-11-06 16:17 (the same account was logged in
 on another PC). The account name and avatar are blurred.
+
+## stage_offscreen_bar_2k_1080.jpg, hub_tap_w_*_2k_960.jpg
+
+镜中之战 hub on the 2K PC 桌面分身 (繁中 client, 2026-11-18 keyboard-walk test).
+`stage_offscreen_bar_2k_1080.jpg`: the character at the bar after walking off;
+the stage is below the bottom-left corner, only its red ✕ at the edge, and a
+cut piece of the bar's carpet has the stage's shape.  `hub_tap_w_before/after`
+(960x540): one 0.08 s W tap, the scene moved ~38 px while the HUD stood still.
+Other players' names in the battle log are blurred.

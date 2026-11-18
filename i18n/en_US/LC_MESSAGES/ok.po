@@ -4347,3 +4347,15 @@ msgid "按小条或这页的「继续」接着跑"
 msgstr "Press Continue on the bar or this page to go on"
 msgid "在分身窗口进到剧情；在主页会先暂停，进去后按继续"
 msgstr "Enter the story in the clone window; it pauses on the home screen, press Continue once you're in"
+
+msgid "广场"
+msgstr "Square"
+
+msgid "第一章"
+msgstr "Chapter 1"
+
+msgid "跑商地点"
+msgstr "Trade Run spot"
+
+msgid "在哪里买卖；选的地方进不去时，自动改去另一处"
+msgstr "Where to buy and sell. If the picked place can't be reached, it goes to the other one."

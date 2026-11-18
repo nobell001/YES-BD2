@@ -88,10 +88,23 @@ from src.utils.stage_walk import (
     STAGE_PROGRESS_PIXELS,
     STAGE_RESETS_PER_WALK,
     STAGE_TARGET,
+    VIEW_MOVED_PIXELS,
     WalkStep,
-    find_stage,
+    describe_stages,
+    find_stages,
+    pick_stage,
+    plan_move,
     plan_step,
+    predict_after_move,
     predict_after_step,
+    MARKER_MATCH_PIXELS,
+    STAGE_MARKER_TARGET,
+    find_stage_marker,
+    floor_direction,
+    scene_offset,
+    search_point,
+    stage_from_marker,
+    view_shift,
 )
 from src.utils.wait_limits import (
     LOADING_MAX_SECONDS,
@@ -276,7 +289,19 @@ def move_mode_note(task, used: str, first_still: bool) -> None:
         pass
 
 
-STAGE_WALK_MAX_STEPS = 14
+STAGE_WALK_MAX_STEPS = 24
+# A red patch after which the view stood still this many steps in a row is
+# out of reach (2K clone 11-18: the bar's carpet behind the counter).
+STAGE_BLOCKED_STEPS = 2
+# A red patch left out of the walk is known again within this distance.
+STAGE_IGNORE_RADIUS = 90.0
+STAGE_WALK_HISTORY = 8
+# 定位修正 watched (see _watch_stage_reset): the result words.
+STAGE_RESET_BATTLE = "已按，进了战前画面"
+STAGE_RESET_MOVED = "已按，角色走了"
+STAGE_RESET_STILL = "已按，角色没有动"
+STAGE_RESET_SETTLE_SECONDS = 1.5
+STAGE_RESET_NO_MOVE_SECONDS = 4.0
 # 自动战斗弹窗（1920×1080 参考，2026-09-26 实测）。
 PVP_MULTIPLIER_STEP_POINTS = {
     "big_plus": (1034, 534),
@@ -339,6 +364,32 @@ TEMPLATE_DIR = PROJECT_ROOT / "recognition-assets" / "template-assets"
 
 def _distance(a, b) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+
+
+def _keys_text(steps) -> str:
+    return "+".join(f"{step.key.upper()}{step.seconds:.2f}" for step in steps)
+
+
+# A two-key step should move the stage along both axes; one that moved it
+# less than this share of the expected way on an axis did not walk diagonally
+# (a game that normalises diagonal speed still gives about 0.7).
+DIAGONAL_MIN_SHARE = 0.3
+# An axis expected to move less than this is not checked: a short press
+# barely gets going (2K clone 11-18: S 0.15 s in A0.35+S0.15 moved 9 px of
+# 58, and the walk went back to one key although W+A did walk diagonally).
+DIAGONAL_CHECK_PIXELS = 70
+
+
+def _moved_both_ways(before, after, steps) -> bool:
+    predicted = predict_after_move(before, steps)
+    for axis in (0, 1):
+        want = predicted[axis] - before[axis]
+        if abs(want) < DIAGONAL_CHECK_PIXELS:
+            continue
+        got = after[axis] - before[axis]
+        if got * want <= 0 or abs(got) < DIAGONAL_MIN_SHARE * abs(want):
+            return False
+    return True
 
 
 class PVPTask(BaseBD2Task):
@@ -1066,61 +1117,164 @@ class PVPTask(BaseBD2Task):
         )
         return found
 
-    def _stage_in_view(self) -> tuple[int, int] | None:
+    def _stage_frame(self):
         frame = self.capture_frame()
-        reference = cv2.resize(
+        return cv2.resize(
             frame[:, :, :3],
             (FHD_1080.width, FHD_1080.height),
             interpolation=cv2.INTER_AREA,
         )
-        return find_stage(reference)
+
+    def _stage_in_view(
+        self, near: tuple[int, int] | None = None, ignore=()
+    ) -> tuple[int, int] | None:
+        reference = self._stage_frame()
+        candidates = [
+            patch
+            for patch in find_stages(reference)
+            if not any(_distance(patch.centre, spot) <= STAGE_IGNORE_RADIUS for spot in ignore)
+        ]
+        stage = pick_stage(candidates, near)
+        # Kept for the walk: did the last step move the view (scene_offset)?
+        self._stage_view = reference
+        self._stage_candidates = candidates
+        self.info_set("PVP 红色区块", describe_stages(candidates, stage))
+        return stage
+
+    def _note_walk(self, text: str) -> None:
+        """Step-by-step record of the walk for the problem summary (Leo
+        11-18: say whether it took the wrong red, was covered or blocked)."""
+        history = getattr(self, "_walk_history", None)
+        if history is None:
+            history = self._walk_history = []
+        history.append(text)
+        del history[:-STAGE_WALK_HISTORY]
+        self.info_set("PVP 走位记录", " | ".join(history))
 
     def _walk_onto_stage(self) -> bool:
         """WASD the character onto the red stage centre (closed loop).
 
         The camera keeps the character centred, so the stage's screen offset is
         the distance still to walk; each step is re-planned from a new frame.
+        Both keys toward the stage are held together (W+D walks the straight
+        line, Leo 11-18 「根據人物和舞台位置去調整方向鍵」); when two-key
+        steps are seen to move the view along one axis only, the walk goes
+        back to one key at a time.
 
-        The game's own 「定位修正」 is pressed first: it walks the character
-        onto the stage by itself (4K PC clone 11-05, also for the WASD walk).
-        Back home and F do not put the character back at the spawn, so the
-        stage can start far away, where a cut-off piece of the bar's red
-        carpet has the stage's size and shape (clone 11-05: W 1.2 s, the walk
-        went for (1430, 369) for 55 s).  So the walk also gives up on a red
-        patch that does not come nearer: no step closer for
-        STAGE_NO_PROGRESS_STEPS steps presses 定位修正 again, then fails.
+        Where to walk, first found wins:
+        1. the red ✕ over the stage (find_stage_marker), walked to
+           STAGE_MARKER_TARGET.  2K clone 11-18: after walking off, the stage
+           was off screen and a cut piece of the bar's red carpet had its
+           shape; the walk pushed into the bar for 60-100 s.  Next to the
+           stage the party covers its red top and the red centre reads 60-70
+           px off; the ✕ is never covered;
+        2. no ✕ and the minimap shows the character at the side of the hub
+           (floor_direction): toward the floor, red patches there are the
+           bar's carpet;
+        3. a stage-shaped red patch, the one nearest where the last step put
+           it (by the measured scene shift; player 11-18: the red curtain
+           under the top-right HUD was larger than the stage).  A red patch
+           the character is seen not to get onto (the view stood still for
+           STAGE_BLOCKED_STEPS steps, or STAGE_NO_PROGRESS_STEPS steps without
+           coming nearer, or stood on it and nothing opened) is left out for
+           the rest of the walk;
+        4. nothing red: toward the open floor on the minimap.
+        Without the ✕ and the minimap (another client's look) it is the red
+        patch walk as before.
 
-        Each step moves the stage by a known amount on screen; a red patch
-        far from where the stage should now be is not the stage (W 0.6 s ->
-        stage at (754, 962), largest red patch (1360, 366)).  Then, or when
-        nothing red is left, the last step is walked back.  Nothing red right
-        after a step that should have reached the stage is the line-up
-        hiding it: that is checked for the pre-battle screen, not walked back.
+        The game's own 「定位修正」 is pressed first: on click-to-move it walks
+        the character onto the stage by itself (4K PC clone 11-05).  Its
+        effect is watched (_recover_stage_position); a press that moved
+        nothing, or no button, is not tried again.  A step after which the
+        view did not move is written down (blocked, or the key was not taken).
         """
         self.info_set("当前阶段", "键盘走到 PVP 舞台")
+        self._walk_history = []
+        self._stage_view = None
+        self._stage_candidates = []
         if self._pre_battle_visible():
             self.info_set("PVP 舞台走位", "已在战前画面")
             return True
         resets_left = STAGE_RESETS_PER_WALK
-        if self._press_stage_reset("开始走之前"):
-            resets_left -= 1
+        resets_left = self._reset_before_walk(resets_left, "开始走之前")
         missing = 0
-        expected = None  # where the stage should be on screen now
-        last_step = None
-        best = None  # the nearest the stage has come to the target
+        expected = None  # where the stage should be on screen now (a red patch)
+        last_step = None  # the keys of the last step (tuple of WalkStep)
+        last_seen = None  # the red patch walked at by the last step
+        last_view = None
+        diagonal, diagonal_misses = True, 0
+        blocked_said = False
+        blocked = 0  # steps in a row after which the view stood still
+        ignore: list[tuple[float, float]] = []  # red patches not walked onto
+        best = None  # the nearest a red patch has come to the target
         since_best = 0
         for step_index in range(1, STAGE_WALK_MAX_STEPS + 1):
             if self._pre_battle_visible():
                 self.info_set("PVP 舞台走位", f"第{step_index}步前已进入战前画面")
                 return True
-            stage = self._stage_in_view()
+            stage = self._stage_in_view(expected, ignore)
+            view = getattr(self, "_stage_view", None)
+            if last_step is not None and last_view is not None and view is not None:
+                offset = scene_offset(last_view, view)
+                moved = (offset[0] ** 2 + offset[1] ** 2) ** 0.5
+                ignore = [(x + offset[0], y + offset[1]) for x, y in ignore]
+                if last_seen is not None:
+                    # Where the patch is now by how far the scene really
+                    # moved (a blocked step moves nothing), not by the keys.
+                    expected = (round(last_seen[0] + offset[0]), round(last_seen[1] + offset[1]))
+                    stage = pick_stage(getattr(self, "_stage_candidates", []), expected)
+                if moved < VIEW_MOVED_PIXELS:
+                    blocked += 1
+                    self._note_walk(f"{step_index} {_keys_text(last_step)}后画面没动")
+                    if not blocked_said:
+                        blocked_said = True
+                        self.log_info(
+                            f"镜中之战：按 {_keys_text(last_step)} 后画面没动（被挡住或按键没收到）。"
+                        )
+                else:
+                    blocked = 0
+                    self._note_walk(f"{step_index} 画面移动({offset[0]:.0f},{offset[1]:.0f})")
+                    if diagonal and len(last_step) > 1 and not _moved_both_ways((0, 0), offset, last_step):
+                        diagonal_misses += 1
+                        if diagonal_misses >= 2:
+                            diagonal = False
+                            self.log_info("镜中之战：同时按两个方向键没有斜着走，改回一次按一个方向键。")
+                            self._note_walk(f"{step_index} 改回单键")
+            last_view = view
             self.info_set("PVP 舞台位置", str(stage))
-            if stage is not None and expected is not None and _distance(stage, expected) > STAGE_JUMP_LIMIT:
+            source, target = "红色", STAGE_TARGET
+            marker = find_stage_marker(view) if view is not None else None
+            if marker is not None:
+                # The ✕ decides: never covered, unlike the red top next to
+                # the party, and never on the bar's carpet.
+                if stage is not None and _distance(stage, stage_from_marker(marker)) > MARKER_MATCH_PIXELS:
+                    self._note_walk(f"{step_index} 红色{stage}不在✕{marker}下面，不当成舞台")
+                stage, source, target = marker, "✕", STAGE_MARKER_TARGET
+            elif stage is not None and view is not None and floor_direction(view) is not None:
+                # No ✕, and the minimap shows the character at the side of
+                # the hub (floor on one side only): a red patch here is the
+                # bar's carpet, the stage lies toward the floor (2K clone
+                # 11-18, behind the pillar right of the bar: 64 s after
+                # carpet pieces).  At the stage the floor is all around.
+                self._note_walk(f"{step_index} 红色{stage}没有✕，人在场边，照小地图走")
+                stage, expected = None, None
+            elif stage is not None and expected is not None and _distance(stage, expected) > STAGE_JUMP_LIMIT:
                 self.info_set(
                     "PVP 舞台走位",
                     f"红色区块 {stage} 离预估位置 {expected} 太远，不当成舞台（多半是吧台红地毯）",
                 )
                 stage = None
+            if (
+                stage is not None
+                and source == "红色"
+                and blocked >= STAGE_BLOCKED_STEPS
+                and _distance(stage, STAGE_TARGET) > STAGE_HIDDEN_NEAR
+            ):
+                self.log_info(f"镜中之战：红色区块 {stage} 走不过去（画面没动），不当成舞台，改找别处。")
+                self._note_walk(f"{step_index} 红色{stage}走不过去，不算舞台")
+                ignore.append(stage)
+                stage, expected, best, since_best, blocked = None, None, None, 0, 0
+                last_step = None  # nothing to walk back: it never got nearer
             if stage is None:
                 if expected is not None and _distance(expected, STAGE_TARGET) <= STAGE_HIDDEN_NEAR:
                     # The last step should have put the character on it.
@@ -1128,11 +1282,15 @@ class PVPTask(BaseBD2Task):
                         return True
                     expected, last_step = None, None
                     continue
+                direction = floor_direction(view) if view is not None else None
+                if direction is not None:
+                    stage, source = search_point(direction), "小地图"
+            if stage is None:
                 missing += 1
                 if resets_left > 0 and (last_step is None or missing >= 2):
-                    resets_left -= 1
-                    self._press_stage_reset("画面里找不到舞台")
+                    resets_left = self._reset_before_walk(resets_left, "画面里找不到舞台")
                     expected, last_step, missing, best, since_best = None, None, 0, None, 0
+                    last_view = None
                     continue
                 if missing >= 3:
                     self.log_info("镜中之战：画面中找不到红色舞台。")
@@ -1140,51 +1298,92 @@ class PVPTask(BaseBD2Task):
                 if last_step is None:
                     self.sleep(0.5)
                     continue
-                back = WalkStep(OPPOSITE_KEYS[last_step.key], last_step.seconds)
+                back = tuple(WalkStep(OPPOSITE_KEYS[step.key], step.seconds) for step in last_step)
                 self.log_info("镜中之战：上一步把舞台走出画面，往回走一步再找。")
-                if not self.hold_key(back.key, back.seconds, after_sleep=0.5):
+                self._note_walk(f"{step_index} 舞台不见，往回 {_keys_text(back)}")
+                if not self.hold_keys(back, after_sleep=0.5):
                     return False
-                expected = predict_after_step(expected, back) if expected is not None else None
-                last_step = None
+                expected = predict_after_move(expected, back) if expected is not None else None
+                last_step, last_seen = back, None
                 continue
             missing = 0
-            distance = _distance(stage, STAGE_TARGET)
-            if best is None or distance < best - STAGE_PROGRESS_PIXELS:
-                best, since_best = distance, 0
-            elif distance > STAGE_HIDDEN_NEAR:
-                since_best += 1
-            if since_best >= STAGE_NO_PROGRESS_STEPS:
-                if resets_left <= 0:
+            if source == "红色":
+                distance = _distance(stage, STAGE_TARGET)
+                if best is None or distance < best - STAGE_PROGRESS_PIXELS:
+                    best, since_best = distance, 0
+                elif distance > STAGE_HIDDEN_NEAR:
+                    since_best += 1
+                if since_best >= STAGE_NO_PROGRESS_STEPS:
+                    if resets_left > 0:
+                        resets_left = self._reset_before_walk(
+                            resets_left, f"走了 {since_best} 步红色区块都没有靠近"
+                        )
+                        expected, last_step, missing, best, since_best = None, None, 0, None, 0
+                        last_view = None
+                        continue
                     self.log_info(
                         f"镜中之战：走了 {since_best} 步红色区块 {stage} 都没有靠近，"
-                        "多半不是舞台（吧台红地毯），按过「定位修正」也没用。"
+                        "多半不是舞台（吧台红地毯），改找别处。"
                     )
-                    return False
-                resets_left -= 1
-                self._press_stage_reset(f"走了 {since_best} 步红色区块都没有靠近")
-                expected, last_step, missing, best, since_best = None, None, 0, None, 0
-                continue
-            step = plan_step(stage)
-            if step is None:
+                    self._note_walk(f"{step_index} 红色{stage}走不近，不算舞台")
+                    ignore.append(stage)
+                    expected, last_step, best, since_best = None, None, None, 0
+                    continue
+            if diagonal:
+                steps = plan_move(stage, target)
+            else:
+                single = plan_step(stage, target)
+                steps = None if single is None else (single,)
+            if steps is None:
                 if self._nudge_until_pre_battle():
                     return True
-                if resets_left <= 0:
-                    return False
+                last_view = None
+                if source != "红色":
+                    expected, last_step = None, None
+                    continue
                 # Stood on the red patch and nothing opened: not the stage.
-                resets_left -= 1
-                self._press_stage_reset(f"走到红色区块 {stage} 上没进战前画面")
+                if resets_left > 0:
+                    resets_left = self._reset_before_walk(resets_left, f"走到红色区块 {stage} 上没进战前画面")
+                self._note_walk(f"{step_index} 站上红色{stage}没进战前画面")
+                ignore.append(stage)
                 expected, last_step, missing, best, since_best = None, None, 0, None, 0
                 continue
-            if not self.hold_key(step.key, step.seconds, after_sleep=0.5):
+            if blocked and len(steps) > 1:
+                # Stuck on something: one key at a time, the other one next.
+                steps = (steps[blocked % len(steps)],)
+            self._note_walk(f"{step_index} {source}{stage} 按{_keys_text(steps)}")
+            if not self.hold_keys(steps, after_sleep=0.5):
                 return False
-            expected, last_step = predict_after_step(stage, step), step
+            last_step = steps
+            last_seen = stage if source == "红色" else None
+            # Only a red patch is followed to where it should be next; the
+            # ✕ and the minimap are looked at again.
+            expected = predict_after_move(stage, steps) if source == "红色" else None
         return self._nudge_until_pre_battle()
+
+    def _reset_before_walk(self, resets_left: int, why: str) -> int:
+        """Press 定位修正 for the walk; what is left of the presses after it.
+        A press that moved nothing is not repeated (Leo 11-18: the player's
+        two presses did not bring the character to the stage), and no button
+        found is not looked for again (2K clone 11-18: each look took 8 s,
+        five looks in one walk)."""
+        if resets_left <= 0:
+            return 0
+        if not self._press_stage_reset(why):
+            return 0
+        if getattr(self, "_stage_reset_result", "") == STAGE_RESET_STILL:
+            self.log_info("镜中之战：按了「定位修正」角色没有动，不再按它，改用键盘自己走。")
+            return 0
+        return resets_left - 1
 
     def _press_stage_reset(self, why: str) -> bool:
         """The game's 「定位修正」, which walks the character onto the stage."""
         self.log_info(f"镜中之战：{why}，按游戏的「定位修正」让角色走回舞台。")
+        self._stage_reset_result = ""
         pressed = self._recover_stage_position()
-        self.info_set("PVP 定位修正", f"{why}：{'已按' if pressed else '没找到按钮'}")
+        result = getattr(self, "_stage_reset_result", "") or ("已按" if pressed else "没找到按钮")
+        self.info_set("PVP 定位修正", f"{why}：{result}")
+        self._note_walk(f"定位修正：{result}")
         return pressed
 
     def _nudge_until_pre_battle(self) -> bool:
@@ -2771,24 +2970,61 @@ class PVPTask(BaseBD2Task):
         return confirmed, left_hits, p95_brightness, gacha_text
 
     def _recover_stage_position(self) -> bool:
-        if self._click_template_until(  # 不用确认：本身就是补救（定位修正）
+        """Press 「定位修正」 (or the stage-search button) and watch what it
+        does instead of a fixed 6 s wait: the result goes to
+        ``_stage_reset_result`` (STAGE_RESET_*)."""
+        self._stage_reset_result = ""
+        if self._click_template_until(  # 不用确认：本身就是补救（定位修正），按后看画面
             PVP_LOC_RESET_TEMPLATE,
             timeout=2.0,
             name="PVP 定位修正",
             target_offset=(0, 100),
-            after_sleep=6.0,
+            after_sleep=0.3,
         ):
+            self._stage_reset_result = self._watch_stage_reset()
             return True
 
         for spec in PVP_NO_FIND_TEMPLATES:
-            if self._click_template_until(  # 不用确认：本身就是补救（舞台搜索）
+            if self._click_template_until(  # 不用确认：本身就是补救（舞台搜索），按后看画面
                 spec,
                 timeout=0.8,
                 name="PVP 舞台搜索",
-                after_sleep=5.0,
+                after_sleep=0.3,
             ):
+                self._stage_reset_result = self._watch_stage_reset()
                 return True
         return False
+
+    def _watch_stage_reset(self) -> str:
+        """After 定位修正 the character walks by itself: wait while the view
+        moves, at most STUCK_SECONDS.  It is done when the pre-battle screen
+        opens, when the view has stood still for STAGE_RESET_SETTLE_SECONDS
+        after moving, or when it has not moved at all for
+        STAGE_RESET_NO_MOVE_SECONDS."""
+        try:
+            last = self._stage_frame()
+        except Exception:
+            self.sleep(6.0)  # no frame to compare: the old fixed wait
+            return STAGE_RESET_MOVED
+        started = monotonic()
+        quiet_since = started
+        moved_any = False
+        while monotonic() - started < STUCK_SECONDS:
+            if self._pre_battle_visible():
+                return STAGE_RESET_BATTLE
+            self.sleep(0.4)
+            frame = self._stage_frame()
+            if view_shift(last, frame) >= VIEW_MOVED_PIXELS:
+                moved_any, quiet_since = True, monotonic()
+            last = frame
+            quiet = monotonic() - quiet_since
+            if moved_any and quiet >= STAGE_RESET_SETTLE_SECONDS:
+                break
+            if not moved_any and quiet >= STAGE_RESET_NO_MOVE_SECONDS:
+                break
+        if self._pre_battle_visible():
+            return STAGE_RESET_BATTLE
+        return STAGE_RESET_MOVED if moved_any else STAGE_RESET_STILL
 
     def _click_template_until(
         self,

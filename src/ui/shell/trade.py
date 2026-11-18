@@ -6,9 +6,16 @@ import calendar as month_calendar
 from datetime import date
 
 from PySide6.QtCore import QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QFont, QPainter, QPen, QPixmap
+from PySide6.QtGui import QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from src.tasks.map_trade.trade_place import (
+    PLACE_CHAPTER1,
+    PLACE_SQUARE,
+    TRADE_PLACE_KEY,
+    TRADE_PLACES,
+    trade_place,
+)
 from src.ui.shell import actions, data, motion, theme
 from src.ui.shell.config_form import ConfigForm
 from src.ui.shell.page import Page, pill, set_pill
@@ -32,6 +39,7 @@ from src.ui.shell.widgets import (
     IconTile,
     Inset,
     Picture,
+    Segmented,
     Separator,
     Slider,
     Text,
@@ -329,6 +337,57 @@ class DayCell(QWidget):
             painter.drawEllipse(QRectF(self.width() - 10, 6, 5, 5))
 
 
+# Where the run meets the merchant (Leo 2026-11-18: players said the square
+# gets stuck).  Each option carries its cartridge's picture.
+PLACE_LABELS = {PLACE_SQUARE: "广场", PLACE_CHAPTER1: "第一章"}
+PLACE_PICTURES = {PLACE_SQUARE: "SQUARE_SHELL", PLACE_CHAPTER1: "S1"}
+
+
+def _cartridge_icon(code: str, size: QSize, ratio: float) -> QIcon:
+    """The cartridge picture, cropped to ``size`` with small round corners."""
+    source = QPixmap(data.cartridge_picture(code) or "")
+    canvas = QPixmap(size * ratio)
+    canvas.setDevicePixelRatio(ratio)
+    canvas.fill(Qt.transparent)
+    if not source.isNull():
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        rect = QRectF(0, 0, size.width(), size.height())
+        path = QPainterPath()
+        path.addRoundedRect(rect, 3, 3)
+        painter.setClipPath(path)
+        scaled = source.scaled(
+            size * ratio, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+        )
+        scaled.setDevicePixelRatio(ratio)
+        left = (scaled.width() / ratio - size.width()) / 2
+        top = (scaled.height() / ratio - size.height()) / 2
+        painter.drawPixmap(QRectF(-left, -top, scaled.width() / ratio, scaled.height() / ratio), scaled, QRectF(scaled.rect()))
+        painter.end()
+    return QIcon(canvas)
+
+
+class PlaceSwitch(Segmented):
+    """广场 | 第一章 beside 开始跑商: where to buy, cook and sell."""
+
+    ICON = QSize(24, 18)
+
+    def __init__(self, parent=None):
+        super().__init__(TRADE_PLACES, PLACE_SQUARE, parent, labels=PLACE_LABELS)
+        # Leo 2026-11-18 「卡帶處用一個小圖標 提示一下」: a map pin says the
+        # cartridges are places; resting on it (or the switch) explains.
+        pin = QWidget(self)
+        row = hbox(pin, (8, 0, 3, 0), 0)
+        row.addWidget(IconLabel("map-pin", 15, "primary"))
+        self.layout().insertWidget(0, pin)
+        for option in TRADE_PLACES:
+            button = self.button(option)
+            button.setIcon(_cartridge_icon(PLACE_PICTURES[option], self.ICON, 2.0))
+            button.setIconSize(self.ICON)
+        attach_hint(self, t("在哪里买卖；选的地方进不去时，自动改去另一处"))
+
+
 class TradePage(Page):
     interval = 2000
 
@@ -336,6 +395,8 @@ class TradePage(Page):
         super().__init__("shellTrade", "跑商", "每天一次：买 → 做料理 → 卖")
         self._hints: list[tuple[QWidget, IconLabel, str]] = []
         self.status = self.add_action(pill(""))
+        self.place = self.add_action(PlaceSwitch())
+        self.place.changed.connect(lambda value: self._set(TRADE_PLACE_KEY, value))
         self.start_button = self.add_action(
             Button("开始跑商", "primary", "play", on_click=self._start)
         )
@@ -439,9 +500,9 @@ class TradePage(Page):
         # Leo 2026-11-13: the row opens the 收藏清单 chart under the three
         # cards (which goods to favourite in the game); it only shows, the
         # tool still buys whatever the player has favourited.  The picture is
-        # the 广场卡带 (Leo 2026-11-10; since 2026-10-20 the run buys from the
-        # merchant in 梦幻广场, the chapter 1 one is the fallback).
-        self.favorites_row = FavoritesRow(data.cartridge_picture("SQUARE"))
+        # the 广场卡带 (Leo 2026-11-10), or story cartridge 1 when the player
+        # trades with the chapter 1 merchant (跑商地点, Leo 2026-11-18).
+        self.favorites_row = FavoritesRow(data.cartridge_picture(PLACE_PICTURES[PLACE_SQUARE]))
         self.favorites_row.clicked.connect(self._toggle_favorites)
         column.addWidget(self.favorites_row, 1)
         self.bargain_button = BargainRow(data.bargain_picture())
@@ -1034,6 +1095,9 @@ class TradePage(Page):
         else:
             set_pill(self.status, "今天还没跑")
         self.start_button.setEnabled(actions.can_start())
+        place = trade_place(config)
+        self.place.set_value(place)
+        self.favorites_row.set_picture(data.cartridge_picture(PLACE_PICTURES[place]))
         self._refresh_bargain()
 
         for card, phase in (

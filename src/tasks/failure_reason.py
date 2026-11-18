@@ -39,6 +39,20 @@ def _strip_name(text: str, name: str) -> str:
     return text
 
 
+def started_only(text: str, name: str = "") -> bool:
+    """「启动活动每日战斗」 (the task's own start line, 状态 at the start of
+    run()) or 「启动」/「-」: no step and no reason in it.
+
+    The name sits at the end there, so stripping it as a prefix missed it: a
+    player's v0.3.23 summary (2026-11-17) said 「启动活动每日战斗，已回主页」
+    where the real reason (「10 秒没走到下一步」) belonged."""
+    text = str(text or "").strip().rstrip(_PUNCTUATION)
+    text = _strip_name(text, name)
+    if name and text.endswith(name):
+        text = text[: -len(name)]
+    return text.strip(_PUNCTUATION) in _EMPTY_STATUS
+
+
 def has_reason(status: str, name: str = "") -> bool:
     """「打开邮箱失败：等了15秒…」 has one; 「打开邮箱失败。」 does not."""
     text = _strip_name(status, name).rstrip(_PUNCTUATION)
@@ -105,7 +119,7 @@ def _ensure(task, since: float, status_before: str | None) -> str:
         warn = getattr(task, "log_warning", None)
         if callable(warn):
             warn(f"{name}：{text}。" if name else f"{text}。")
-    elif plain in _EMPTY_STATUS:
+    elif plain in _EMPTY_STATUS or started_only(plain, name):
         text = f"失败：{reason_for(task, since, status)}"
     else:
         text = f"{plain}，失败：{reason_for(task, since, status)}"

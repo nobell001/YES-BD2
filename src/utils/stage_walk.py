@@ -13,6 +13,7 @@ on the stage centre, which is then about (-35, +25) px from the sprite at
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NamedTuple
 from pathlib import Path
 
 import cv2
@@ -36,6 +37,25 @@ STAGE_TARGET = (925, 535)
 STAGE_AREA = (6000, 40000)
 STAGE_MAX_SIZE = (400, 220)
 STAGE_ASPECT = (1.35, 2.8)
+# A red patch whose box comes this close to the screen edge is cut by it.
+EDGE_PIXELS = 2
+# The PVP hall's HUD (1080 reference, player frame 11-18).  A red patch whose
+# centre lies here is under buttons and text: like one cut by the screen edge
+# it is only taken where the walk expects the stage, never walked to or
+# clicked on its own (the red curtain at the top right sits under 主页).
+STAGE_HUD_BOXES = (
+    (0, 0, 730, 270),  # minimap, season/rank text, chat lines
+    (790, 0, 1130, 70),  # resources bar
+    (1530, 0, 1920, 185),  # top-right icons and the quest line
+    (1480, 680, 1920, 1080),  # skill wheel and cooking button
+    (170, 770, 400, 1000),  # on-screen arrow pad
+    (790, 950, 1130, 1080),  # bottom buttons
+)
+# Something in front of the stage cuts a piece off its red top and changes
+# its shape: player 11-18, the bar's pillar covered the lower-left corner,
+# 254 x 88 (width/height 2.89).  Near where the stage should be, a red patch
+# of the stage's area with a looser shape still counts.
+COVERED_ASPECT = (1.0, 3.6)
 ARRIVED_DISTANCE = 30.0
 # A red patch that does not come this much nearer in this many steps is not
 # the stage (a cut-off piece of the bar carpet, clone 11-05 W 1.2 s); the
@@ -53,6 +73,13 @@ MIN_STEP_SECONDS = 0.06
 MAX_STEP_SECONDS = 0.35
 
 
+class StagePatch(NamedTuple):
+    centre: tuple[int, int]
+    area: int
+    cut: bool  # cut by the screen edge, or under the HUD (STAGE_HUD_BOXES)
+    shaped: bool  # the stage's full shape (False: only near the expected spot)
+
+
 @dataclass(frozen=True)
 class WalkStep:
     key: str
@@ -68,8 +95,30 @@ def stage_shaped(area: int, width: int, height: int) -> bool:
     return STAGE_ASPECT[0] <= width / height <= STAGE_ASPECT[1]
 
 
-def find_stage(frame_1080: np.ndarray) -> tuple[int, int] | None:
-    """Centre of the red stage top in a 1920x1080 BGR frame, or None."""
+def _touches_edge(x: int, y: int, width: int, height: int, frame_size: tuple[int, int]) -> bool:
+    frame_width, frame_height = frame_size
+    return x <= EDGE_PIXELS or y <= EDGE_PIXELS or (
+        x + width >= frame_width - EDGE_PIXELS
+    ) or y + height >= frame_height - EDGE_PIXELS
+
+
+def covered_stage_shaped(area: int, width: int, height: int) -> bool:
+    """A red patch that can be the stage's top with a piece covered."""
+    if not STAGE_AREA[0] <= area <= STAGE_AREA[1]:
+        return False
+    if width > STAGE_MAX_SIZE[0] or height > STAGE_MAX_SIZE[1] or height <= 0:
+        return False
+    return COVERED_ASPECT[0] <= width / height <= COVERED_ASPECT[1]
+
+
+def _under_hud(centre: tuple[int, int]) -> bool:
+    return any(x0 <= centre[0] < x1 and y0 <= centre[1] < y1 for x0, y0, x1, y1 in STAGE_HUD_BOXES)
+
+
+def find_stages(frame_1080: np.ndarray) -> list[StagePatch]:
+    """Every red patch in a 1920x1080 BGR frame that can be the stage's top,
+    largest first: the full shape, or (``shaped`` False) the stage's area
+    with a piece covered."""
     hsv = cv2.cvtColor(frame_1080[:, :, :3], cv2.COLOR_BGR2HSV)
     hue, saturation, value = cv2.split(hsv)
     red = ((hue <= 8) | (hue >= 168)) & (saturation >= 120) & (value >= 50)
@@ -77,16 +126,105 @@ def find_stage(frame_1080: np.ndarray) -> tuple[int, int] | None:
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
     count, _labels, stats, centroids = cv2.connectedComponentsWithStats(mask)
-    best = None
+    size = (frame_1080.shape[1], frame_1080.shape[0])
+    found = []
     for index in range(1, count):
+        x = int(stats[index][cv2.CC_STAT_LEFT])
+        y = int(stats[index][cv2.CC_STAT_TOP])
         area = int(stats[index][cv2.CC_STAT_AREA])
         width = int(stats[index][cv2.CC_STAT_WIDTH])
         height = int(stats[index][cv2.CC_STAT_HEIGHT])
-        if not stage_shaped(area, width, height):
+        if not covered_stage_shaped(area, width, height):
             continue
-        if best is None or area > best[0]:
-            best = (area, int(centroids[index][0]), int(centroids[index][1]))
-    return None if best is None else (best[1], best[2])
+        centre = (int(centroids[index][0]), int(centroids[index][1]))
+        cut = _touches_edge(x, y, width, height, size) or _under_hud(centre)
+        found.append(StagePatch(centre, area, cut, stage_shaped(area, width, height)))
+    found.sort(key=lambda patch: -patch.area)
+    return found
+
+
+def find_stage(
+    frame_1080: np.ndarray, near: tuple[int, int] | None = None
+) -> tuple[int, int] | None:
+    """Centre of the red stage top in a 1920x1080 BGR frame, or None.
+
+    Several red patches can have the stage's shape: a player's 1080p frame
+    (v0.3.24, 11-18) had the red curtain at the top-right corner, cut by the
+    screen edge under the HUD icons, at (1793, 48) and larger than the stage
+    at (1238, 409).  Taking only the largest one returned the curtain every
+    time; the walk then threw it away as too far and took the stage as lost.
+    So every candidate is kept:
+    - ``near`` (where the stage should be after the last step): the
+      candidate closest to it, cut by the edge or partly covered (a pillar
+      or someone in front, see COVERED_ASPECT) or not; the caller still
+      checks the distance;
+    - no ``near``: the largest one that the screen edge does not cut, the
+      full shape before a covered one.  A patch cut by the edge has no
+      reliable shape and sits under the HUD corners; it is never walked to
+      or clicked first.
+    """
+    return pick_stage(find_stages(frame_1080), near)
+
+
+def pick_stage(
+    candidates: list[StagePatch], near: tuple[int, int] | None = None
+) -> tuple[int, int] | None:
+    """The stage among ``candidates`` (see find_stage)."""
+    if near is not None:
+        if not candidates:
+            return None
+        return min(
+            candidates,
+            key=lambda patch: (patch.centre[0] - near[0]) ** 2 + (patch.centre[1] - near[1]) ** 2,
+        ).centre
+    whole = [patch for patch in candidates if not patch.cut]
+    whole.sort(key=lambda patch: not patch.shaped)  # stable: largest first within each
+    return whole[0].centre if whole else None
+
+
+def describe_stages(candidates: list[StagePatch], chosen: tuple[int, int] | None) -> str:
+    """Short text of every candidate for the problem summary."""
+    if not candidates:
+        return "没有红色舞台形状"
+    parts = []
+    for patch in candidates[:4]:
+        kind = "边缘/介面" if patch.cut else ("完整" if patch.shaped else "被挡一角")
+        mark = "←选" if patch.centre == chosen else ""
+        parts.append(f"{patch.centre}{kind}{mark}")
+    return " ".join(parts)
+
+
+def plan_move(
+    stage: tuple[int, int], target: tuple[int, int] = STAGE_TARGET
+) -> tuple[WalkStep, ...] | None:
+    """Keys to hold together so the character walks straight at the stage
+    (None: arrived).  Leo 11-18 「根據人物和舞台位置去調整方向鍵」: one key
+    at a time walks a staircase off the straight line; W+D together walks
+    the line.  Each key is held for its axis's share of the way, and both are
+    shortened by the same factor to MAX_STEP_SECONDS so the direction stays.
+    A key whose share is below MIN_STEP_SECONDS is left out."""
+    dx = stage[0] - target[0]
+    dy = stage[1] - target[1]
+    if (dx * dx + dy * dy) ** 0.5 <= ARRIVED_DISTANCE:
+        return None
+    x_time = abs(dx) / PIXELS_PER_SECOND["x"]
+    y_time = abs(dy) / PIXELS_PER_SECOND["y"]
+    scale = min(1.0, MAX_STEP_SECONDS / max(x_time, y_time))
+    steps = []
+    for key, seconds in (("a" if dx < 0 else "d", x_time * scale), ("s" if dy > 0 else "w", y_time * scale)):
+        if seconds >= MIN_STEP_SECONDS:
+            steps.append(WalkStep(key, round(seconds, 3)))
+    if not steps:
+        single = plan_step(stage, target)
+        return None if single is None else (single,)
+    return tuple(steps)
+
+
+def predict_after_move(position: tuple[int, int], steps) -> tuple[int, int]:
+    """Where a ground point moves on screen after all ``steps``."""
+    for step in steps:
+        position = predict_after_step(position, step)
+    return position
 
 
 def plan_step(stage: tuple[int, int], target: tuple[int, int] = STAGE_TARGET) -> WalkStep | None:
@@ -240,16 +378,103 @@ def follows_character(
 # (1080 reference); walking into a wall leaves it still, and then a red spot
 # that stayed put proves nothing.
 VIEW_MOVED_PIXELS = 10.0
+# Only the play area is compared (x0, y0, x1, y1 at 1080): the HUD stands
+# still while the scene moves, and over the whole screen it won.  2K clone
+# 11-18, PVP hub: the whole-screen shift read 0-3 px after every step while
+# the stage moved 100-160 px, so every step was written down as 「画面没动」;
+# this box read 20-45 px for 0.08 s taps.
+VIEW_BOX = (400, 280, 1520, 940)
+
+
+def scene_offset(before_1080: np.ndarray, after_1080: np.ndarray) -> tuple[float, float]:
+    """How far the scene moved on screen between two 1080 frames (dx, dy):
+    walking left moves it right (+dx)."""
+    x0, y0, x1, y1 = VIEW_BOX
+    small = []
+    for frame in (before_1080, after_1080):
+        crop = frame[y0:y1, x0:x1, :3]
+        grey = cv2.cvtColor(cv2.resize(crop, ((x1 - x0) // 4, (y1 - y0) // 4)), cv2.COLOR_BGR2GRAY)
+        small.append(np.float32(grey))
+    window = cv2.createHanningWindow((small[0].shape[1], small[0].shape[0]), cv2.CV_32F)
+    (dx, dy), _response = cv2.phaseCorrelate(small[0], small[1], window)
+    return 4.0 * dx, 4.0 * dy
 
 
 def view_shift(before_1080: np.ndarray, after_1080: np.ndarray) -> float:
-    """How far the whole scene moved between two 1080 frames, in pixels."""
-    small = []
-    for frame in (before_1080, after_1080):
-        grey = cv2.cvtColor(cv2.resize(frame[:, :, :3], (480, 270)), cv2.COLOR_BGR2GRAY)
-        small.append(np.float32(grey))
-    (dx, dy), _response = cv2.phaseCorrelate(small[0], small[1])
-    return 4.0 * (dx * dx + dy * dy) ** 0.5
+    """How far the scene moved between two 1080 frames, in pixels."""
+    dx, dy = scene_offset(before_1080, after_1080)
+    return (dx * dx + dy * dy) ** 0.5
+
+
+# PVP hub: the red ✕ hangs above the stage (the game's 定位修正 template is
+# this ✕).  Player 11-18 frame: ✕ (1238, 270), stage centre (1237, 410);
+# 2K clone 11-18 the ✕ alone at the bottom-left edge while the character was
+# at the bar.  The stage-shaped red near the bar (a cut piece of its carpet)
+# is then not where the ✕ says.  Its crossed-swords shape scores 0.88-0.97,
+# anything else in the hub at most 0.51.
+STAGE_BELOW_MARKER = 140
+# A stage-shaped red patch this near the ✕'s stage is that stage.
+MARKER_MATCH_PIXELS = 120.0
+# Where the ✕ is on screen when the character stands on the stage.  Next to
+# the stage the party covers part of its red top and its centre reads 60-70
+# px left of the ✕; the ✕ itself is never covered.  2K clone 11-18, 14 walks:
+# the pre-battle screen opened with the ✕ at x 880-1000, y 395-460, and not
+# yet at y 375-395 (one W tap later it opened).
+STAGE_MARKER_TARGET = (950, 425)
+
+
+def find_stage_marker(frame_1080: np.ndarray) -> tuple[int, int] | None:
+    """Centre of the PVP hub's ✕ over the stage (by its shape), or None."""
+    return _marker_by_shape(frame_1080, _red_mask(frame_1080))
+
+
+def stage_from_marker(marker: tuple[int, int]) -> tuple[int, int]:
+    """Where the stage centre is on screen when its ✕ is at ``marker``."""
+    return marker[0], marker[1] + STAGE_BELOW_MARKER
+
+
+# The minimap (top left, 1080 reference): the player sits at its centre, the
+# hub's floor is light grey, walls and the bar dark.  At the stage the floor
+# is all around (share 0.84-0.86 on three player frames); at the bar (2K
+# clone 11-18) about half of it, lying toward the stage (lower left).  When
+# neither the stage nor its ✕ is on screen the walk goes that way.
+MINIMAP_CENTRE = (207, 172)
+MINIMAP_RADIUS = 64
+MINIMAP_PLAYER_RADIUS = 14
+FLOOR_OPEN_SHARE = 0.75
+FLOOR_LEAN_PIXELS = 6.0
+# How far away the search walks toward: off screen, so a step is full length.
+SEARCH_REACH = 700
+
+
+def floor_direction(frame_1080: np.ndarray) -> tuple[float, float] | None:
+    """Unit vector toward the open floor on the minimap, or None (floor all
+    around, or no minimap)."""
+    cx, cy = MINIMAP_CENTRE
+    r = MINIMAP_RADIUS
+    patch = frame_1080[cy - r : cy + r + 1, cx - r : cx + r + 1, :3]
+    if patch.shape[:2] != (2 * r + 1, 2 * r + 1):
+        return None
+    hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+    yy, xx = np.mgrid[-r : r + 1, -r : r + 1]
+    distance = np.hypot(xx, yy)
+    ring = (distance <= r) & (distance >= MINIMAP_PLAYER_RADIUS)
+    floor = ring & (hsv[:, :, 2] > 140) & (hsv[:, :, 1] < 45)
+    count = int(floor.sum())
+    share = count / max(1, int(ring.sum()))
+    if count == 0 or share >= FLOOR_OPEN_SHARE:
+        return None
+    dx, dy = float(xx[floor].mean()), float(yy[floor].mean())
+    length = (dx * dx + dy * dy) ** 0.5
+    if length < FLOOR_LEAN_PIXELS:
+        return None
+    return dx / length, dy / length
+
+
+def search_point(direction: tuple[float, float], target: tuple[int, int] = STAGE_TARGET) -> tuple[int, int]:
+    """A point SEARCH_REACH off the target toward ``direction``, walked to
+    like a stage there."""
+    return round(target[0] + direction[0] * SEARCH_REACH), round(target[1] + direction[1] * SEARCH_REACH)
 
 
 def _ignored(point: tuple[int, int], ignore) -> bool:

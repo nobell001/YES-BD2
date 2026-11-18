@@ -187,6 +187,7 @@ from src.tasks.map_trade.navigator_constants import (
 )
 from src.tasks.map_trade.vision import normalize_text
 from src.utils.calibration import FHD_1080
+from src.utils import field_battle
 from src.utils.field_followers import dismiss_once_per_run
 from src.utils.press_confirm import press_and_confirm, wait_for
 from src.tasks.map_trade.field_circle import find_field_circle
@@ -1565,11 +1566,57 @@ class SandboxNavigationMixin:
             return None
         left = leave("跑图路上")
         if left == "left":
+            self.fled_battles = getattr(self, "fled_battles", 0) + 1
             return "battle"
         if left == "none":
             return None
         self._status("导航状态", f"路上撞到怪进了战斗，{left}")
         return "timeout"
+
+    def leave_field_battle_first(self, step: str, *, stop_after_flee: bool = False) -> NavigationResult | None:
+        """Before a map step: a field battle on screen is run from first.
+
+        Player summary v0.3.20 2026-11-17 (第14章): a monster met the
+        character after a press had already counted as done; 回主城 then
+        looked for the circle's hand, the minimap and ≡ on a battle standing
+        at TURN.1, failed all three, and the way home after the skip found
+        no path either.  Only the presses, the walk waits and the general
+        way home looked for a battle.  Now every map step (前往下一张图,
+        回主城, 回主页) looks first: one small read of the bottom strip,
+        the full look only when a battle word shows there.
+
+        None = go on with the step (no battle, or it was left); a failed
+        result when the battle could not be left, saying why.  With
+        ``stop_after_flee`` a battle that was left also ends the step
+        (``fled_battle``): the collector clears that map first, 压制 first
+        (Leo 2026-11-18 「撞怪後 逃跑 然後清怪」).  每周跑图 only
+        (FIELD_BATTLE_ESCAPE, Leo 2026-10-23)."""
+        leave = getattr(self.task, "leave_field_battle", None)
+        if not callable(leave) or not getattr(self.task, "FIELD_BATTLE_ESCAPE", False):
+            return None
+        try:
+            frame = self.vision.capture()
+            strip = self.vision.ocr_boxes(
+                frame, "野外战斗底栏", relative_roi=field_battle.BOTTOM_STRIP_RELATIVE_ROI
+            )
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception:
+            return None
+        if not field_battle.bottom_strip_cue(strip):
+            return None
+        left = leave(f"跑图{step}")
+        if left == "left":
+            self.fled_battles = getattr(self, "fled_battles", 0) + 1
+        if left == "left" and stop_after_flee:
+            self._status("导航状态", f"{step}前撞到怪进了战斗，已逃跑，先清怪")
+            return NavigationResult(
+                False, ScreenState.SANDBOX, "撞到怪进了战斗，已逃跑", fled_battle=True
+            )
+        if left in ("left", "none"):
+            return None
+        self._status("导航状态", f"{step}前撞到怪进了战斗，{left}")
+        return NavigationResult(False, ScreenState.UNKNOWN, f"撞到怪进了战斗，{left}")
 
     def _wait_resuming_walk(self, timeout: float) -> str:
         """Wait until a walk has ended, patrol catches included: after a catch
@@ -1623,6 +1670,7 @@ class SandboxNavigationMixin:
                         leave = getattr(self.task, "leave_field_battle", None)
                         if callable(leave) and leave("跑图路上") == "left":
                             fled = True
+                            self.fled_battles = getattr(self, "fled_battles", 0) + 1
             self.task.sleep(0.5)
         self._status("导航状态", f"自动移动{timeout:.0f}秒仍未结束，继续确认地图")
         return "timeout"
@@ -1787,10 +1835,28 @@ class SandboxNavigationMixin:
         more (``redo``)."""
 
         self._status("导航状态", "改用导航/徒步前往传送阵")
+        # A battle that started inside the step (live 2K 2026-11-18, PR #574:
+        # caught again 8 s after running from the first one, then the
+        # minimap press landed on the battle screen).
+        battle = self.leave_field_battle_first("走去传送门")
+        if battle is not None:
+            return battle
         # The minimap itself opens the area map (as M does).  The icon
         # templates matched beside the ≡ button in 阿尔卡迪亚居住区域 and opened
         # the navigation menu instead (live 2K 2026-09-30).
-        if self._open_field_map() is None and not self._click_sandbox_navigation_map():  # 不用确认：先点小地图，这是第二条路
+        opened_map = self._open_field_map()
+        if opened_map is None:
+            # The map did not open because a battle began meanwhile (live 2K
+            # 2026-11-18, b3f332d: the footer read 「TURN. 1 BATTLE」 and the
+            # second entry was pressed on the battle, ~12 s lost): run from
+            # it, then open the map once more.
+            fled_before = getattr(self, "fled_battles", 0)
+            battle = self.leave_field_battle_first("走去传送门")
+            if battle is not None:
+                return battle
+            if getattr(self, "fled_battles", 0) > fled_before:
+                opened_map = self._open_field_map()
+        if opened_map is None and not self._click_sandbox_navigation_map():  # 不用确认：先点小地图，这是第二条路
             return NavigationResult(
                 False,
                 ScreenState.SANDBOX,
@@ -3754,6 +3820,14 @@ class SandboxNavigationMixin:
         reach the merchant and 跑图 could not go home.  Any field signal now
         allows the fixed-place press (was the C/H/M/Q key caps only)."""
         self._nav_button_miss = ""
+        # A field battle hides the ≡ button and the key caps: run from it
+        # first (live 2K 2026-11-18, PR #574: 回主城 tried ≡ on a battle that
+        # began inside the step, and the bottom-strip read already showed
+        # 「TURN. 1 BATTLE」).
+        battle = self.leave_field_battle_first("小地图导航")
+        if battle is not None:
+            self._nav_button_miss = battle.message
+            return False
         # A teleport page left open covers the ≡ button too (player v0.3.9
         # 2026-11-10): closed before the button is looked for.
         self._close_teleport_page_left_open()
@@ -4501,6 +4575,9 @@ class SandboxNavigationMixin:
         card = CARD_BY_ID.get(card_id)
         if card is None or not card.collectable:
             return NavigationResult(False, ScreenState.UNKNOWN, f"非跑图剧情卡带：{card_id}")
+        battle = self.leave_field_battle_first("回主城")
+        if battle is not None:
+            return battle
         self._close_teleport_page_left_open()
         if not self.ensure_small_minimap():
             return NavigationResult(False, ScreenState.SANDBOX, "小地图放大状态未能切回")
@@ -4616,11 +4693,29 @@ class SandboxNavigationMixin:
         current_target: CollectionMapTarget,
         next_target: CollectionMapTarget,
     ) -> NavigationResult:
-        """Open the current teleport, move backward exactly one page, and travel."""
+        """Open the current teleport, move backward exactly one page, and
+        travel.  A failed move that ran from a battle on the way says so
+        (``fled_battle``): the map is cleared, 压制 first, before the next
+        try (Leo 2026-11-18 「撞怪後 逃跑 然後清怪」)."""
+        before = getattr(self, "fled_battles", 0)
+        result = self._advance_collection_map(card_id, current_target, next_target)
+        if not result.success and not result.fled_battle and getattr(self, "fled_battles", 0) > before:
+            return replace(result, fled_battle=True)
+        return result
+
+    def _advance_collection_map(
+        self,
+        card_id: str,
+        current_target: CollectionMapTarget,
+        next_target: CollectionMapTarget,
+    ) -> NavigationResult:
 
         card = CARD_BY_ID.get(card_id)
         if card is None or not card.collectable:
             return NavigationResult(False, ScreenState.UNKNOWN, f"非跑图剧情卡带：{card_id}")
+        battle = self.leave_field_battle_first("前往下一张图", stop_after_flee=True)
+        if battle is not None:
+            return battle
         edge = (card_id, current_target.key, next_target.key)
         town_npc = TOWN_NAV_ENTRIES.get(card.card_id)
         if (

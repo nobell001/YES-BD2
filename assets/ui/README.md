@@ -18,3 +18,6 @@ Pictures used only by the new main window (`src/ui/shell`).
   Game art belongs to the game's publisher.
 - `cartridges/SQUARE.png`: the 梦幻广场 card's label art, a copy of the
   recognition template `Q_square.png` (the 跑商 page's 买 card).
+- `cartridges/SQUARE_SHELL.png`: that art on story cartridge 1's shell
+  (`S1.png`), so 广场 looks like a cartridge beside 第一章 on the 跑商 page
+  (Leo 2026-11-18 「第一章是像卡帶圖標 活動廣場的卻不是」).

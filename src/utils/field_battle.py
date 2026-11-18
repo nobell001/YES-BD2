@@ -44,6 +44,18 @@ AUTO_TEXTS = ("自动战斗中", "結束自動戰鬥", "结束自动战斗", "�
 # "TURN.1", "TURN.2", "TURN1"...
 TURN_PATTERN = re.compile(r"turn\.?\d{1,2}")
 BATTLE_TEXT = "battle"
+# The bottom strip of the game window: the 「TURN.1 BATTLE」 button and
+# 「结束自动战斗 ESC」 (right), 「自动战斗中」 (left), the result's 「离开」
+# (right).  The field's own bottom row never shows these words, so one small
+# read there tells a battle from the field before a map step (player summary
+# v0.3.20 2026-11-17: 第14章 回主城 tried the circle, the minimap and ≡ on a
+# battle at TURN.1, and no step looked for the battle).
+BOTTOM_STRIP_RELATIVE_ROI = (0.0, 0.84, 1.0, 1.0)
+# The battle's pause button (Ⅱ, top right): the same spot in field, fiend
+# hunt and event battles on 1920x1080 (1790, 53).  A mouse press reaches the
+# game behind other windows, Esc does not; it opens the same menu as Esc
+# (Leo's rule: mouse first, a harmless fixed spot only as the last way).
+PAUSE_RELATIVE_POINT = (1790 / 1920, 53 / 1080)
 
 
 def _names(boxes) -> list[str]:
@@ -73,6 +85,21 @@ def in_battle(boxes) -> bool:
     if any(normalize_ocr_text(word) in text for word in AUTO_TEXTS):
         return True
     return bool(TURN_PATTERN.search(text)) and BATTLE_TEXT in text
+
+
+def bottom_strip_cue(boxes) -> bool:
+    """Any one battle word read in the bottom strip (BOTTOM_STRIP_RELATIVE_ROI):
+    worth the full look (``in_battle`` / ``leave_button``) before a map step."""
+    names = _names(boxes)
+    text = "".join(names)
+    if BATTLE_TEXT in text or TURN_PATTERN.search(text):
+        return True
+    if any(normalize_ocr_text(word) in text for word in AUTO_TEXTS):
+        return True
+    return any(
+        any(leave in name for leave in LEAVE_TEXTS) and len(name) <= LEAVE_TEXT_MAX
+        for name in names
+    )
 
 
 def auto_on(boxes) -> bool:

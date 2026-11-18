@@ -73,6 +73,7 @@ from src.tasks.map_trade.navigator_constants import (
     TRADE_MERCHANT_OPTIONS_REGION,
     TRADE_MERCHANT_TALENTS_REGION,
 )
+from src.tasks.map_trade.trade_place import PLACE_CHAPTER1, trade_place
 from src.tasks.map_trade.trader_constants import (
     BUY_TO_SELL_SOLD_OUT_STABLE_HITS,
     BUY_TO_SELL_SOLD_OUT_TEMPLATE,
@@ -451,14 +452,14 @@ class TradeNavigationMixin:
             self.task.sleep(interval)
 
     def go_to_trade_merchant(self) -> NavigationResult:
-        """Stand next to the merchant in the square.
+        """Stand next to the merchant.
 
-        Already next to him: done.  Otherwise enter 梦幻广场 from 主页 (Leo
-        2026-10-20: trade there, no cartridge switch after 广场女神像) and send
-        away the "!" followers.  Then teleport with the minimap navigation
-        menu's 商店 destination, or walk there from the area map's merchant
-        icon.  When the square cannot be entered or he cannot be reached in
-        it, story cartridge 1 is the other way (Leo 「總有替代方案」).
+        Already next to him: done.  Otherwise go where the player picked
+        (Leo 2026-11-18, players said the square gets stuck): 梦幻广场's 洛兹
+        (the default since Leo 2026-10-20: no cartridge switch after 广场女神像)
+        or story cartridge 1's 无聊收集狂大叔.  When the picked place cannot
+        be entered or he cannot be reached there, the other one is the way
+        out (Leo 「總有替代方案」).
         """
 
         self._merchant_prompt_unread = False
@@ -472,33 +473,65 @@ class TradeNavigationMixin:
                     True, ScreenState.MERCHANT_DIALOG, "已在商人旁（商人菜单开着）"
                 )
             return NavigationResult(True, ScreenState.SANDBOX, "已在商人旁")
+        routes = [
+            ("梦幻广场", self._merchant_via_square),
+            ("剧情游戏卡1", self._merchant_via_story_card),
+        ]
+        if trade_place(getattr(self.task, "config", None)) == PLACE_CHAPTER1:
+            routes.reverse()
+        (_first_name, first), (second_name, second) = routes
+        reached, reason, go_on = first()
+        if reached.success or not go_on:
+            return reached
+        self.task.log_info(f"跑商：{reason}，改去{second_name}找商人。")
+        reached, _reason, _go_on = second()
+        return reached
+
+    def _merchant_via_square(self) -> tuple[NavigationResult, str, bool]:
+        """Into 梦幻广场 and next to 洛兹: (result, why not, may the other
+        place still be tried).  The field is left for 主页 when he cannot be
+        reached there; when even that fails, the other place would only fail
+        the same way."""
+
         self._status("导航状态", "进入梦幻广场")
         self._merchant_stage_text = SQUARE_MERCHANT_STAGE
         entered = self._enter_square()
-        if entered.success:
-            clear = getattr(self.task, "clear_field_followers", None)
-            if callable(clear):
-                clear()
-            if self._reach_merchant_in_field():
-                return NavigationResult(True, ScreenState.SANDBOX, "已到达商人旁")
-            reason = "广场里没走到商人旁"
-            returned = self.return_home()
-            if not returned.success:
-                return NavigationResult(False, self.classify(), MERCHANT_PROMPT_FAILURE_MESSAGE)
-        else:
-            reason = f"没能进入梦幻广场（{entered.message}）"
-        self.task.log_info(f"跑商：{reason}，改去剧情游戏卡1找商人。")
+        if not entered.success:
+            return entered, f"没能进入梦幻广场（{entered.message}）", True
+        clear = getattr(self.task, "clear_field_followers", None)
+        if callable(clear):
+            clear()
+        if self._reach_merchant_in_field():
+            return NavigationResult(True, ScreenState.SANDBOX, "已到达商人旁"), "", False
+        returned = self.return_home()
+        if not returned.success:
+            failed = NavigationResult(False, self.classify(), MERCHANT_PROMPT_FAILURE_MESSAGE)
+            return failed, "广场里没走到商人旁，也没回到主页", False
+        failed = NavigationResult(False, returned.state, MERCHANT_PROMPT_FAILURE_MESSAGE)
+        return failed, "广场里没走到商人旁", True
+
+    def _merchant_via_story_card(self) -> tuple[NavigationResult, str, bool]:
+        """Story cartridge 1's field, next to 无聊收集狂大叔: as above.  The
+        square's entry goes back to 主页 itself, so a failed walk here needs
+        no trip home first."""
+
         self._status("导航状态", "进入剧情游戏卡1")
         self._merchant_stage_text = MERCHANT_STAGE
         entered = self._enter_trade_card()
         if not entered.success:
-            return entered
-        if not self._reach_merchant_in_field():
-            return NavigationResult(False, self.classify(), MERCHANT_PROMPT_FAILURE_MESSAGE)
-        return NavigationResult(True, ScreenState.SANDBOX, "已到达商人旁")
+            return entered, f"没能进入剧情游戏卡1（{entered.message}）", True
+        if self._reach_merchant_in_field():
+            return NavigationResult(True, ScreenState.SANDBOX, "已到达商人旁"), "", False
+        failed = NavigationResult(False, self.classify(), MERCHANT_PROMPT_FAILURE_MESSAGE)
+        return failed, "剧情游戏卡1里没走到商人旁", True
 
     def _merchant_stage(self) -> str:
-        return self.__dict__.get("_merchant_stage_text", SQUARE_MERCHANT_STAGE)
+        picked = (
+            MERCHANT_STAGE
+            if trade_place(getattr(self.task, "config", None)) == PLACE_CHAPTER1
+            else SQUARE_MERCHANT_STAGE
+        )
+        return self.__dict__.get("_merchant_stage_text", picked)
 
     def _reach_merchant_in_field(self) -> bool:
         self._status("当前阶段", self._merchant_stage())
@@ -689,7 +722,7 @@ class TradeNavigationMixin:
         if outcome == "unreachable":
             self._status("导航状态", "已在商店区域，改点地图商人图标")
             if not self._walk_via_area_map():
-                return False
+                self._no_map_icon_in_shop_area()
         elif (
             outcome != "walked"
             and not self._wait_for_merchant_prompt(MERCHANT_QUICK_ARRIVAL_TIMEOUT)
@@ -708,7 +741,7 @@ class TradeNavigationMixin:
                 return True
             self._status("导航状态", "前往后未到商人旁，改点地图商人图标")
             if not self._walk_via_area_map():
-                return False
+                self._no_map_icon_in_shop_area()
         if self._wait_for_merchant_prompt(MERCHANT_ARRIVAL_TIMEOUT):
             return True
         if self.classify() == ScreenState.SANDBOX:
@@ -722,6 +755,16 @@ class TradeNavigationMixin:
             return True
         self.task.log_warning(f"跑商：前往商店后{MERCHANT_PROMPT_FAILURE_MESSAGE}。")
         return False
+
+    def _no_map_icon_in_shop_area(self) -> None:
+        """The trip to 商店 ended in his room but the area map showed no
+        merchant icon: standing right beside him, the player's own marker
+        covers it (2K 繁中 2026-11-18, 剧情游戏卡1).  Giving up there sent
+        the run away from the merchant it stood next to; his name or the talk
+        key F below decides instead."""
+
+        self._status("导航状态", "地图上没有商人图标，在原地找他的名字或按 F")
+        self.task.log_info("跑商：已在商店区域但地图上没找到商人图标，在原地认商人或按 F 和他说话。")
 
     def _in_square_now(self) -> bool:
         return square_shown(
@@ -1111,6 +1154,13 @@ class TradeNavigationMixin:
         return self.classify_trade() == ScreenState.MERCHANT_DIALOG
 
     def _return_home_pass(self) -> NavigationResult:
+        leave_battle = getattr(self, "leave_field_battle_first", None)
+        if callable(leave_battle):
+            # 每周跑图 only: a field battle has no way home but running away
+            # (player summary v0.3.20 2026-11-17, 第14章).
+            battle = leave_battle("回主页")
+            if battle is not None:
+                return battle
         if self._discount_close_dialog_shown():
             # Answer an already-open 折扣商店结束 dialog first: a click
             # outside it could cancel it instead.

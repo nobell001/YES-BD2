@@ -723,10 +723,15 @@ class BaseBD2Task(BaseTask):
                             logger.warning(f"{self.name}：失败后回主页也出错：{home_exc!r}")
                     raise
                 if result is False:
+                    reason = ""
                     if keep and not getattr(self, "child_tasks", None):
-                        failure_reason.ensure(self, begun, status_before)
+                        reason = failure_reason.ensure(self, begun, status_before)
                     hint = game_language.warn_after_failure(self, started) if keep else ""
-                    problem_report.note_problem(self, "fail", hint)
+                    # The reason goes with the problem: its 停在 shows the step
+                    # kept when the task gave up (or stuck), noted before the
+                    # reason was written (player v0.3.23 2026-11-17: the
+                    # summary named the step but not 「10 秒没走到下一步」).
+                    problem_report.note_problem(self, "fail", hint or reason)
                     if wanted and constructed:
                         self._leave_home_after_failed_run()
                 scope.result = result
@@ -1369,11 +1374,29 @@ class BaseBD2Task(BaseTask):
         self.log_info(f"{label}：撞到怪进了战斗，按 Esc 叫出选单逃跑。")
         self.info_set("野外战斗", "逃跑")
         menu = boxes
+        esc_sent = True
         for _press in range(field_battle.ESC_PRESSES_MAX):
             if field_battle.flee_button(menu) is not None or field_battle.leave_button(menu) is not None:
                 break
             if not self.tap_escape(after_sleep=field_battle.ESC_EVERY_SECONDS):
-                return "Esc 没有送到游戏（游戏窗口不在最前面）"
+                esc_sent = False
+                break
+            menu = self._battle_boxes()
+        paused_by_mouse = False
+        if (
+            field_battle.flee_button(menu) is None
+            and field_battle.leave_button(menu) is None
+            and (not esc_sent or field_battle.in_battle(menu))
+        ):
+            # Esc needs the game in front, a mouse press does not (player
+            # summary v0.3.20 2026-11-17: the run sat on a battle and every
+            # later item of the daily was skipped).  The pause button opens
+            # the same menu; pressed only while the battle itself still
+            # shows (never over an open menu).
+            why = "Esc 没有送到游戏（游戏窗口不在最前面）" if not esc_sent else "Esc 没叫出选单"
+            self.log_info(f"{label}：{why}，改用鼠标点右上角的暂停键。")
+            self.operate_click(*field_battle.PAUSE_RELATIVE_POINT, after_sleep=field_battle.ESC_EVERY_SECONDS * 1.5)  # 不用确认：下面读选单，没有「逃跑」就照原来报原因
+            paused_by_mouse = True
             menu = self._battle_boxes()
         button = field_battle.leave_button(menu)
         if button is not None:  # it ended while we pressed
@@ -1381,9 +1404,12 @@ class BaseBD2Task(BaseTask):
         flee = field_battle.flee_button(menu)
         if flee is None:
             seen = "、".join(str(getattr(box, "name", "")) for box in menu[:8]) or "没读到字"
-            return (
-                f"按了{field_battle.ESC_PRESSES_MAX}次 Esc 都没看到「逃跑」（读到：{seen}）"
+            pressed = (
+                f"按了{field_battle.ESC_PRESSES_MAX}次 Esc" if esc_sent else "Esc 送不到游戏（游戏窗口不在最前面）"
             )
+            if paused_by_mouse:
+                pressed += "，也点了右上角暂停键"
+            return f"{pressed}，都没看到「逃跑」（读到：{seen}）"
         self._click_battle_box(flee, after_sleep=1.5)  # 不用确认：_confirm_flee 没见确认框会再点逃跑
         return self._confirm_flee(label, self._battle_boxes())
 
@@ -1779,6 +1805,64 @@ class BaseBD2Task(BaseTask):
         self.info_set("按键移动", f"{key} {seconds:.2f}s")
         self.sleep(after_sleep)
         return True
+
+    def hold_keys(self, steps, after_sleep: float = 0.0) -> bool:
+        """Hold movement keys together, each for its own time (W+D walks
+        diagonally; Leo 11-18).  One step goes through hold_key."""
+        steps = tuple(steps)
+        if len(steps) == 1:
+            return self.hold_key(steps[0].key, steps[0].seconds, after_sleep=after_sleep)
+        codes = {"w": 0x57, "a": 0x41, "s": 0x53, "d": 0x44}
+        text = "+".join(f"{step.key}{step.seconds:.2f}" for step in steps)
+        if not self._send_game_keys([(codes[step.key], step.seconds) for step in steps]):
+            self.info_set("按键移动", f"{text} 未发送：游戏窗口不在最前面")
+            self.log_warning(
+                "游戏窗口不在最前面，已停止键盘移动，避免按键打到其他窗口。"
+                "运行需要走位的任务时请不要操作其他窗口。"
+            )
+            return False
+        self.info_set("按键移动", f"{text}s")
+        self.sleep(after_sleep)
+        return True
+
+    def _send_game_keys(self, presses) -> bool:
+        """Press every (code, seconds) at once and let each go after its own
+        time, with the game in the foreground (see _send_game_key)."""
+        self._wait_unlocked()
+        presses = sorted(((code, max(0.0, float(seconds))) for code, seconds in presses), key=lambda p: p[1])
+        sent = []
+
+        def action():
+            import win32api
+            import win32con
+
+            for _round in range(KEY_FRONT_ROUNDS):  # 不是重试点击：按键途中游戏被换下去才再按一次
+                if not self._bring_game_to_foreground():
+                    return
+                scans = {code: win32api.MapVirtualKey(code, 0) for code, _seconds in presses}
+                down = []
+                try:
+                    for code, _seconds in presses:
+                        win32api.keybd_event(code, scans[code], 0, 0)
+                        down.append(code)
+                    elapsed = 0.0
+                    for code, seconds in presses:
+                        time.sleep(max(0.0, seconds - elapsed))
+                        elapsed = seconds
+                        win32api.keybd_event(code, scans[code], win32con.KEYEVENTF_KEYUP, 0)
+                        down.remove(code)
+                    held = self._game_in_foreground()
+                finally:
+                    for code in down:
+                        win32api.keybd_event(code, scans[code], win32con.KEYEVENTF_KEYUP, 0)
+                if held:
+                    sent.append(True)
+                    return
+                self.log_info("按键途中游戏窗口被换到后面，这一下可能没收到，重新按一次。")
+            sent.append(True)
+
+        self.operate(action, block=True, restore_cursor=True)
+        return bool(sent)
 
     def tap_key(self, key: str, after_sleep: float = 0.0) -> bool:
         """Tap one of the game's own shortcut keys (one letter, as the game

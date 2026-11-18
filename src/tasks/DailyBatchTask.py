@@ -10,7 +10,7 @@ from ok import BaseTask
 from ok.task.exceptions import FinishedException, TaskDisabledException
 from qfluentwidgets import FluentIcon
 
-from src.tasks import problem_report, run_report, setup_check, weekly_ticks
+from src.tasks import failure_reason, problem_report, run_report, setup_check, weekly_ticks
 from src.tasks.AffinityTalkTask import AffinityTalkTask
 from src.tasks.CraftGearTask import CraftGearTask
 from src.tasks.DailyTask import DailyTask
@@ -130,6 +130,11 @@ def _schedule_system_shutdown(seconds: int) -> bool:
     return result.returncode == 0
 
 
+# A stuck reason names the step and what it waited for (「在活动页（挑战战斗15：
+# 准备快速战斗） 10 秒没走到下一步…」): longer than a 状态 tail.
+FAILURE_NOTE_WHY_CHARS = 80
+
+
 def failure_note(task) -> str:
     """Why a child returned False, in a few words for the summary page.
 
@@ -147,8 +152,12 @@ def failure_note(task) -> str:
         if text.startswith(prefix):
             text = text[len(prefix):]
     text = text.strip()
-    if text in {"", "失败", "结束", "完成", "中止", "启动"}:
-        return "没有做完"
+    if text in {"", "失败", "结束", "完成", "中止", "启动"} or failure_reason.started_only(text, name):
+        # 状态 still says only that it started (a stuck watch ended the run,
+        # player v0.3.23 2026-11-17 「启动活动每日战斗，已回主页」): the reason
+        # the run noted is what the summary needs.
+        why = str(getattr(task, "_why", "") or "").strip().rstrip("。.")
+        return why[:FAILURE_NOTE_WHY_CHARS] if why else "没有做完"
     return text[:40]
 
 

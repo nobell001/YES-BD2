@@ -602,7 +602,11 @@
   "今天的技能次数和跑商记录不会动。": "Today's skill uses and Trade Run records stay as they are.",
   "游戏里卡带图示已经是完成的，还是会记成完成，不会重跑。": "Packs whose icons in the game already show done are still recorded as done and not run again.",
   "本周跑图记录已清掉，下次跑图从第一张卡带开始": "This week's Farming records are cleared. The next run starts from the first pack.",
-  "跑图记录现在存不进去（文件可能被占用），没有清掉，请稍后再按一次": "Couldn't save the Farming records right now (the file may be in use). Nothing was cleared; try again in a moment."
+  "跑图记录现在存不进去（文件可能被占用），没有清掉，请稍后再按一次": "Couldn't save the Farming records right now (the file may be in use). Nothing was cleared; try again in a moment.",
+  "广场": "Square",
+  "第一章": "Chapter 1",
+  "跑商地点": "Trade Run spot",
+  "在哪里买卖；选的地方进不去时，自动改去另一处": "Where to buy and sell. If the picked place can't be reached, it goes to the other one."
  },
  "not_on_souseha": {
   "小屋": "House",

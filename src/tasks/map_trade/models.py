@@ -171,6 +171,10 @@ class NavigationResult:
     state: ScreenState
     message: str = ""
     map_page_mode: MapPageMode = MapPageMode.UNKNOWN
+    # A field battle met at the start of the step was run from and the step
+    # stopped there: the map it stands on is to be cleared first (Leo
+    # 2026-11-18 「撞怪後 逃跑 然後清怪」).
+    fled_battle: bool = False
 
 
 @dataclass(frozen=True)

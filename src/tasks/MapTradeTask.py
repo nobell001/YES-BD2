@@ -36,6 +36,7 @@ from src.tasks.map_trade.sale_days import (
     sale_day_key,
     table_for,
 )
+from src.tasks.map_trade.trade_place import DEFAULT_TRADE_PLACE, TRADE_PLACE_KEY, TRADE_PLACES
 from src.tasks.map_trade.trader import Trader
 from src.tasks.map_trade.trader_cooking import MAIN_COOKING_RECIPES
 from src.tasks.map_trade.vision import Vision
@@ -345,6 +346,9 @@ class MapTradeTask(MapAutomationTaskBase):
                 # 收藏重建周期 and 出售保险 were removed from the settings (Leo,
                 # 2026-10-05: 「用處不大」); a saved value is dropped on load and
                 # the trader falls back to never rebuilding / selling MAX.
+                # Where to meet the merchant (Leo 2026-11-18): 广场 or 第一章;
+                # the other place is the way out when the picked one fails.
+                TRADE_PLACE_KEY: DEFAULT_TRADE_PLACE,
                 "买": True,
                 "卖": True,
                 # 史莱姆 are an account asset: off, and no keep amount, until
@@ -367,7 +371,8 @@ class MapTradeTask(MapAutomationTaskBase):
                 "5星料理": "额外制作的白框五道料理，默认不选；街头烤鸡肉串始终最后制作。",
                 EXTRA_COOKING_KEY: "2026-11-19 改版后开始出售的六道料理，排在最后制作；取消勾选的不做。",
                 "买": (
-                    "按每日08:00库存批次到梦幻广场的商人洛兹处砍价（进不了广场时改去第一章商人无聊收集狂大叔），"
+                    "按每日08:00库存批次到跑商地点选的商人处砍价（梦幻广场的洛兹或第一章的无聊收集狂大叔，"
+                    "选的地方进不去时改去另一处），"
                     "然后直接按「一键购买全部收藏」，买游戏里已收藏的商品。"
                 ),
                 "卖": (
@@ -417,6 +422,7 @@ class MapTradeTask(MapAutomationTaskBase):
         self.config_type.update(
             {
                 "制作料理": {"sub_configs": {True: ["料理清单", "5星料理", EXTRA_COOKING_KEY]}},
+                TRADE_PLACE_KEY: {"type": "drop_down", "options": list(TRADE_PLACES)},
                 EXTRA_COOKING_KEY: {
                     "type": "multi_selection",
                     "options": list(EXTRA_COOKING_RECIPES),
