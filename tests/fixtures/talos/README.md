@@ -8,3 +8,4 @@
 | `list_2k_cleared_1_2_3_4_6.png` | the stage list with 1-4 and 6 crossed out, 5 not (tile by tile, not a count) |
 | `pause_menu_leo_4k_as_1080.jpg` | Leo's 4K PC 2026-10-28 16:02 (2560x1440 → 1080p, whole screen): the battle's 暂停 menu (技能过场动画 choices with 关闭, the volumes, 离开 / 重新挑战 / 点击继续) |
 | `list_4x4_1080_cleared_1_2_3_4.png` | 2026-11-19 period (sixteen stages): a 1080p guide video frame of the whole game window, stages 1-4 crossed out; only the title with 「活动 还剩27天」 and the 4x4 list kept (the video's watermark and captions blacked out) |
+| `gamekee_season9_charts.json` | GameKee 阵容模拟器 charts 2300-2308 (data of `/v1/userBattleTemp/detail?id=N`, content parsed), the nine stages of the 10-22 period from https://www.gamekee.com/zsca2/697611.html, for tools/talos_gamekee.py |
