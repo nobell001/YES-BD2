@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from time import monotonic
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -82,7 +83,10 @@ EXCHANGE_WORD = "兑换"
 # spin one at a time, 11-07).
 SPIN_WORD = "转"
 SPIN_PATTERN = re.compile(r"^(?:旋)?转(\d+)次")
-LIT_BUTTON_ORDER = ("即刻刷新", "全部领取", "全部解锁", EXCHANGE_WORD, SPIN_WORD, "掷骰子")
+# The dice button: 「掷骰子」 (简中 10-03) and 「丟骰子」 (繁中 11-19, Leo's 4K:
+# never 擲骰子, so the 繁中 dice page had no known button and was skipped).
+DICE_WORDS = ("掷骰子", "丢骰子")
+LIT_BUTTON_ORDER = ("即刻刷新", "全部领取", "全部解锁", EXCHANGE_WORD, SPIN_WORD) + DICE_WORDS
 # These ask 「确认」 before acting (the 付费 check runs on that box too).
 CONFIRM_BUTTONS = ("即刻刷新", "全部解锁")
 # A button's own text may carry a little more (e.g. 「旋转1次1次免费」).
@@ -112,6 +116,34 @@ HAND_ROI = (1450, 255, 170, 575)
 DIALOG_ROI = (640, 380, 640, 300)
 
 MAX_PAGE_ACTIONS = 25
+
+# 骰子活动 (Leo 10-04 「骰子按自动进行」, 11-19 「他骰子沒有按自動運行」):
+# the 「自动进行」 switch sits under its own label, on the 掷骰子 row (4K
+# 简中 10-03 and 繁中 11-19 alike: label centre (1545, 722), switch
+# (1545, 765), about 108 x 40, knob on the left = off).  The switch is turned on, then the dice roll by
+# themselves until none are left.
+# 「自動進行」 reaches the task as 自动战斗: the 繁中 word table maps it to
+# the 简中 battle word (Leo's 4K log 11-19 18:33); only counts next to a dice
+# button.
+AUTO_ROLL_WORDS = ("自动进行", "自动运行", "自动战斗")
+AUTO_SWITCH_BELOW_LABEL = 42  # label centre -> switch centre when 掷骰子 is not read
+AUTO_SWITCH_RIGHT_OF_DICE = 167  # 掷骰子 text centre -> switch centre when the label is not read
+AUTO_SWITCH_HALF = (50, 15)
+# Off: grey track (saturation 2-5), knob 30 brighter than the track on the
+# left.  On: a coloured track or the knob on the right.
+AUTO_SWITCH_COLOUR_MIN = 40.0
+AUTO_SWITCH_KNOB_MIN = 8.0
+# A press the game took changes the switch picture (knob slides); a mean
+# change under this is a press that was not taken.
+AUTO_SWITCH_CHANGED_MIN = 6.0
+# Rolling on auto: nothing moved for this long = done (or stuck: the 10 s
+# limit); all dice gone and two calm looks = done.  The hard cap only
+# guards a page that never stops moving.
+DICE_LOOK_SECONDS = 1.0
+DICE_STILL_SECONDS = 10.0
+DICE_MAX_SECONDS = 600.0
+# The badge of an event handled twice that keeps it (e.g. dice left).
+STILL_BADGED = "处理两次还在"
 # A card's page is read this long for its type before it counts as unknown.
 PAGE_LOAD_SECONDS = 4.0
 
@@ -226,6 +258,46 @@ def find_badges(frame) -> list[int]:
     return find_red_badges(frame, BADGE_STRIP)
 
 
+def _switch_crop(reference, box):
+    if reference is None or box is None:
+        return None
+    x0, y0 = max(0, int(box.x)), max(0, int(box.y))
+    x1, y1 = int(box.x + box.width), int(box.y + box.height)
+    crop = reference[y0:y1, x0:x1, :3]
+    return crop if crop.size else None
+
+
+def auto_switch_state(reference, box) -> bool | None:
+    """The 自动进行 switch on a 1920x1080 reference frame: True on, False off,
+    None when it cannot be told (then it is never pressed).
+
+    Off (4K 10-03): grey track, light knob on the left.  On: a coloured track,
+    or the knob on the right."""
+    crop = _switch_crop(reference, box)
+    if crop is None:
+        return None
+    crop = crop.astype(np.int16)
+    colour = float((crop.max(axis=2) - crop.min(axis=2)).mean())
+    if colour >= AUTO_SWITCH_COLOUR_MIN:
+        return True
+    light = crop.max(axis=2).mean(axis=0)
+    third = max(1, light.size // 3)
+    left, right = float(light[:third].mean()), float(light[-third:].mean())
+    if right - left >= AUTO_SWITCH_KNOB_MIN:
+        return True
+    if left - right >= AUTO_SWITCH_KNOB_MIN:
+        return False
+    return None
+
+
+def switch_changed(before, after, box) -> bool:
+    first, second = _switch_crop(before, box), _switch_crop(after, box)
+    if first is None or second is None or first.shape != second.shape:
+        return False
+    diff = np.abs(first.astype(np.int16) - second.astype(np.int16)).mean()
+    return float(diff) >= AUTO_SWITCH_CHANGED_MIN
+
+
 # Two reads of one 确认 button land within a few reference pixels.
 SAME_PLACE_PIXELS = 12
 
@@ -261,6 +333,13 @@ class EventRewardTask(_ClaimTaskBase):
         for sweep in (1, 2):
             if sweep == 2 and not self._reopen_event_page():
                 return self._claim_fail("重新打开活动页")
+            if sweep == 2:
+                # Leo 11-19 「第二次打開活動頁檢查 他沒有去點紅色驚嘆號」: only
+                # pages that must not be touched (付费, unknown) stay skipped;
+                # one that kept its badge after two goes gets looked at again
+                # (Leo 10-04: 「被跳過的頁面（鑽石、認不出）不算」).
+                for key in [key for key, why in skipped.items() if why == STILL_BADGED]:
+                    del skipped[key]
             done = self._sweep_list(skipped)
             claimed += done
             self.info_set("活动领取轮次", f"第{sweep}轮处理 {done} 个")
@@ -304,7 +383,7 @@ class EventRewardTask(_ClaimTaskBase):
                     # Handled twice and still badged: something on it is
                     # not claimable this way; do not loop on it.
                     self.log_info(f"活动「{key}」：处理两次后红点仍在，跳过。")
-                    skipped[key] = "处理两次还在"
+                    skipped[key] = STILL_BADGED
                     continue
                 self.info_set("当前阶段", f"打开活动：{key}")
                 self._click_reference(LIST_CARD_X, badge_y + BADGE_TO_CARD_CENTER, after_sleep=1.2)  # 不用确认：没打开就红点还在，下一轮再点（最多两次）
@@ -499,11 +578,23 @@ class EventRewardTask(_ClaimTaskBase):
         """Leo 2026-10-08: on a badged page press whatever is lit (哪裡亮了點哪裡),
         即刻刷新 first.  False when the page was skipped for 付费."""
         skip: set[str] = set()
+        auto_tried = False
         for _ in range(MAX_PAGE_ACTIONS):
             frame = self.capture_frame()
             panel = self._reference_boxes(frame, PANEL_ROI, f"{label}按钮")
             if self._paid_now(frame, panel, label):
                 return False
+            if (
+                not auto_tried
+                and self._dice_button(panel) is not None
+            ):
+                # 骰子: roll on 自动进行, never one press at a time first.
+                auto_tried = True
+                if self._roll_dice_on_auto(label, frame, panel):
+                    # Auto rolls every die (Leo 11-19); a hand press could stop
+                    # it.  Dice left later: the second pass comes back.
+                    skip.update(DICE_WORDS)
+                    continue
             lit = [(word, box) for word, box, on in self._page_buttons(frame, panel, skip) if on]
             if lit:
                 word, box = lit[0]
@@ -529,6 +620,136 @@ class EventRewardTask(_ClaimTaskBase):
             self._click_reference(*points[0], after_sleep=1.0)  # 不用确认：循环里手还在就再按
             self._settle(label, frame)
         return True
+
+    # -- 骰子 -------------------------------------------------------------
+
+    def _auto_roll_label(self, panel):
+        """The 「自动进行」 label box on a dice page (简中 / 繁中), or None."""
+        wanted = [normalize_ocr_text(word) for word in AUTO_ROLL_WORDS]
+        for box in panel:
+            name = _box_text(box)
+            if any(name.startswith(word) and len(name) <= len(word) + 2 for word in wanted):
+                return box
+        return None
+
+    def _dice_button(self, panel):
+        for word in DICE_WORDS:
+            box = self._button(panel, word)
+            if box is not None:
+                return box
+        return None
+
+    def _auto_switch_box(self, panel):
+        """Where the 自动进行 switch is: under its label, on the 掷骰子 row.
+
+        The label may not be read (繁中 「自動進行」 came out 自动战斗, 11-19):
+        then the switch is beside the dice button's text, same row."""
+        label = self._auto_roll_label(panel)
+        dice = self._dice_button(panel)
+        if label is None:
+            if dice is None:
+                return None
+            label = SimpleNamespace(
+                x=dice.x + dice.width / 2 + AUTO_SWITCH_RIGHT_OF_DICE, y=dice.y - 60, width=0, height=20
+            )
+        x = label.x + label.width / 2
+        if dice is not None and dice.y > label.y + label.height:
+            y = dice.y + dice.height / 2
+        else:
+            y = label.y + label.height / 2 + AUTO_SWITCH_BELOW_LABEL
+        half_w, half_h = AUTO_SWITCH_HALF
+        return SimpleNamespace(
+            name="自动进行开关", x=x - half_w, y=y - half_h, width=2 * half_w, height=2 * half_h
+        )
+
+    def _roll_dice_on_auto(self, label: str, frame, panel) -> bool:
+        """Turn 自动进行 on and wait until the dice are used up.
+
+        True when the dice rolled on auto (the page loop then looks again:
+        掷骰子 is grey, the clear reward may be lit); False when the switch
+        could not be turned on, so the loop rolls one press at a time as
+        before (补救)."""
+        dice = self._dice_button(panel)
+        switch = self._auto_switch_box(panel)
+        state = auto_switch_state(self._reference(frame), switch)
+        self.info_set("骰子自动进行", {True: "开", False: "关", None: "看不出"}[state])
+        if state:
+            # Still rolling from an earlier visit (丢骰子 is grey while auto
+            # runs, live 4K 11-19): wait for it, never press anything.
+            self.log_info(f"活动「{label}」：自动进行已经开着，等它丢完。")
+            self._wait_dice_used_up(label, switch)
+            return True
+        if dice is None or not button_lit(frame, self._to_frame(frame, dice)):
+            self.log_info(f"活动「{label}」：骰子页，丢骰子是灰的（没有骰子），不开自动进行。")
+            return False
+        if state is None:
+            # Never press a switch whose side is unknown: it may be on already.
+            self.log_info(f"活动「{label}」：看不出自动进行开关是开是关，改成一次一次掷骰子。")
+            self._save_flow_diagnostic(f"event_reward_dice_switch_{label}")
+            return False
+        if not state:
+            for attempt in (1, 2):
+                before = self._reference(self.capture_frame())
+                self.log_info(f"活动「{label}」：打开自动进行（第{attempt}次）。")
+                self._click_reference_box(switch, after_sleep=1.0)  # 不用确认：下一行看开关有没有动，没动就再按一次（最多两次）
+                after = self._reference(self.capture_frame())
+                if auto_switch_state(after, switch) or switch_changed(before, after, switch):
+                    state = True
+                    break
+            if not state:
+                self.log_info(f"活动「{label}」：自动进行按了两次开关都没动，改成一次一次掷骰子。")
+                self._save_flow_diagnostic(f"event_reward_dice_switch_{label}")
+                return False
+        self._wait_dice_used_up(label, switch)
+        return True
+
+    def _wait_dice_used_up(self, label: str, switch) -> None:
+        """Let the dice roll on auto until none are left.
+
+        Leo 11-19: 「只要按自動運行他就會全部丟完」, so 丢骰子 is never
+        pressed here (a press could stop the run).  Live 4K 繁中 11-19: 丢骰子
+        turns grey as soon as auto runs, so a grey button says nothing; at 0
+        dice the game turns 自动进行 off by itself (knob back left, grey).
+        Done = the switch off again or a dice count of 0, on two looks in a
+        row.  Progress = the count's own text or the switch changing (the
+        count can read badly: the icon came out as 8, 「8l」), or a reward
+        box.  No progress for DICE_STILL_SECONDS ends the wait (stuck: the
+        second pass looks again)."""
+        start = monotonic()
+        frame = self.capture_frame()
+        count_text = self._token_text(frame)
+        state = auto_switch_state(self._reference(frame), switch)
+        last_change = monotonic()
+        done_looks = 0
+        self.log_info(f"活动「{label}」：自动丢骰子中（骰子数读到「{count_text or '?'}」）。")
+        while monotonic() - start < DICE_MAX_SECONDS:
+            self.sleep(DICE_LOOK_SECONDS)
+            frame = self.capture_frame()
+            if self._spin_reward_shown(frame, label):
+                self._settle(label, frame)
+                last_change = monotonic()
+                done_looks = 0
+                continue
+            now_text = self._token_text(frame)
+            now_state = auto_switch_state(self._reference(frame), switch)
+            if now_text != count_text or now_state != state:
+                last_change = monotonic()
+            count_text, state = now_text, now_state
+            done = state is False or parse_token_count(count_text) == 0
+            done_looks = done_looks + 1 if done else 0
+            if done_looks >= 2:
+                break
+            if monotonic() - last_change >= DICE_STILL_SECONDS:
+                self.log_info(
+                    f"活动「{label}」：{DICE_STILL_SECONDS:.0f} 秒骰子数和自动进行开关都没变，不再等。"
+                )
+                break
+        self._settle(label, frame)
+        switch_now = {True: "还开着", False: "已关", None: "看不出"}[state]
+        self.log_info(
+            f"活动「{label}」：自动丢骰子结束（骰子数读到「{count_text or '?'}」，"
+            f"自动进行{switch_now}），用了 {monotonic() - start:.0f} 秒。"
+        )
 
     def _wait_spin_stop(self, label: str) -> None:
         """Wait for the wheel to stop before the reward box is looked for.
@@ -607,9 +828,13 @@ class EventRewardTask(_ClaimTaskBase):
                 found.append((int(match.group(1)), box))
         return sorted(found, key=lambda item: item[0], reverse=True)
 
+    def _token_text(self, frame) -> str:
+        """The event-token count as read (dice: the icon reads as a digit)."""
+        return self._boxes_text(self._reference_boxes(frame, TOKEN_ROI, "活动代币")).strip()
+
     def _tokens(self, frame) -> int | None:
         """The event-token count, for the log only (see ``_press_what_is_lit``)."""
-        text = self._boxes_text(self._reference_boxes(frame, TOKEN_ROI, "活动代币"))
+        text = self._token_text(frame)
         tokens = parse_token_count(text)
         self.info_set("活动代币", "-" if tokens is None else str(tokens))
         return tokens
