@@ -114,6 +114,17 @@ class LookBeforeMapStepTest(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertTrue(result.fled_battle)
 
+    def test_result_screen_closed_is_no_flee(self):
+        navigator = _navigator(("VICTORY", "REWARD", "离开"))
+
+        def leave(label, boxes=None):
+            navigator.task.field_battle_ended_by_result = True
+            return "left"
+
+        navigator.task.leave_field_battle = leave
+        self.assertIsNone(navigator.leave_field_battle_first("前往下一张图", stop_after_flee=True))
+        self.assertEqual(0, getattr(navigator, "fled_battles", 0))
+
     def test_other_tasks_never_look(self):
         navigator = _navigator(("TURN.1", "BATTLE"), escape=False)
         self.assertIsNone(navigator.leave_field_battle_first("回主页"))

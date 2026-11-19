@@ -18,6 +18,7 @@ from src.tasks.map_trade.asset_keep import (
     SLIME_KEEP_KEYS,
 )
 from src.tasks.map_trade.models import (
+    EXTRA_COOKING_FIRST_SIX,
     EXTRA_COOKING_KEY,
     EXTRA_COOKING_RECIPES,
     OPTIONAL_COOKING_RECIPES,
@@ -38,6 +39,7 @@ from src.tasks.map_trade.sale_days import (
 )
 from src.tasks.map_trade.trade_place import DEFAULT_TRADE_PLACE, TRADE_PLACE_KEY, TRADE_PLACES
 from src.tasks.map_trade.trader import Trader
+from src.tasks.map_trade.trader_constants import split_items
 from src.tasks.map_trade.trader_cooking import MAIN_COOKING_RECIPES
 from src.tasks.map_trade.vision import Vision
 from src.utils.frozen_screen import FrozenScreen, FrozenWatch
@@ -72,6 +74,33 @@ def _trade_section_migration_values(legacy: dict) -> dict[str, bool]:
     if "卖" not in legacy and ({"执行跑商", "最高价出售"} & legacy.keys()):
         migrated["卖"] = trade_enabled and bool(legacy.get("最高价出售", True))
     return migrated
+
+
+# Hidden setting (ok-script hides "_" keys): the 额外料理 the saved ticks were
+# chosen from, so a dish added later starts ticked like the first ones did.
+EXTRA_COOKING_OPTIONS_KEY = "_额外料理选项"
+
+
+def _tick_new_extra_dishes(legacy: dict, config) -> None:
+    """Tick the 额外料理 added since the player's settings were saved.
+
+    The setting stores the TICKED dishes, so 三文鱼芥末寿司 (Leo's sheet of
+    2026-11-19) would read as switched off for everyone who saved the first
+    six and never be cooked.  Once per added dish: a dish the player
+    unticked stays unticked, and a dish unticked after this stays so.
+    """
+
+    known = legacy.get(EXTRA_COOKING_OPTIONS_KEY)
+    if not isinstance(known, list):
+        known = list(EXTRA_COOKING_FIRST_SIX) if EXTRA_COOKING_KEY in legacy else None
+    saved = legacy.get(EXTRA_COOKING_KEY)
+    if known is not None and isinstance(saved, (list, str)):
+        raw = saved if isinstance(saved, str) else tuple(saved)
+        ticked = set(split_items(raw)) | {
+            dish for dish in EXTRA_COOKING_RECIPES if dish not in known
+        }
+        config[EXTRA_COOKING_KEY] = [dish for dish in EXTRA_COOKING_RECIPES if dish in ticked]
+    config[EXTRA_COOKING_OPTIONS_KEY] = list(EXTRA_COOKING_RECIPES)
 
 
 def _migrate_collection_config(legacy: dict) -> None:
@@ -343,6 +372,7 @@ class MapTradeTask(MapAutomationTaskBase):
                 "5星料理": [],
                 # Cooked last, from the game's 2026-11-19 update on.
                 EXTRA_COOKING_KEY: list(EXTRA_COOKING_RECIPES),
+                EXTRA_COOKING_OPTIONS_KEY: list(EXTRA_COOKING_RECIPES),
                 # 收藏重建周期 and 出售保险 were removed from the settings (Leo,
                 # 2026-10-05: 「用處不大」); a saved value is dropped on load and
                 # the trader falls back to never rebuilding / selling MAX.
@@ -369,7 +399,7 @@ class MapTradeTask(MapAutomationTaskBase):
                 "制作料理": "购买后按优先级制作料理，全部选择 MAX；灰色料理跳过。",
                 "料理清单": "要制作的料理（全部选择 MAX）；取消勾选的不做。街头烤鸡肉串总在最后。",
                 "5星料理": "额外制作的白框五道料理，默认不选；街头烤鸡肉串始终最后制作。",
-                EXTRA_COOKING_KEY: "2026-11-19 改版后开始出售的六道料理，排在最后制作；取消勾选的不做。",
+                EXTRA_COOKING_KEY: "2026-11-19 改版后开始出售的料理，排在最后制作；取消勾选的不做。",
                 "买": (
                     "按每日08:00库存批次到跑商地点选的商人处砍价（梦幻广场的洛兹或第一章的无聊收集狂大叔，"
                     "选的地方进不去时改去另一处），"
@@ -467,6 +497,7 @@ class MapTradeTask(MapAutomationTaskBase):
             # Saved before there were two tables: its ticks fit the old one.
             self.config[SALE_TABLE_KEY] = OLD_TABLE
         carry_checklists_over(self.config)
+        _tick_new_extra_dishes(legacy, self.config)
         for key, value in section_values.items():
             self.config[key] = value
         key_map = {

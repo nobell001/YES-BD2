@@ -82,7 +82,7 @@
     "src/tasks/map_trade/navigator_trade.py": 11,
     "src/tasks/map_trade/trader_buy.py": 5,
     "src/tasks/map_trade/trader_cartridge.py": 3,
-    "src/tasks/map_trade/trader_cooking.py": 4,
+    "src/tasks/map_trade/trader_cooking.py": 3,
     "src/tasks/map_trade/trader_price_list.py": 4,
     "src/tasks/map_trade/trader_sell.py": 8,
     "src/tasks/map_trade/vision.py": 2,

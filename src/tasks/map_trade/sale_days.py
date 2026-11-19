@@ -34,10 +34,15 @@ BUNDLED_CALENDAR_FILE = CALENDAR_DIR / "price_calendar.v1.json"
 # The table of the game's 2026-11-19 update, used for sale dates from then on.
 # (Sale date: day N's prices start at 23:00 UTC+8 of day N-1.  Both tables are
 # the same for the 19th-21st, so the exact moment makes no difference.)
-NEXT_CALENDAR_FILE = CALENDAR_DIR / "price_calendar.20261119.v1.json"
+# Leo's sheet changed again on 2026-11-19 (「跑商又改了」: 14号 芥末 gone,
+# 22号 三文鱼芥末寿司 added): that is a table of its own, so ticks saved for
+# the first 11-19 table are carried over once and the new dish is sold.
+NEXT_CALENDAR_FILE = CALENDAR_DIR / "price_calendar.20261119b.v1.json"
+FIRST_NEXT_CALENDAR_FILE = CALENDAR_DIR / "price_calendar.20261119.v1.json"
 NEXT_CALENDAR_FROM = date(2026, 11, 19)
 OLD_TABLE = "v1"
-NEXT_TABLE = "20261119"
+FIRST_NEXT_TABLE = "20261119"
+NEXT_TABLE = "20261119b"
 # Hidden setting (ok-script hides "_" keys): the table the saved ticks fit.
 SALE_TABLE_KEY = "_出售价表"
 
@@ -58,7 +63,12 @@ def table_for(sale_date: date | None = None) -> str:
 
 
 def table_file(table: str) -> Path:
-    return NEXT_CALENDAR_FILE if table == NEXT_TABLE else BUNDLED_CALENDAR_FILE
+    if table == NEXT_TABLE:
+        return NEXT_CALENDAR_FILE
+    if table == FIRST_NEXT_TABLE:
+        # Only read to carry ticks saved for it over to NEXT_TABLE.
+        return FIRST_NEXT_CALENDAR_FILE
+    return BUNDLED_CALENDAR_FILE
 
 
 def bundled_calendar_file(sale_date: date | None = None) -> Path:

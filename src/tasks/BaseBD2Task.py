@@ -1360,10 +1360,14 @@ class BaseBD2Task(BaseTask):
         menu)."""
         if not getattr(self, "FIELD_BATTLE_ESCAPE", False):
             return "none"
+        # Set when the battle had already ended (its result's 「离开」 was
+        # pressed): nothing was run from, the monster is gone.
+        self.field_battle_ended_by_result = False
         if boxes is None:
             boxes = self._battle_boxes()
         button = field_battle.leave_button(boxes)
         if button is not None:
+            self.field_battle_ended_by_result = True
             return self._press_battle_leave(label, button)
         if field_battle.flee_confirm_button(boxes) is not None:
             # The run-away dialog already open (a press before this look).

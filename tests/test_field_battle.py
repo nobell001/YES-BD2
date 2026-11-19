@@ -257,6 +257,7 @@ class LeaveBattleTest(unittest.TestCase):
         self.assertEqual("left", task.leave_field_battle("跑图", _boxes(*VICTORY)))
         self.assertEqual([], task.escapes)
         self.assertEqual(1, len(task.clicks))
+        self.assertTrue(task.field_battle_ended_by_result)
 
 
 class PressAfterPopupTest(unittest.TestCase):

@@ -228,7 +228,7 @@ class TradePageAssetsTest(unittest.TestCase):
         self.assertEqual("11/19 改版后才做", page.extra_note.full_text())
         page.extra["土豆汤"].clicked.emit()
         self.assertNotIn("土豆汤", task.config["额外料理"])
-        self.assertEqual(5, len(task.config["额外料理"]))
+        self.assertEqual(len(EXTRA_COOKING_RECIPES) - 1, len(task.config["额外料理"]))
 
 
 class TradeLayoutTest(unittest.TestCase):

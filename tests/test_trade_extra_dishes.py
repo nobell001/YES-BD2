@@ -31,6 +31,7 @@ from src.tasks.map_trade.trader_cooking import (
     CookingRecipeOutcome,
 )
 from src.tasks.map_trade.vision import Vision
+from src.utils.game_text import fix_boxes
 
 try:
     from onnxocr.onnx_paddleocr import ONNXPaddleOcr
@@ -47,6 +48,9 @@ CELLS = {
     "黑啤酒炖锅": (2, 7),
     "藏红花甜茶": (4, 4),
     "凯洛养身汤": (5, 1),
+    # Leo's sheet of 2026-11-19: the seventh, cut from the 繁中 list at
+    # 2560x1440 (the sheet's 22号 picture is the same salmon nigiri).
+    "三文鱼芥末寿司": (4, 6),
 }
 BEFORE = datetime(2026, 11, 18, 12, tzinfo=UTC_PLUS_8)
 AFTER = datetime(2026, 11, 19, 12, tzinfo=UTC_PLUS_8)
@@ -185,6 +189,65 @@ class ExtraDishDetailPagesTest(unittest.TestCase):
         self.assertIsNotNone(trader._cooking_detail_snapshot("巧克力面包", frame))
 
 
+class SushiOnLeosListOf19thTest(unittest.TestCase):
+    """Leo's 繁中 2K list of 2026-11-19: the six extras already cooked (grey),
+    the salmon nigiri still bright in row 4, column 6."""
+
+    def test_sushi_card_is_found_and_bright_the_others_grey(self):
+        task = SimpleNamespace(config={}, info_set=lambda *_a: None)
+        vision = Vision(task)
+        frame2k = cv2.imread(str(FIXTURES / "cooking_list_tw_2k_20261119.jpg"))
+        self.assertIsNotNone(frame2k)
+        frames = {
+            "2K": frame2k,
+            "1080p": cv2.resize(frame2k, (1920, 1080), interpolation=cv2.INTER_AREA),
+            "4K": cv2.resize(frame2k, (3840, 2160), interpolation=cv2.INTER_CUBIC),
+        }
+        for size, frame in frames.items():
+            for recipe, cell in CELLS.items():
+                spec = COOKING_IDENTITY_SPECS[recipe]
+                match = vision.match(frame, spec)
+                with self.subTest(size=size, recipe=recipe):
+                    self.assertTrue(vision.passes(match, spec), match.score)
+                    self.assertEqual(cell, _cell(match.center, frame.shape))
+                    bright = recipe == "三文鱼芥末寿司"
+                    self.assertIs(
+                        bright, CookingFlowMixin._cooking_card_enabled(frame, match)
+                    )
+
+
+@unittest.skipIf(ONNXPaddleOcr is None, "onnxocr not installed")
+class SushiDetailPageTest(unittest.TestCase):
+    """Leo's 繁中 鮭魚芥末壽司 page (2K, 2026-11-19), read the way the task
+    reads it: OCR text goes through the 繁中 word table first."""
+
+    @classmethod
+    def setUpClass(cls):
+        ExtraDishDetailPagesTest.setUpClass()
+        plain = ExtraDishDetailPagesTest.ocr
+
+        def ocr(**kwargs):
+            boxes = plain(**kwargs)
+            fix_boxes(boxes)
+            return boxes
+
+        cls.ocr = staticmethod(ocr)
+
+    def _trader(self):
+        return ExtraDishDetailPagesTest._trader(self)
+
+    def test_page_is_read_as_the_sushi_and_can_be_cooked(self):
+        trader = self._trader()
+        frame = cv2.imread(str(FIXTURES / "cooking_detail_tw_2k_salmon_wasabi_sushi.jpg"))
+        self.assertIsNotNone(frame)
+        detail = trader._cooking_detail_snapshot("三文鱼芥末寿司", frame)
+        self.assertIsNotNone(detail)
+        self.assertTrue(detail.enabled)
+        for other in ("凯洛养身汤", "土豆汤", "巧克力面包"):
+            with self.subTest(other=other):
+                self.assertIsNone(trader._cooking_detail_snapshot(other, frame))
+
+
 class ExtraDishChoiceTest(unittest.TestCase):
     def _trader(self, config, now):
         trader = object.__new__(Trader)
@@ -230,7 +293,7 @@ class ExtraDishChoiceTest(unittest.TestCase):
         recipes = self._trader({EXTRA_COOKING_KEY: []}, AFTER)._selected_cooking_recipes()
         self.assertEqual(FINAL_COOKING_RECIPE, recipes[-1])
 
-    def test_all_six_are_ticked_by_default(self):
+    def test_all_are_ticked_by_default(self):
         from src.tasks.MapTradeTask import MapTradeTask
 
         task = MapTradeTask(SimpleNamespace(scene=None), SimpleNamespace())
@@ -238,6 +301,52 @@ class ExtraDishChoiceTest(unittest.TestCase):
         self.assertEqual(
             list(EXTRA_COOKING_RECIPES), task.config_type[EXTRA_COOKING_KEY]["options"]
         )
+
+
+class SeventhDishTickedForSavedSettingsTest(unittest.TestCase):
+    """三文鱼芥末寿司 (Leo's sheet of 2026-11-19) joins the six: settings saved
+    with the six ticked must cook it too, without undoing a player's choice."""
+
+    def _load(self, legacy):
+        from src.tasks.MapTradeTask import EXTRA_COOKING_OPTIONS_KEY, _tick_new_extra_dishes
+
+        config = {EXTRA_COOKING_KEY: list(EXTRA_COOKING_RECIPES)}  # ok-script fills defaults
+        if EXTRA_COOKING_KEY in legacy:
+            config[EXTRA_COOKING_KEY] = legacy[EXTRA_COOKING_KEY]
+        _tick_new_extra_dishes(legacy, config)
+        self.assertEqual(list(EXTRA_COOKING_RECIPES), config[EXTRA_COOKING_OPTIONS_KEY])
+        return config[EXTRA_COOKING_KEY]
+
+    def test_the_six_saved_become_seven(self):
+        from src.tasks.map_trade.models import EXTRA_COOKING_FIRST_SIX
+
+        ticked = self._load({EXTRA_COOKING_KEY: list(EXTRA_COOKING_FIRST_SIX)})
+        self.assertEqual(list(EXTRA_COOKING_RECIPES), ticked)
+
+    def test_a_dish_the_player_unticked_stays_off(self):
+        ticked = self._load({EXTRA_COOKING_KEY: ["凯洛养身汤", "水果冰沙"]})
+        self.assertEqual(["凯洛养身汤", "水果冰沙", "三文鱼芥末寿司"], ticked)
+
+    def test_all_six_unticked_still_gets_the_new_one(self):
+        self.assertEqual(["三文鱼芥末寿司"], self._load({EXTRA_COOKING_KEY: []}))
+
+    def test_unticking_the_new_one_later_sticks(self):
+        from src.tasks.MapTradeTask import EXTRA_COOKING_OPTIONS_KEY
+
+        legacy = {
+            EXTRA_COOKING_KEY: ["土豆汤"],
+            EXTRA_COOKING_OPTIONS_KEY: list(EXTRA_COOKING_RECIPES),
+        }
+        self.assertEqual(["土豆汤"], self._load(legacy))
+
+    def test_a_fresh_install_keeps_the_default(self):
+        self.assertEqual(list(EXTRA_COOKING_RECIPES), self._load({}))
+
+    def test_it_is_cooked_last(self):
+        trader = object.__new__(Trader)
+        trader.task = SimpleNamespace(config={EXTRA_COOKING_KEY: list(EXTRA_COOKING_RECIPES)})
+        trader.now_provider = lambda: AFTER
+        self.assertEqual("三文鱼芥末寿司", trader._selected_cooking_recipes()[-1])
 
 
 class RepeatBatchTest(unittest.TestCase):

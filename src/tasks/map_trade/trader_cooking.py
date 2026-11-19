@@ -88,6 +88,19 @@ COOKING_RESULT_ROI = (
     660 / FHD_1080.width,
     575 / FHD_1080.height,
 )
+# 「製作中.. 6%」 under the chef-hat ring in the middle of a detail page while
+# a batch cooks (2K clone 2026-11-19 rec_141412 / rec_141418).
+COOKING_PROGRESS_ROI = (
+    820 / FHD_1080.width,
+    540 / FHD_1080.height,
+    1100 / FHD_1080.width,
+    650 / FHD_1080.height,
+)
+# A result bar stays on screen a few seconds (2K 2026-11-19: read at
+# 14:14:09.9, still there 12.6, gone by 18).  Past this since 开始, a bar
+# with the earlier count is the new one (a quick batch of the same size).
+COOKING_EARLIER_BAR_HOLD_SECONDS = 8.0
+COOKING_IN_PROGRESS_PATTERN = re.compile(r"[制製]作中|\d{1,3}\s*%")
 COOKING_BACK_ROI = (
     120 / FHD_1080.width,
     10 / FHD_1080.height,
@@ -365,7 +378,8 @@ class CookingFlowMixin:
             sale_date = None  # no run clock (a bare helper): today's date
         if table_for(sale_date) != NEXT_TABLE:
             return ()
-        # The setting's default ticks all six; a config without it cooks none.
+        # The setting's default ticks them all (a dish added later is ticked on
+        # load, MapTradeTask._tick_new_extra_dishes); a config without it cooks none.
         raw = self.task.config.get(EXTRA_COOKING_KEY) or ()
         chosen = set(split_items(raw if isinstance(raw, str) else tuple(raw)))
         return tuple(recipe for recipe in EXTRA_COOKING_RECIPES if recipe in chosen)
@@ -622,6 +636,10 @@ class CookingFlowMixin:
                 f"pixel={ready.start_match.pixel_score:.3f}"
             ),
         )
+        # The bar of the batch before stays a few seconds after it, also
+        # over the next batch's 制作中 (2K 2026-11-19: 「水果冰沙×10000」 of
+        # batch 1 was taken for batch 2, 返回 pressed while it cooked).
+        earlier_bar = self._cooking_result_bar(ready.frame, recipe, f"料理-{recipe}开始前结果条")
         self.vision.click_client(
             ready.start_match.center,
             ready.frame.shape,
@@ -631,7 +649,9 @@ class CookingFlowMixin:
             self.task.log_warning(f"料理：{recipe} 点击后未确认制作按钮变灰。")
             self._recover_cooking_list()
             return CookingRecipeOutcome.FAILED
-        if self._wait_for_cooking_result(recipe, COOKING_COMPLETION_TIMEOUT) is None:
+        if self._wait_for_cooking_result(
+            recipe, COOKING_COMPLETION_TIMEOUT, earlier_bar=earlier_bar
+        ) is None:
             self.task.log_warning(f"料理：{recipe} 制作超时，未确认结果条。")
             self._recover_cooking_list()
             return CookingRecipeOutcome.FAILED
@@ -891,33 +911,77 @@ class CookingFlowMixin:
                 )
             self.task.sleep(COOKING_POLL_INTERVAL)
 
-    def _wait_for_cooking_result(self, recipe: str, timeout: float):
-        end_at = monotonic() + max(0.0, timeout)
+    def _cooking_result_bar(self, frame, recipe: str, name: str) -> str:
+        """The result bar's text when it names ``recipe`` with a count, else ""."""
+        text = self.vision.ocr_text(
+            frame,
+            name,
+            relative_roi=COOKING_RESULT_ROI,
+            target_height=ocr_size.READ_HEIGHT,
+        )
+        simplified = self.vision.simplify(text)
+        if (
+            _has_positive_quantity(simplified)
+            and _character_coverage(recipe, simplified) >= COOKING_TEXT_CHARACTER_COVERAGE
+        ):
+            return text
+        return ""
+
+    def _cooking_in_progress(self, frame, recipe: str) -> bool:
+        """「製作中.. N%」 shows: this batch is still cooking."""
+        text = self.vision.simplify(
+            self.vision.ocr_text(
+                frame,
+                f"料理-{recipe}制作中",
+                relative_roi=COOKING_PROGRESS_ROI,
+                target_height=ocr_size.READ_HEIGHT,
+            )
+        )
+        return bool(COOKING_IN_PROGRESS_PATTERN.search(normalize_text(text)))
+
+    def _wait_for_cooking_result(self, recipe: str, timeout: float, *, earlier_bar: str = ""):
+        """The result bar of the batch just started, with its detail page.
+
+        Two checks, either one keeps waiting (2K 2026-11-19, two 10000
+        batches): the bar is the one already on screen before 开始 (same
+        count, not gone since, at most COOKING_EARLIER_BAR_HOLD_SECONDS), or
+        「製作中」 still shows.  返回 does nothing while a batch cooks.
+        """
+        started = monotonic()
+        end_at = started + max(0.0, timeout)
         last_text = ""
         still = StillTimer()
+        earlier_count = trade_detail.result_quantity(earlier_bar, recipe) if earlier_bar else None
+        noted = set()
         while True:
             frame = self.vision.capture()
             stuck = still.still_for(frame, monotonic()) >= STUCK_SECONDS
-            text = self.vision.ocr_text(
-                frame,
-                f"料理-{recipe}结果",
-                relative_roi=COOKING_RESULT_ROI,
-                target_height=ocr_size.READ_HEIGHT,
-            )
+            text = self._cooking_result_bar(frame, recipe, f"料理-{recipe}结果")
             last_text = text or last_text
-            simplified = self.vision.simplify(text)
-            result_confirmed = (
-                _has_positive_quantity(simplified)
-                and _character_coverage(recipe, simplified)
-                >= COOKING_TEXT_CHARACTER_COVERAGE
-            )
-            if result_confirmed and self._cooking_detail_snapshot(recipe, frame) is not None:
+            if not text or monotonic() - started >= COOKING_EARLIER_BAR_HOLD_SECONDS:
+                earlier_count = None  # the earlier bar is gone: the next one is new
+            if not text:
+                pass  # no bar yet
+            elif (
+                earlier_count is not None
+                and trade_detail.result_quantity(text, recipe) == earlier_count
+            ):
+                if "earlier" not in noted:
+                    noted.add("earlier")
+                    self._status("料理状态", f"{recipe} 结果条还是上一批的（{text}），等这一批做完")
+            elif self._cooking_in_progress(frame, recipe):
+                if "cooking" not in noted:
+                    noted.add("cooking")
+                    self._status("料理状态", f"{recipe} 还在制作中，结果条（{text}）不是这一批的")
+            elif self._cooking_detail_snapshot(recipe, frame) is not None:
                 self._status("料理状态", f"{recipe} 结果已确认：{text}")
                 self._last_cooking_result_text = text
                 return frame
             if monotonic() >= end_at or stuck:
                 self.task.log_warning(
                     f"料理：{recipe} 未识别到含料理名和数量的结果条，OCR={last_text or '-'}"
+                    + ("（只看到上一批的结果条）" if "earlier" in noted else "")
+                    + ("（还显示制作中）" if "cooking" in noted else "")
                     + (f"（画面 {STUCK_SECONDS:.0f} 秒没动）" if stuck else "")
                     + "。"
                 )

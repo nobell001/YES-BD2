@@ -11,11 +11,15 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QEasingCurve, QRectF, QSize, Qt, QVariantAnimation, Signal
+from PySide6.QtCore import QEasingCurve, QPointF, QRectF, QSize, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
-from src.tasks.map_trade.data import SHOP_PRODUCT_COUNTS, SHOP_UNFAVORITED_POINTS
+from src.tasks.map_trade.data import (
+    SHOP_PRODUCT_COUNTS,
+    SHOP_SPARE_FAVORITE_POINTS,
+    SHOP_UNFAVORITED_POINTS,
+)
 from src.ui.shell import icons, motion, theme
 from src.ui.shell.widgets import (
     Card,
@@ -41,22 +45,46 @@ SHEET = (
 )
 
 
+SPARE_FAVORITES_NOTE = "斜线格是高价的蘑菇、虾、袋装鸡胸肉，做完料理还剩很多时可以取消收藏"
+
+
 def chart_cells(code: str) -> list[bool]:
     """One flag per product of the cartridge, in shop order: favourite it or not."""
     skipped = SHOP_UNFAVORITED_POINTS.get(code, frozenset())
     return [slot not in skipped for slot in range(1, SHOP_PRODUCT_COUNTS.get(code, 0) + 1)]
 
 
+def chart_spare(code: str) -> frozenset[int]:
+    """Indexes (from 0) of favourited goods that may be dropped (striped)."""
+    return frozenset(slot - 1 for slot in SHOP_SPARE_FAVORITE_POINTS.get(code, ()))
+
+
 def chart_label(code: str) -> str:
     return f"{t(KINDS[code[0]])} {code[1:]}"
 
 
-def _paint_cell(painter: QPainter, rect: QRectF, lit: bool) -> None:
+def _paint_cell(painter: QPainter, rect: QRectF, lit: bool, spare: bool = False) -> None:
     """A plain square: violet = favourite it, empty = leave it (Leo 2026-11-13:
-    「不要用星星 用紫色格子就好」, no rounded cards)."""
+    「不要用星星 用紫色格子就好」, no rounded cards).  Violet diagonal stripes =
+    may be dropped once there is plenty (Leo 2026-11-19 「用斜紫線標註」)."""
     painter.setPen(QPen(theme.color("ink3"), 1))
-    painter.setBrush(theme.color("primary") if lit else theme.color("card"))
+    painter.setBrush(theme.color("primary") if lit and not spare else theme.color("card"))
     painter.drawRect(rect)
+    if not spare:
+        return
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setClipRect(rect.adjusted(0.5, 0.5, -0.5, -0.5))
+    painter.setPen(QPen(theme.color("primary"), 2.0))
+    step = 4.0
+    offset = -rect.height()
+    while offset < rect.width():
+        painter.drawLine(
+            QPointF(rect.left() + offset, rect.bottom()),
+            QPointF(rect.left() + offset + rect.height(), rect.top()),
+        )
+        offset += step
+    painter.restore()
 
 
 class ExpandTile(QWidget):
@@ -184,6 +212,7 @@ class CartridgeChart(QWidget):
     def __init__(self, code: str, label_width: int, parent=None):
         super().__init__(parent)
         self._cells = chart_cells(code)
+        self._spare = chart_spare(code)
         self._label = chart_label(code)
         self._label_width = label_width
         rows = max(1, math.ceil(len(self._cells) / COLUMNS))
@@ -208,18 +237,19 @@ class CartridgeChart(QWidget):
         for index, lit in enumerate(self._cells):
             x = left + (index % COLUMNS) * self.CELL
             y = 0.5 + (index // COLUMNS) * self.CELL
-            _paint_cell(painter, QRectF(x, y, self.CELL, self.CELL), lit)
+            _paint_cell(painter, QRectF(x, y, self.CELL, self.CELL), lit, index in self._spare)
 
 
 class LegendCell(QWidget):
-    def __init__(self, lit: bool, parent=None):
+    def __init__(self, lit: bool, spare: bool = False, parent=None):
         super().__init__(parent)
         self._lit = lit
+        self._spare = spare
         self.setFixedSize(15, 15)
 
     def paintEvent(self, _event):
         painter = QPainter(self)
-        _paint_cell(painter, QRectF(0.5, 0.5, 14, 14), self._lit)
+        _paint_cell(painter, QRectF(0.5, 0.5, 14, 14), self._lit, self._spare)
 
 
 class FavoritesCard(Card):
@@ -232,8 +262,12 @@ class FavoritesCard(Card):
         head.addWidget(IconTile("star", 30, 17, kind="trade"))
         head.addWidget(Text("收藏清单", "h2"))
         head.addWidget(Text("照着在游戏商店里点星星", "muted", elide=True), 1)
-        for lit, words in ((True, "要收藏"), (False, "不用收藏")):
-            head.addWidget(LegendCell(lit))
+        for lit, spare, words in (
+            (True, False, "要收藏"),
+            (True, True, "有剩可取消"),
+            (False, False, "不用收藏"),
+        ):
+            head.addWidget(LegendCell(lit, spare))
             head.addWidget(Text(words, "muted"))
         column.addLayout(head)
         # Leo 2026-11-13: 「裡面也要提醒用戶把料理技能放在任一個格子上」.
@@ -242,6 +276,13 @@ class FavoritesCard(Card):
         line.addWidget(IconTile("chef-hat", 28, 16, kind="trade"))
         line.addWidget(Text("出发前请把料理技能放在任一个技能格上", "sub", wrap=True), 1)
         column.addWidget(remind)
+        # Leo's trade sheet of 2026-11-19 (「高價的收藏可以取消掉 要列出來」):
+        # these may go once the bag clearly has more than cooking needs.
+        spare = Inset()
+        line = hbox(spare, (12, 9, 12, 9), 10)
+        line.addWidget(IconTile("info", 28, 16, kind="trade"))
+        line.addWidget(Text(SPARE_FAVORITES_NOTE, "sub", wrap=True), 1)
+        column.addWidget(spare)
         from qfluentwidgets import FlowLayout
 
         metrics = QFontMetrics(CartridgeChart.label_font(self.font()))

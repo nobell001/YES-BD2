@@ -662,11 +662,13 @@ RECIPE_TEMPLATES = {
 }
 COOKING_RECIPE_TEMPLATES.update(RECIPE_TEMPLATES)
 
-# 「額外料理」 (Leo 2026-11-10): six dishes the game's 2026-11-19 update starts
+# 「額外料理」 (Leo 2026-11-10): dishes the game's 2026-11-19 update starts
 # selling at ↑120%.  Lowest priority: cooked after everything else, each one
 # can be unticked.  They are old recipes, so the cards were cut from Leo's own
-# cooking list (2560x1440, 2026-11-10) at the other cards' size.
-EXTRA_COOKING_RECIPES = (
+# cooking list (2560x1440, 2026-11-10) at the other cards' size.  The seventh,
+# 三文鱼芥末寿司 (22号), came with Leo's sheet of 2026-11-19 (「跑商又改了」);
+# EXTRA_COOKING_FIRST_SIX is what settings saved before it were ticked from.
+EXTRA_COOKING_FIRST_SIX = (
     "凯洛养身汤",
     "藏红花甜茶",
     "水果冰沙",
@@ -674,6 +676,7 @@ EXTRA_COOKING_RECIPES = (
     "黑啤酒炖锅",
     "土豆汤",
 )
+EXTRA_COOKING_RECIPES = (*EXTRA_COOKING_FIRST_SIX, "三文鱼芥末寿司")
 EXTRA_RECIPE_TEMPLATES = {
     "凯洛养身汤": "image/Shop/cook_Kello Wellness Soup.png",
     "藏红花甜茶": "image/Shop/cook_Saffron Sweet Tea.png",
@@ -681,6 +684,7 @@ EXTRA_RECIPE_TEMPLATES = {
     "巧克力面包": "image/Shop/cook_Chocolate Bread.png",
     "黑啤酒炖锅": "image/Shop/cook_Dark Beer Stew.png",
     "土豆汤": "image/Shop/cook_Potato Soup.png",
+    "三文鱼芥末寿司": "image/Shop/cook_Salmon Wasabi Sushi.png",
 }
 COOKING_RECIPE_TEMPLATES.update(EXTRA_RECIPE_TEMPLATES)
 EXTRA_COOKING_KEY = "额外料理"

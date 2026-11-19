@@ -36,12 +36,20 @@ from src.tasks.MapTradeTask import MapTradeTask
 BEFORE = date(2026, 11, 18)
 AFTER = date(2026, 11, 19)
 
-REMOVED = {2: ["水果罐头"], 17: ["土豆"], 18: ["藏红花"], 22: ["凯洛药材"], 24: ["吐司", "啤酒花"]}
+REMOVED = {
+    2: ["水果罐头"],
+    14: ["芥末"],  # Leo's sheet of 2026-11-19
+    17: ["土豆"],
+    18: ["藏红花"],
+    22: ["凯洛药材"],
+    24: ["吐司", "啤酒花"],
+}
 ADDED = {
     2: ["藏红花甜茶"],
     3: ["黑啤酒炖锅"],
     8: ["土豆汤"],
     17: ["凯洛养身汤", "水果冰沙"],
+    22: ["三文鱼芥末寿司"],  # Leo's sheet of 2026-11-19
     25: ["巧克力面包"],
 }
 
@@ -94,6 +102,7 @@ class TablePickedByDateTest(unittest.TestCase):
             "凯洛养身汤": "E1",
             "水果冰沙": "E1",
             "巧克力面包": "E1",
+            "三文鱼芥末寿司": "S5",
         }
         self.assertEqual(want, {item: shops[item] for item in want})
 
@@ -250,7 +259,7 @@ class SettingsFollowTheTableTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             task = self._launch(temp_dir, date(2026, 11, 25))
             self.assertEqual(NEXT_TABLE, task.config[SALE_TABLE_KEY])
-            self.assertEqual(["料酒"], task.config["出售22号"])
+            self.assertEqual(["三文鱼芥末寿司", "料酒"], task.config["出售22号"])
 
     def test_settings_first_saved_after_the_update_are_not_carried_again(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -258,6 +267,56 @@ class SettingsFollowTheTableTest(unittest.TestCase):
             task.config["出售17号"] = ["米"]
             task = self._launch(temp_dir, date(2026, 11, 26))
             self.assertEqual(["米"], task.config["出售17号"])
+
+
+
+class SheetOfThe19thTest(unittest.TestCase):
+    """Leo 2026-11-19 「跑商又改了」: 14号 no longer sells 芥末, 22号 sells
+    三文鱼芥末寿司.  Ticks saved for the first 11-19 table must sell the new
+    dish, and keep off what the player switched off."""
+
+    def test_the_first_and_second_tables_differ_only_there(self):
+        first = sale_days._table_days(sale_days.FIRST_NEXT_TABLE)
+        second = sale_days._table_days(NEXT_TABLE)
+        changed = {
+            day for day in set(first) | set(second)
+            if day_items(first.get(day, ())) != day_items(second.get(day, ()))
+        }
+        self.assertEqual({14, 22}, changed)
+        self.assertEqual(["胡萝卜"], day_items(second[14]))
+
+    def test_ticks_saved_for_the_first_table_sell_the_new_dish(self):
+        config = {
+            SALE_TABLE_KEY: sale_days.FIRST_NEXT_TABLE,
+            sale_day_key(22): ["料酒"],
+            sale_day_key(14): ["胡萝卜", "芥末"],
+            sale_day_key(3): ["能量蘑菇"],  # the player's own choice
+        }
+        changed = carry_checklists_over(config, AFTER)
+        self.assertEqual(["三文鱼芥末寿司", "料酒"], config[sale_day_key(22)])
+        self.assertEqual(["胡萝卜"], config[sale_day_key(14)])
+        self.assertEqual(["能量蘑菇"], config[sale_day_key(3)])
+        self.assertEqual(NEXT_TABLE, config[SALE_TABLE_KEY])
+        self.assertIn(sale_day_key(22), changed)
+
+    def test_a_player_who_unticked_料酒_still_does_not_sell_it(self):
+        config = {SALE_TABLE_KEY: sale_days.FIRST_NEXT_TABLE, sale_day_key(22): []}
+        carry_checklists_over(config, AFTER)
+        self.assertEqual(["三文鱼芥末寿司"], config[sale_day_key(22)])
+
+    def test_the_run_sells_it_although_the_ticks_were_saved_before(self):
+        config = {SALE_TABLE_KEY: sale_days.FIRST_NEXT_TABLE, sale_day_key(22): ["料酒"]}
+        sale_date = date(2026, 11, 22)
+        trader = object.__new__(SellFlowMixin)
+        trader.task = SimpleNamespace(config=config, log_info=lambda *_a: None)
+        trader._status = lambda *_a: None
+        trader._sale_calendar_date = sale_date
+        keep = trader._apply_day_checklist(22, list(bundled_sale_days(sale_date)[22]))
+        self.assertEqual(["三文鱼芥末寿司", "料酒"], [entry.item for entry in keep])
+
+    def test_the_sushi_is_read_from_the_繁中_name(self):
+        entry = next(e for e in bundled_sale_days(AFTER)[22] if e.item == "三文鱼芥末寿司")
+        self.assertIn("鮭魚芥末壽司", entry.aliases)
 
 
 if __name__ == "__main__":

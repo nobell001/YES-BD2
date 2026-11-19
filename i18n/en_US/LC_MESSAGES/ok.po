@@ -4224,6 +4224,15 @@ msgstr "Dark Beer Stew"
 msgid "土豆汤"
 msgstr "Potato Soup"
 
+msgid "三文鱼芥末寿司"
+msgstr "Salmon Wasabi Sushi"
+
+msgid "斜线格是高价的蘑菇、虾、袋装鸡胸肉，做完料理还剩很多时可以取消收藏"
+msgstr "Striped cells are the high-price Mushroom, Shrimp and Chicken Breast Pack: unfavourite them if plenty is left after cooking"
+
+msgid "有剩可取消"
+msgstr "Can drop if plenty"
+
 msgid "凯洛养身汤"
 msgstr "Kailac Wellness Soup"
 

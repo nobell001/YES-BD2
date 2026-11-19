@@ -1122,7 +1122,7 @@ class TradePage(Page):
         extra = [name for name in self.extra if name in set(config.get(EXTRA_DISHES_KEY) or [])]
         for name, tile in self.extra.items():
             tile.set_state(name in extra, str(extra.index(name) + 1) if name in extra else "")
-        # The six are sold only by the game's new table: cooked from then on.
+        # They are sold only by the game's new table: cooked from then on.
         start = data.extra_dishes_from()
         self.extra_note.set_text(
             tf("{month}/{day} 改版后才做", month=start.month, day=start.day)

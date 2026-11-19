@@ -2004,6 +2004,11 @@
   "ja": "ジャガイモスープ",
   "ko": "감자 수프"
  },
+ "三文鱼芥末寿司": {
+  "en": "Salmon Wasabi Sushi",
+  "ja": "サーモンわさび寿司",
+  "ko": "연어 와사비 초밥"
+ },
  "凯洛养身汤": {
   "en": "Kailac Wellness Soup",
   "ja": "カイラック養生スープ",
@@ -2083,6 +2088,16 @@
   "en": "Before starting, put the Cooking skill in any skill slot",
   "ja": "開始前に、料理スキルをどれかのスキル枠にセットしてください",
   "ko": "시작 전에 요리 스킬을 아무 스킬 칸에 넣어 주세요"
+ },
+ "斜线格是高价的蘑菇、虾、袋装鸡胸肉，做完料理还剩很多时可以取消收藏": {
+  "en": "Striped cells are the high-price Mushroom, Shrimp and Chicken Breast Pack: unfavourite them if plenty is left after cooking",
+  "ja": "斜線のマスは高価なキノコ・エビ・鶏の胸肉パック：料理のあとも大量に余るならお気に入りを外してOK",
+  "ko": "빗금 칸은 비싼 버섯·새우·닭가슴살 팩: 요리 후에도 많이 남으면 즐겨찾기를 해제해도 됩니다"
+ },
+ "有剩可取消": {
+  "en": "Can drop if plenty",
+  "ja": "余れば外してOK",
+  "ko": "남으면 해제 가능"
  },
  "小条": {
   "en": "Status bar",

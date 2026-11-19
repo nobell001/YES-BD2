@@ -1606,6 +1606,10 @@ class SandboxNavigationMixin:
         if not field_battle.bottom_strip_cue(strip):
             return None
         left = leave(f"跑图{step}")
+        if left == "left" and getattr(self.task, "field_battle_ended_by_result", False):
+            # Only a result closed (the battle was won): no monster to clear,
+            # the step goes on (Codex review on PR #574).
+            return None
         if left == "left":
             self.fled_battles = getattr(self, "fled_battles", 0) + 1
         if left == "left" and stop_after_flee:

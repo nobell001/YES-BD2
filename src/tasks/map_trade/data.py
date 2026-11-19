@@ -66,6 +66,18 @@ SHOP_UNFAVORITED_POINTS: dict[str, frozenset[int]] = {
     "E7": frozenset({5}),
 }
 
+# Favourited goods a player may drop once the bag clearly holds more than
+# cooking needs: Leo's trade sheet of 2026-11-19 (「對跑圖+跑商的玩家 購買優化
+# 事項」: 高價的 蘑菇、蝦仁、雞胸肉袋), slots checked on Leo's 繁中 shop
+# screenshots of the same day.  蘑菇 and 雞胸肉袋 on 剧情卡带 13 and 角色卡带 7
+# are already left unfavourited above.
+SHOP_SPARE_FAVORITE_POINTS: dict[str, frozenset[int]] = {
+    "S3": frozenset({3, 7}),  # 淡水虾, 蘑菇
+    "S13": frozenset({3}),  # 淡水虾
+    "S16": frozenset({1}),  # 淡水虾
+    "R1": frozenset({4}),  # 袋装鸡胸肉
+}
+
 # How many goods each cartridge sells, numbered row by row and four to a row
 # like SHOP_FAVORITE_POINTS.  Counted on the same favourites chart the table
 # above follows; the 跑商 page draws its 收藏清单 (which cells to favourite)

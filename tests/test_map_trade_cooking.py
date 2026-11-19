@@ -340,6 +340,8 @@ class CookingFlowTest(unittest.TestCase):
             click_client=lambda point, _shape, after_sleep=0.0: events.append(
                 ("click", point, after_sleep)
             ),
+            ocr_text=lambda *_args, **_kwargs: "",
+            simplify=lambda value: value,
         )
         trader = object.__new__(Trader)
         trader.task = task
@@ -357,7 +359,7 @@ class CookingFlowTest(unittest.TestCase):
         trader._wait_for_cooking_started = lambda _recipe, _timeout: (
             events.append("button turned gray") or True
         )
-        trader._wait_for_cooking_result = lambda _recipe, _timeout: (
+        trader._wait_for_cooking_result = lambda _recipe, _timeout, **_kwargs: (
             events.append("result confirmed") or frame
         )
         trader._return_from_detail_to_list = lambda _recipe: (
@@ -418,12 +420,14 @@ class CookingFlowTest(unittest.TestCase):
             match=lambda *_args: match,
             passes=lambda *_args: True,
             click_client=lambda *_args, **_kwargs: None,
+            ocr_text=lambda *_args, **_kwargs: "",
+            simplify=lambda value: value,
         )
         trader._wait_for_cooking_list = lambda _timeout: CookingListSnapshot(frame, match)
         trader._wait_for_cooking_detail = lambda *_args: detail
         trader._select_max_cooking_quantity = lambda *_args: detail
         trader._wait_for_cooking_started = lambda *_args: True
-        trader._wait_for_cooking_result = lambda *_args: None
+        trader._wait_for_cooking_result = lambda *_args, **_kwargs: None
         trader._recover_cooking_list = lambda: recovered.append(True) or True
 
         self.assertIs(
@@ -468,13 +472,14 @@ class CookingFlowTest(unittest.TestCase):
                     click_client=click,
                     simplify=lambda value: value,
                     ocr_boxes=boxes,
+                    ocr_text=lambda *_args, **_kwargs: "",
                     click_reference=lambda x, y, after_sleep=0.0: state["fixed"].append((x, y)),
                 )
                 trader._wait_for_cooking_list = lambda _: CookingListSnapshot(frame, card)
                 trader._wait_for_cooking_detail = lambda *_args: detail
                 trader._cooking_detail_snapshot = lambda *_args: detail
                 trader._wait_for_cooking_started = lambda *_args: True
-                trader._wait_for_cooking_result = lambda *_args: frame
+                trader._wait_for_cooking_result = lambda *_args, **_kwargs: frame
                 trader._return_from_detail_to_list = lambda *_args: True
                 trader._recover_cooking_list = lambda: True
                 self.assertIs(expected, trader._cook_one_recipe(recipe))
