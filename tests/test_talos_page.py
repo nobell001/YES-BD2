@@ -167,6 +167,44 @@ class TalosInCloneTest(TalosPageTest):
         self.page.start_in_clone()
         self.assertEqual([(self.task, [3, 5, 6, 7, 8])], self.opened)
 
+    def test_ticked_stages_go_through_the_setup_notes(self):
+        # Remote Desktop off or Hello-only: the notes fix it, then open the
+        # clone; the ticks must still go (Codex P2 on #597).
+        asked = []
+        with (
+            mock.patch.object(talos_page.clone_flow, "ready_to_go", lambda: False),
+            mock.patch.object(
+                talos_page.clone_flow, "ask_and_start",
+                lambda window, task, stages=None: asked.append((task, stages)),
+            ),
+        ):
+            self.page.tiles[9].check.toggle()
+            self.page.start_in_clone()
+        self.assertEqual([(self.task, [3, 5, 6, 7, 8])], asked)
+        self.assertEqual([], self.opened)
+
+    def test_the_setup_notes_hand_the_stages_to_the_clone(self):
+        from src.ui.shell import clone_flow
+
+        opened = []
+        with (
+            mock.patch.object(clone_flow.data, "busy", lambda: False),
+            mock.patch.object(clone_flow.clone_desktop, "hello_only", lambda: True),
+            mock.patch.object(clone_flow.clone_desktop, "remote_desktop_service", lambda: "running"),
+            mock.patch.object(clone_flow.clone_desktop, "viewer_removed", lambda: False),
+            mock.patch.object(clone_flow.clone_desktop, "ready", lambda: True),
+            mock.patch.object(clone_flow.clone_desktop, "turn_off_hello_only", lambda: True),
+            mock.patch("qfluentwidgets.MessageBox") as box,
+            mock.patch.object(clone_flow, "shell_buttons", lambda box: None),
+            mock.patch.object(
+                clone_flow, "open_clone",
+                lambda window, task, run_mode=None, auto=None, stages=None: opened.append(stages) or True,
+            ),
+        ):
+            box.return_value.exec.return_value = True
+            clone_flow.ask_and_start(None, self.task, stages=[3, 5])
+        self.assertEqual([[3, 5]], opened)
+
     def test_a_run_in_the_clone_shows_here(self):
         from src.ui.shell.clone_flow import RemoteTask
 

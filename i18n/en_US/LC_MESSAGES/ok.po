@@ -4386,3 +4386,15 @@ msgstr "Click here to open it. Striped cells are the ones you can unfavourite. T
 
 msgid "正在桌面分身里打"
 msgstr "Running in the desktop clone"
+
+msgid "塔洛斯更新了"
+msgstr "Talos updated"
+
+msgid "塔洛斯战术教材换新的一期了，工具里的轴也更新好了（共 {n} 关）。"
+msgstr "Talos Tactical Manual has a new season, and the tool's battle plans are updated too ({n} stages)."
+
+msgid "在这里开始打"
+msgstr "Start here"
+
+msgid "勾选要打的关，游戏停在主页时按这里就会照顺序打，打过的关会自己跳过。"
+msgstr "Tick the stages to fight. With the game on the home screen, press here and they are fought in order; cleared stages are skipped."

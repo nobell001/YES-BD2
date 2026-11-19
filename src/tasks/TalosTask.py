@@ -21,6 +21,7 @@ run is paused the in-game status bar can pick another stage (stage_picker).
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
@@ -28,6 +29,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from ok import Config
+from ok.util.file import get_relative_path
 from qfluentwidgets import FluentIcon
 
 from src.tasks.claim_page import ClaimButton
@@ -107,6 +110,12 @@ AUTO_BATTLE_WORDS = ("自动战斗中", "自動戰鬥中", "结束自动战斗",
 AUTO_BATTLE_STOP_WORDS = ("结束自动战斗", "結束自動戰鬥")
 OPEN_TRIES = 2  # a stage the game fought by itself is left and opened once more
 AUTO_BATTLE_SECOND_LOOK = 0.5  # auto battle words must be read on two looks this far apart
+# The period whose records the player was last told about (stages.season()).
+# A player who had the tool before is walked to the 塔洛斯教材 page once when
+# the shipped records change period (Leo 2026-11-19 「更新後提醒一下更新了塔洛斯」
+# 「提醒用戶」; src/ui/shell/new_setting_notice.py); a fresh install is not.
+SEASON_NOTICE_KEY = "_塔洛斯轴更新提示"
+EARLIER_TASK_FILE = "MapTradeTask"  # a task loaded after this one, there since long before
 
 
 class StageSwitch(Exception):
@@ -144,6 +153,31 @@ class TalosTask(_ClaimTaskBase):
         # The stages this run was asked for (None: the ones not cleared), so a
         # run again after the player used the game plays what is left of them.
         self._plan: list[int] | None = None
+        self.default_config[SEASON_NOTICE_KEY] = stages.season()
+
+    def load_config(self):
+        path = Path(get_relative_path(Config.config_folder, f"{self.__class__.__name__}.json"))
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            saved = {}
+        saved = saved if isinstance(saved, dict) else {}
+        # A player of a version before 塔洛斯 (v0.4.0) has no TalosTask.json
+        # but has 跑商's, which src/config.py loads after this task (on a
+        # fresh install it is not there yet).
+        older = Path(get_relative_path(Config.config_folder, f"{EARLIER_TASK_FILE}.json")).is_file()
+        super().load_config()
+        if (saved or older) and SEASON_NOTICE_KEY not in saved:
+            # Settings from before this notice: the player has not been told.
+            self.config[SEASON_NOTICE_KEY] = ""
+
+    def season_news(self) -> bool:
+        """The shipped records are for another period than the one the
+        player was last told about."""
+        return bool(stages.season()) and self.config.get(SEASON_NOTICE_KEY) != stages.season()
+
+    def season_told(self) -> None:
+        self.config[SEASON_NOTICE_KEY] = stages.season()
 
     # -- the run ------------------------------------------------------------------
 

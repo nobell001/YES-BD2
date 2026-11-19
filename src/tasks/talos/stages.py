@@ -79,6 +79,20 @@ def edition(root: Path = RECORDS_DIR) -> str:
     return digest.hexdigest()[:12]
 
 
+def season(root: Path = RECORDS_DIR) -> str:
+    """Which period the shipped records are for: the guide's title in
+    source.json (「第十赛季攻略（11月19日~12月16日）」), else the records'
+    edition.  The tool tells a player once when it changes (Leo 2026-11-19
+    「更新後提醒一下更新了塔洛斯」; src/ui/shell/new_setting_notice.py)."""
+    try:
+        name = json.loads((root / SOURCE_FILE).read_text(encoding="utf-8")).get("season")
+    except (OSError, ValueError, TypeError, AttributeError):
+        name = None
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return edition(root) if stage_count(root) else ""
+
+
 def missing_records(root: Path = RECORDS_DIR) -> list[int]:
     return [
         stage

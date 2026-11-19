@@ -124,8 +124,9 @@ def ready_to_go() -> bool:
     )
 
 
-def ask_and_start(window, task, run_mode: str | None = None) -> bool:
-    """Leo (2026-10-03, 10:37): remind first, then 前往 goes into the clone."""
+def ask_and_start(window, task, run_mode: str | None = None, stages: list[int] | None = None) -> bool:
+    """Leo (2026-10-03, 10:37): remind first, then 前往 goes into the clone.
+    ``stages``: 塔洛斯's ticked stages, kept when a fix here opens the clone."""
     from qfluentwidgets import MessageBox
 
     if task is None or data.busy():
@@ -209,7 +210,7 @@ def ask_and_start(window, task, run_mode: str | None = None) -> bool:
             return False
     if hello and not clone_desktop.turn_off_hello_only():
         return False
-    return open_clone(window, task, run_mode)
+    return open_clone(window, task, run_mode, stages=stages)
 
 
 def busy_in_clone() -> bool:

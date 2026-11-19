@@ -19,7 +19,7 @@ from PySide6.QtWidgets import QFrame, QWidget
 
 from src.ui.shell import cover, data, theme
 from src.ui.shell.safe import guarded
-from src.ui.shell.widgets import Button, Text, hbox, vbox
+from src.ui.shell.widgets import Button, Text, hbox, tf, vbox
 
 CARD_WIDTH = 300
 HOLE_PAD = 8  # air between the lit control and the ring
@@ -441,6 +441,50 @@ def favorites_steps(shell) -> list[Step]:
     ]
 
 
+TALOS_NEWS = "塔洛斯战术教材换新的一期了，工具里的轴也更新好了（共 {n} 关）。"
+
+
+def talos_steps(shell) -> list[Step]:
+    """Leo 2026-11-19 「更新後提醒一下更新了塔洛斯」「提醒用戶」: 塔洛斯战术教材
+    changed period and the tool's records followed (第十赛季, 16 关)."""
+    from src.tasks.talos import stages
+
+    def talos_item():
+        return shell.sidebar.items.get("talos")
+
+    def start_button():
+        return getattr(shell.pages.get("talos"), "start_button", None)
+
+    return [
+        Step(
+            talos_item,
+            "塔洛斯更新了",
+            tf(TALOS_NEWS, n=stages.STAGE_COUNT),
+        ),
+        Step(
+            start_button,
+            "在这里开始打",
+            "勾选要打的关，游戏停在主页时按这里就会照顺序打，打过的关会自己跳过。",
+            before=lambda: shell.navigate("talos"),
+        ),
+    ]
+
+
+def show_talos_notice(shell, on_done: Callable[[], None] = lambda: None) -> bool:
+    """Walk the player to the 塔洛斯教材 page once after an update that
+    brought another period's records (one time per period)."""
+    task = data.task_by_class_name("TalosTask")
+    news = getattr(task, "season_news", None)
+    if getattr(task, "config", None) is None or news is None or not news():
+        return False
+    # Shown once, however it is closed.
+    task.season_told()
+    tour = CoachMarks(shell.window, talos_steps(shell), on_done)
+    shell._coach_marks = tour
+    tour.start()
+    return True
+
+
 def _show_once(shell, class_name: str, key: str, steps, on_done: Callable[[], None]) -> bool:
     task = data.task_by_class_name(class_name)
     config = getattr(task, "config", None)
@@ -525,6 +569,7 @@ def show_favorites_notice(shell, on_done: Callable[[], None] = lambda: None) -> 
 
 
 NOTICES = (
+    show_talos_notice,
     show_favorites_notice,
     show_new_dailies_notice,
     show_quick_hunt_notice,

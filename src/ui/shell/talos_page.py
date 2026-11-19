@@ -190,7 +190,8 @@ class TalosPage(Page):
             return
         if not clone_flow.ready_to_go():
             # First-time setup and sign-in fixes go through their notes (首页's too).
-            clone_flow.ask_and_start(self.window(), task)
+            # The ticks go along: a fix there then opens the clone with them.
+            clone_flow.ask_and_start(self.window(), task, stages=self._ticks())
         else:
             clone_flow.open_clone(self.window(), task, stages=self._ticks())
         self.refresh()

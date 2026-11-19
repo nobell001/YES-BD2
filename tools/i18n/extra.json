@@ -2158,5 +2158,25 @@
   "en": "Click here to open it. Striped cells are the ones you can unfavourite. There is also a video on the new rules.",
   "ja": "ここを押すと開きます。斜線のマスがお気に入りを外せる商品です。新ルールの動画も見られます。",
   "ko": "여기를 눌러 여세요. 빗금 칸이 즐겨찾기를 해제해도 되는 상품입니다. 새 규칙 영상도 볼 수 있어요."
+ },
+ "塔洛斯更新了": {
+  "en": "Talos updated",
+  "ja": "タロスが更新されました",
+  "ko": "탈로스가 업데이트됐어요"
+ },
+ "塔洛斯战术教材换新的一期了，工具里的轴也更新好了（共 {n} 关）。": {
+  "en": "Talos Tactical Manual has a new season, and the tool's battle plans are updated too ({n} stages).",
+  "ja": "タロス戦術教材が新しい期に変わり、ツールの戦闘手順も更新済みです（全 {n} ステージ）。",
+  "ko": "탈로스 전술 교재가 새 시즌으로 바뀌었고, 도구의 전투 순서도 업데이트됐어요 (총 {n}스테이지)."
+ },
+ "在这里开始打": {
+  "en": "Start here",
+  "ja": "ここから開始",
+  "ko": "여기서 시작"
+ },
+ "勾选要打的关，游戏停在主页时按这里就会照顺序打，打过的关会自己跳过。": {
+  "en": "Tick the stages to fight. With the game on the home screen, press here and they are fought in order; cleared stages are skipped.",
+  "ja": "戦うステージにチェックを入れ、ゲームがホーム画面のときにここを押すと順番に戦います。クリア済みのステージは飛ばします。",
+  "ko": "싸울 스테이지를 체크하고, 게임이 홈 화면일 때 여기를 누르면 순서대로 싸워요. 클리어한 스테이지는 건너뜁니다."
  }
 }
