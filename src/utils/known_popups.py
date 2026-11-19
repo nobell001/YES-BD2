@@ -24,8 +24,8 @@ does it once for every task; this module is that one place (Leo 2026-10-12,
   关闭; the only button on it is 购买, never pressed);
 - 「离开」 on a field battle's result (VICTORY / DEFEAT), where Esc does
   nothing (src/utils/field_battle);
-- 「点击继续」 on the battle's 暂停 menu, never its 「关闭」, which is the
-  技能过场动画 setting;
+- 「点击继续」 (繁中 「繼續」) on the battle's 暂停 menu, never its 「关闭」,
+  which is the 技能过场动画 (繁中 技能詮釋動畫) setting;
 - 「确认」 on a server notice that carries an error code and has no other
   button (「当前并非赛季。，error:100019」 over a 镜中之战 battle when the
   season settles, player report 2026-11-01 23:00; 「与伺服器连接中断。重新开始
@@ -102,11 +102,14 @@ STRAY_PANEL_TITLES = ("战场角色设置",)
 # 关闭, the volumes.  That 「关闭」 is a setting, not a close button: the way
 # home pressed it 11 times in a 塔洛斯 fight (Leo's 4K 2026-10-28 16:02, 「判斷
 # 完全不對」).  Only 「点击继续」 is pressed there; it closes the menu and changes
-# nothing.
+# nothing.  The 繁中 menu (Leo's 4K 2026-11-19 22:11) says only 「繼續」 and
+# names the setting 「技能詮釋動畫」, so it was not known and its 「關閉」 was
+# pressed again, 15 times: the lone word counts as the whole box only.
 BATTLE_MENU_CONTINUE = ("点击继续", "點擊繼續")
+BATTLE_MENU_CONTINUE_ALONE = ("继续", "繼續")
 BATTLE_MENU_WORDS = (
     "离开", "離開", "逃跑", "重新挑战", "重新挑戰",
-    "技能过场动画", "技能過場動畫", "整体音量", "整體音量",
+    "技能过场动画", "技能過場動畫", "技能诠释动画", "技能詮釋動畫", "整体音量", "整體音量",
 )
 # A server notice: a line carrying 「error:<code>」 (seen: 「当前并非赛季。，
 # error:100019」, player report v0.2.26 2026-11-01 23:00, 1080p) and a lone
@@ -231,7 +234,10 @@ def battle_menu_continue(boxes):
     not on screen (two cues: 点击继续 and a button or setting of the menu)."""
     named = _named(boxes)
     words = tuple(normalize_ocr_text(word) for word in BATTLE_MENU_CONTINUE)
-    box = next((box for name, box in named if any(word in name for word in words)), None)
+    alone = tuple(normalize_ocr_text(word) for word in BATTLE_MENU_CONTINUE_ALONE)
+    box = next(
+        (box for name, box in named if any(word in name for word in words) or name in alone), None
+    )
     if box is None:
         return None
     text = "".join(name for name, _box in named)

@@ -86,6 +86,44 @@ class BattleMenuTest(unittest.TestCase):
         self.assertEqual(known_popups.pick(_boxes("活动公告", "关闭")).label, "关闭")
         self.assertFalse(known_popups.is_battle_menu(_boxes("点击继续")))
 
+    TW_MENU = (  # Leo's 4K 2026-11-19 22:11, 繁中 client, after the word table
+        "暂停", "简易技能诠释动画", "技能诠释动画", "诠释动画个别设定", "每次参观",
+        "1天参观1次", "仅参观新技能", "关闭", "整体音量", "背景音乐音量", "离开", "重新挑战", "继续",
+    )
+
+    def test_the_tw_menu_says_only_continue(self):
+        # 「繼續」 without 點擊, the setting named 技能詮釋動畫: its 关闭 was pressed 15 times
+        for allow_cancel in (False, True):
+            press = known_popups.pick(_boxes(*self.TW_MENU), allow_cancel=allow_cancel)
+            self.assertEqual(press.label, "点击继续")
+            self.assertEqual(press.box.name, "继续")
+
+    def test_continue_alone_is_a_whole_word_beside_the_menu(self):
+        self.assertFalse(known_popups.is_battle_menu(_boxes("继续", "关闭")))
+        self.assertFalse(known_popups.is_battle_menu(_boxes("继续探索", "离开")))
+        self.assertTrue(known_popups.is_battle_menu(_boxes("继续", "离开")))
+
+    def test_tw_picture(self):
+        import cv2
+
+        from src.utils import game_language
+        from src.utils.game_text import fix_boxes
+        from tests.test_page_lookalikes import ONNXPaddleOcr, navigator_with_real_ocr
+
+        if ONNXPaddleOcr is None:
+            self.skipTest("no OCR")
+        from pathlib import Path
+
+        picture = Path(__file__).parent / "fixtures/talos/pause_menu_tw_4k_as_1080.jpg"
+        boxes = navigator_with_real_ocr().task.ocr(frame=cv2.imread(str(picture)))
+        with mock.patch.object(game_language, "client_is_traditional", lambda: True):
+            fix_boxes(boxes)
+        self.assertTrue(any(box.name == "关闭" for box in boxes))  # what was pressed
+        press = known_popups.pick(boxes, allow_cancel=True)
+        self.assertEqual(press.label, "点击继续")
+        self.assertEqual(press.box.name, "继续")
+        self.assertGreater(press.box.y, 900)
+
     def test_leos_picture(self):
         import cv2
 

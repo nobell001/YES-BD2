@@ -14,9 +14,10 @@ TalosTask replays, and replaces the last season's records.
 
 爆发 levels and 先发制人 are not in the chart (the page says its editor can't
 show them); the author writes them in the stage's note, e.g.
-「3回合，开紫色皮蛋（2号位）的3级爆发」.  Those lines are read here; a line
-about 爆发 or 先发制人 that can't be tied to one unit and turn is listed in
-the report (``unsure``) for a person to look at.
+「3回合，开紫色皮蛋（2号位）的3级爆发」, 「第7回合，拉菲娜2级，罗安3级」.
+Those lines are read here; a line naming a 爆发 level or 先发制人 that can't
+be tied to one unit and turn is listed in the report (``unsure``) for a
+person to look at.
 
 Dev tool only (tools/): the shipped tool never goes online.  It runs twice
 a day from .github/workflows/talos-records.yml, which puts changed records
@@ -198,14 +199,33 @@ def chart_turns(content: dict) -> list[dict]:
 
 
 _TURN = re.compile(r"第?\s*(\d+)\s*(?:回合|t\b|T\b)")
-_BURST = re.compile(r"开([^，,。；;！!\n]*?)(\d)\s*级\s*爆发(?:\s*[（(]\s*(\d)\s*号位\s*[)）])?")
+_CLAUSE = re.compile(r"[，,。；;！!]")
+_LEVEL = re.compile(r"(?<!\d)([1-3])\s*级(?:\s*的)?(?:\s*爆发)?")  # 「3级爆发」, 「拉菲娜2级」
 _SEAT = re.compile(r"[（(]?\s*(\d)\s*号位\s*[)）]?")
 _PREEMPT = re.compile(r"开([^，,。；;！!\n]*?)的?先发制人")
+# what players call a unit in notes -> a part of its name (Ⅹ-1 「开神ut 3级爆发」
+# = 神圣悠丝缇亚); 娅 and 亚 are written either way (莱维娅 / 莱维亚)
+_NICKNAMES = {"ut": "悠丝缇亚"}
+_SAME = str.maketrans({"娅": "亚"})
+
+
+def _plain(text: str) -> str:
+    text = text.translate(_SAME)
+    for nickname, part in _NICKNAMES.items():
+        text = re.sub(nickname, part, text, flags=re.IGNORECASE)
+    return re.sub(r"\s+", "", text)
+
+
+def _in_order(words: str, name: str) -> bool:
+    """Every character of ``words`` in ``name``, in order (莎拉 → 莎赫拉查德)."""
+    rest = iter(name)
+    return all(char in rest for char in words)
 
 
 def _who(words: str, seat: str | None, turn: dict) -> str | None:
-    """The unit a note means: its name, 「N号位」 (place in the list), or a
-    word of its costume's name (「木乃伊」 for 白缕轻缠木乃伊)."""
+    """The unit a note means: 「N号位」 (place in the list), its name or a
+    short form of it (莎拉, 神ut), or a word of its costume's name
+    (「木乃伊」 for 白缕轻缠木乃伊).  None unless exactly one unit fits."""
     if seat is None:
         found = _SEAT.search(words)
         seat = found.group(1) if found else None
@@ -213,34 +233,53 @@ def _who(words: str, seat: str | None, turn: dict) -> str | None:
         sort = turn["_sort"]
         index = int(seat) - 1
         return sort[index] if 0 <= index < len(sort) else None
-    words = _SEAT.sub("", words).strip().removesuffix("的").strip()
+    words = _plain(_SEAT.sub("", words)).removeprefix("开").removesuffix("开").removesuffix("的")
+    words = re.sub(r"\d+$", "", words)  # 「达利安9」
     if not words:
         return None
-    named = [name for name in turn["cells"] if name in words or words in name]
-    if len(named) == 1:
-        return named[0]
-    worn = [name for name, skin in turn["_skins"].items() if skin and (words in skin or skin in words)]
-    return worn[0] if len(worn) == 1 else None
+    names = {name: _plain(name) for name in turn["cells"]}
+    tries = (
+        lambda name: names[name] == words,
+        lambda name: len(words) >= 2 and _in_order(words, names[name]),
+        # no 「name inside the words」: 神ut is not 悠丝缇亚 (a wrong unit plays
+        # silently; a line left unplaced goes to a person)
+        lambda name: len(words) >= 2 and bool(turn["_skins"].get(name)) and (
+            words in _plain(turn["_skins"][name]) or _plain(turn["_skins"][name]) in words
+        ),
+    )
+    for fits in tries:
+        found = [name for name in names if fits(name)]
+        if len(found) == 1:
+            return found[0]
+    return None
 
 
 def apply_notes(turns: list[dict], note: str) -> list[str]:
-    """爆发 and 先发制人 from the chart's note; returns the lines it couldn't place."""
+    """爆发 and 先发制人 from the chart's note; returns the lines it couldn't place.
+
+    A burst is a clause naming a level: 「开紫色皮蛋（2号位）的3级爆发」,
+    「小狗（3号位）开3级爆发」, 「奥利维耶3级爆发」, 「拉菲娜2级」.  The unit
+    must be on a skill in the turn the line names (or in exactly one turn)."""
     unsure: list[str] = []
     by_number = {turn["turn"]: turn for turn in turns}
     for line in (note or "").splitlines():
         line = line.strip()
-        if not line or ("爆发" not in line and "先发制人" not in line):
+        if not line:
             continue
         said = _TURN.search(line)
         numbers = [int(said.group(1))] if said else []
-        for words, level, seat in _BURST.findall(line):
-            if not _place_burst(turns, by_number, numbers, words, seat or None, int(level)):
+        for clause in _CLAUSE.split(line):
+            clause = _TURN.sub("", clause)
+            level = _LEVEL.search(clause)
+            if level is None:
+                continue
+            words = clause[: level.start()]
+            seat = _SEAT.search(clause)
+            if not _place_burst(turns, by_number, numbers, words, seat.group(1) if seat else None, int(level.group(1))):
                 unsure.append(line)
         for words in _PREEMPT.findall(line):
             if not _place_preempt(turns, by_number, numbers, words):
                 unsure.append(line)
-        if re.search(r"\d\s*级\s*爆发", line) and not _BURST.search(line):
-            unsure.append(line)  # a level is named but not whose: ask a person
     return list(dict.fromkeys(unsure))
 
 
@@ -460,6 +499,7 @@ def main(argv: list[str] | None = None, root: Path = stages.RECORDS_DIR) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="report only, write nothing")
     parser.add_argument("--message", type=Path, help="write the commit message here")
+    parser.add_argument("--dump", type=Path, help="save the page and charts read (to look at a note)")
     args = parser.parse_args(argv)
     try:
         content = fetch_page()
@@ -479,14 +519,23 @@ def main(argv: list[str] | None = None, root: Path = stages.RECORDS_DIR) -> int:
         # a new season's heading before its charts: keep the records we have
         print(f"{season}：网页上还没有关卡图表，工具里的轴不动")
         return 0
-    converted, failed = [], []
+    converted, failed, fetched = [], [], {}
     for stage, chart_id in sorted(charts.items()):
         if chart_id is None:
             continue  # listed as missing below
         try:
-            converted.append(convert(stage, chart_id, fetch_chart(chart_id)))
+            fetched[chart_id] = fetch_chart(chart_id)
+            converted.append(convert(stage, chart_id, fetched[chart_id]))
         except (ChartError, ValueError, OSError) as error:
             failed.append(f"第 {stage} 关（图表 {chart_id}）：{error}")
+    if args.dump:
+        keep = ("id", "title", "created_at", "updated_at", "content")
+        dump = {
+            "season": season,
+            "stages": charts,
+            "charts": {key: {k: chart.get(k) for k in keep} for key, chart in fetched.items()},
+        }
+        args.dump.write_text(json.dumps(dump, ensure_ascii=False, default=str), encoding="utf-8")
     missing = [stage for stage in range(1, max(charts) + 1) if charts.get(stage) is None]
     print(report(converted, season, missing))
     for line in failed:

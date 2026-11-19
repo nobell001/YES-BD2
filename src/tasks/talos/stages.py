@@ -212,7 +212,8 @@ class Progress:
                 self.cleared.discard(stage)
 
 
-def to_play(cleared: Iterable[int], count: int = STAGE_COUNT) -> list[int]:
+def to_play(cleared: Iterable[int], count: int | None = None) -> list[int]:
+    count = STAGE_COUNT if count is None else count
     done = set(cleared)
     return [stage for stage in range(1, count + 1) if stage not in done]
 
@@ -226,11 +227,15 @@ class StagePicker:
     where it was when nothing else was chosen.
     """
 
-    def __init__(self, count: int = STAGE_COUNT):
-        self.count = count
+    def __init__(self, count: int | None = None):
+        self._count = count
         self.current: int = 1
         self.cleared: set[int] = set()
         self.chosen: int | None = None
+
+    @property
+    def count(self) -> int:
+        return STAGE_COUNT if self._count is None else self._count
 
     def pick(self, stage: int) -> None:
         if 1 <= int(stage) <= self.count:
@@ -242,9 +247,10 @@ class StagePicker:
         return chosen if chosen is not None and chosen != self.current else None
 
 
-def next_order(start: int, cleared: Iterable[int], count: int = STAGE_COUNT) -> list[int]:
+def next_order(start: int, cleared: Iterable[int], count: int | None = None) -> list[int]:
     """The chosen stage first, then the stages not cleared yet in order (Leo:
     「換了關再按繼續：先退出現在這場，再去打選的那關，打完照順序往後打沒打過的」)."""
+    count = STAGE_COUNT if count is None else count
     rest = [stage for stage in to_play(cleared, count) if stage != start]
     rest.sort(key=lambda stage: (stage - start) % count)  # on from the chosen one, then round
     return [start, *rest]

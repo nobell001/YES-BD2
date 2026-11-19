@@ -15,6 +15,10 @@ Sources, 繁中 -> 简中:
 
 Only pairs whose simplified 繁中 differs from the 简中 word are kept.
 Run: python tools/i18n/build_tw_game_text.py  (needs opencc and node).
+Offline (souseha unreachable, e.g. a cloud session): add --offline to keep the
+names already in the table and only refresh the guard words for the tool's
+own keywords (run it after adding a keyword; tests/test_tw_table_guards.py
+fails until then).
 """
 
 from __future__ import annotations
@@ -133,7 +137,7 @@ def tool_words() -> set[str]:
     return found
 
 
-def table(pairs: list[tuple[str, str]]) -> dict[str, str]:
+def table(pairs: list[tuple[str, str]], ui_keys: frozenset[str] = frozenset()) -> dict[str, str]:
     words: dict[str, str] = {}
     for tw, cn in pairs:
         tw, cn = str(tw or "").strip(), str(cn or "").strip()
@@ -152,17 +156,34 @@ def table(pairs: list[tuple[str, str]]) -> dict[str, str]:
     for key in list(words):
         if key in same:
             words[key] = key
-    keys = list(words)
-    names = {str(cn or "").strip() for _tw, cn in pairs} | tool_words()
-    for name in names:
-        if name and name not in words and any(key != name and key in name for key in keys):
+    names = {str(cn or "").strip() for _tw, cn in pairs}
+    return add_guards(words, ui_keys, names)
+
+
+def add_guards(words: dict[str, str], ui_keys: frozenset[str], names: set[str] = frozenset()) -> dict[str, str]:
+    """Keep every tool keyword (and 简中 name) that holds a shorter 繁中 word.
+
+    The ui words count too (2026-11-19): 推主线's 「无法自动进行」 holds the ui
+    word 自动进行 (繁中 自動進行 = 简中 自动战斗 on the battle toggle), so the
+    繁中 banner 「無法自動進行的探索」 reached the task as 无法自动战斗 and the
+    keyword never matched.  The guard 无法自动进行 -> 无法自动进行 is longer,
+    so it wins and the banner stays as the tool knows it."""
+    words = dict(words)
+    keys = [key for key, value in words.items() if key != value] + sorted(ui_keys)
+    for name in set(names) | tool_words():
+        if name and name not in words and name not in ui_keys and any(key != name and key in name for key in keys):
             words[name] = name
     return dict(sorted(words.items()))
 
 
 def main() -> int:
     ui = json.loads((HERE / "tw_client_ui.json").read_text(encoding="utf-8"))
-    names = table(term_pairs() + character_pairs() + souseha_pairs())
+    ui_keys = frozenset(t2s.convert(key) for key in ui)
+    if "--offline" in sys.argv[1:]:
+        current = json.loads(OUT.read_text(encoding="utf-8")).get("names") or {}
+        names = add_guards(current, ui_keys)
+    else:
+        names = table(term_pairs() + character_pairs() + souseha_pairs(), ui_keys)
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(
         json.dumps(

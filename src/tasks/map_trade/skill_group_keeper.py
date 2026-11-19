@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sys
 
-from src.tasks.map_trade.action_icons import selected_skill_group
+from src.tasks.map_trade.action_icons import read_skill_group_waiting, selected_skill_group
 from src.tasks.map_trade.collector_constants import (
     SKILL_GROUP_RELATIVE_POINTS,
     SKILL_GROUP_SWITCH_SETTLE_SECONDS,
@@ -41,10 +41,18 @@ class SkillGroupKeeper:
             return None
         return selected_skill_group(capture())
 
+    def read_on_field(self) -> int | None:
+        """On the field: an unclear read (a toast over the buttons) is
+        looked at again for a few seconds."""
+        capture = getattr(self.vision, "capture", None)
+        if not callable(capture):
+            return None
+        return read_skill_group_waiting(capture, self.task.sleep)
+
     def before_switch(self) -> None:
         """Call just before the tool clicks a group button."""
         if not self.switched:
-            self.before = self.read()
+            self.before = self.read_on_field()
             self.switched = True
 
     def restore(self, *, stopped: bool = False, final: bool = False) -> None:
@@ -82,7 +90,7 @@ class SkillGroupKeeper:
             *SKILL_GROUP_RELATIVE_POINTS[before], after_sleep=0.0
         )
         self.task.sleep(SKILL_GROUP_SWITCH_SETTLE_SECONDS)
-        after = self.read()
+        after = self.read_on_field()
         if after == before:
             self.task.log_info(f"{self.label}：技能组从第{now}组切回原本的第{before}组。")
         else:

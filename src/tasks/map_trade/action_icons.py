@@ -84,6 +84,28 @@ def selected_skill_group(frame) -> int | None:
     if any(share > SKILL_GROUP_OTHER_MAX_YELLOW for share in others):
         return None
     return lit[0]
+
+
+# A Steam (or Windows) toast in the bottom-right corner covers all three
+# group buttons for a few seconds: player v0.4.3, 1080p, 2026-11-19 19:38,
+# a Steam friend toast over them → 「想把技能组切回原本的第1组，但现在认到的是
+# 认不出」.  An unclear read on the field is looked at again this long.
+SKILL_GROUP_UNCLEAR_WAIT_SECONDS = 6.0
+SKILL_GROUP_UNCLEAR_POLL_SECONDS = 0.5
+
+
+def read_skill_group_waiting(capture, sleep, seconds: float = SKILL_GROUP_UNCLEAR_WAIT_SECONDS) -> int | None:
+    """``selected_skill_group`` looked at again while it is unclear, up to ``seconds``."""
+    looks = max(1, int(seconds / SKILL_GROUP_UNCLEAR_POLL_SECONDS) + 1)
+    for look in range(looks):
+        if look:
+            sleep(SKILL_GROUP_UNCLEAR_POLL_SECONDS)
+        group = selected_skill_group(capture())
+        if group is not None:
+            return group
+    return None
+
+
 ACTION_SLOT_SEARCH_RADII_REFERENCE = {
     "search": (82, 72),
     "absorb": (82, 72),

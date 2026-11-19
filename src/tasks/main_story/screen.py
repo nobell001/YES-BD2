@@ -186,10 +186,17 @@ LIST_WORDS = (
     "前往当前探索", "前往當前探索", "当前战斗力", "當前戰鬥力", "推荐战斗力", "推薦戰鬥力",
 )
 LIST_PILL_BOX = (1520, 980, 1920, 1080)
-AUTO_GO_WORDS = ("自動進行", "自动进行")
+# 繁中 「自動進行」 reaches the task as 自动战斗: the 繁中 word table maps it to
+# the 简中 battle toggle's word (11-19 check).  Only read inside the pill.
+AUTO_GO_WORDS = ("自動進行", "自动进行", "自动战斗")
 LIST_BATTLE_WORDS = ("戰鬥", "战斗")
 # Its REWARD popup: 「點擊畫面將回到上一個畫面。」 under the row of rewards.
-REWARD_TAP_WORDS = ("點擊畫面將回到上一個畫面", "点击画面将回到上一个画面", "回到上一個畫面", "回到上一个画面")
+# 繁中 「點擊畫面將回到上一個畫面」 reaches the task as 「点击画面即可返回」, the
+# 简中 client's own line (word table, live 2026-10-23); 「点击画面将回到…」 is
+# only the literal form.
+REWARD_TAP_WORDS = (
+    "點擊畫面將回到上一個畫面", "点击画面将回到上一个画面", "回到上一個畫面", "回到上一个画面", "点击画面即可返回",
+)
 REWARD_TAP_POINT = (960, 990)
 
 # A difficulty cleared: the 冒險指南 book, its one button bottom right

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 from src.tasks.fiend_hunt.record import load_record
 from src.tasks.fiend_hunt.recording import RECORD_FILE
@@ -149,6 +150,11 @@ class ProgressTest(unittest.TestCase):
 
 
 class OrderTest(unittest.TestCase):
+    def setUp(self):
+        patch = mock.patch.object(stages, "STAGE_COUNT", 9)  # written for a nine-stage period
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def test_uncleared_in_grid_order(self):
         self.assertEqual(stages.to_play({1, 2, 5}), [3, 4, 6, 7, 8, 9])
 
@@ -159,6 +165,11 @@ class OrderTest(unittest.TestCase):
 
 
 class PickerTest(unittest.TestCase):
+    def setUp(self):
+        patch = mock.patch.object(stages, "STAGE_COUNT", 9)  # written for a nine-stage period
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def test_take_only_another_stage(self):
         picker = stages.StagePicker()
         picker.current = 3

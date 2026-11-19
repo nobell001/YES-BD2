@@ -70,7 +70,18 @@ jobs:
           python -m playwright install --with-deps chromium
 
       - name: Read the guide
-        run: python tools/talos_gamekee.py --message "$RUNNER_TEMP/message.txt" | tee "$RUNNER_TEMP/report.txt"
+        run: python tools/talos_gamekee.py --message "$RUNNER_TEMP/message.txt" --dump "$RUNNER_TEMP/gamekee.json" | tee "$RUNNER_TEMP/report.txt"
+
+      # what the site said, to look at a note the script couldn't place
+      # (in the log: gzip + base64 of the charts' contents)
+      - name: Keep what was read
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/gamekee.json" ]; then
+            echo "gamekee.json.gz.b64 begin"
+            gzip -9c "$RUNNER_TEMP/gamekee.json" | base64 -w 4000
+            echo "gamekee.json.gz.b64 end"
+          fi
 
       - name: Anything new?
         id: changed

@@ -4383,3 +4383,6 @@ msgstr "Open the favorites chart"
 
 msgid "点这里打开，斜线格就是可以取消收藏的。里面也有新规则的影片可以看。"
 msgstr "Click here to open it. Striped cells are the ones you can unfavourite. There is also a video on the new rules."
+
+msgid "正在桌面分身里打"
+msgstr "Running in the desktop clone"

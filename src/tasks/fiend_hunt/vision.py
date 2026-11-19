@@ -36,7 +36,17 @@ OUT_MIN = 0.6
 # A selected unit's portrait gets white corner brackets; unselected slots
 # score 0.00, selected ones 0.32-0.43 on every saved frame.
 SELECTED_MIN = 0.2
-SWAP_BUTTON_MIN = 8.0  # % of white ⇅ arrow pixels; 18-19 with a unit, 0 on an empty slot
+SWAP_BUTTON_MIN = 8.0  # % of white ⇅ arrow pixels; 11-21 with a unit, 0 on an empty slot
+# The arrows are thin strokes on a dark round button: opened with a square
+# of SOLID_KERNEL reference px, nothing of them is left (0 % on every list
+# fixture; a drag arc crossing a button leaves up to 15 %).  A light map
+# behind an empty slot is a solid patch: 塔洛斯 第十赛季第 15 关 (Leo's 4K
+# clone 2026-11-19 22:46, two units on a light bridge), slot 4 was empty and
+# a cream pillar behind it read 57 % white, so the list looked broken (a unit
+# after a gap), the planning screen was not believed and the stage was left
+# 4 times, then skipped.  Counting white alone can't tell them apart.
+SWAP_SOLID_KERNEL = 7.0
+SWAP_SOLID_MAX = 25.0
 
 
 def _ref(frame: np.ndarray, box: layout.Box) -> np.ndarray:
@@ -287,20 +297,46 @@ VIEW_RESPONSE_MIN = 0.08
 # --- left list ----------------------------------------------------------------------------
 
 
-def swap_button_score(frame: np.ndarray, slot: int) -> float:
+def _swap_white(frame: np.ndarray, slot: int) -> np.ndarray:
     x, y = layout.slot_swap(slot)
     part = _bgr(_ref(frame, (x - 12, y - 14, x + 12, y + 14)))
-    return float((part.min(axis=2) > 200).mean() * 100)
+    return part.min(axis=2) > 200
+
+
+def swap_button_score(frame: np.ndarray, slot: int) -> float:
+    return float(_swap_white(frame, slot).mean() * 100)
+
+
+def swap_solid_score(frame: np.ndarray, slot: int) -> float:
+    """% of the ⇅ box that is solid white (wider than the arrows' strokes)."""
+    white = _swap_white(frame, slot)
+    side = max(3, round(SWAP_SOLID_KERNEL * white.shape[0] / 28.0)) | 1
+    opened = cv2.morphologyEx(
+        white.astype(np.uint8) * 255, cv2.MORPH_OPEN, np.ones((side, side), np.uint8)
+    )
+    return float((opened > 0).mean() * 100)
+
+
+def swap_button_shown(frame: np.ndarray, slot: int) -> bool:
+    return (
+        swap_button_score(frame, slot) >= SWAP_BUTTON_MIN
+        and swap_solid_score(frame, slot) < SWAP_SOLID_MAX
+    )
 
 
 def slot_count(frame: np.ndarray) -> int:
-    """How many list slots hold a unit (5, or 6 with a summon)."""
-    filled = [swap_button_score(frame, slot) >= SWAP_BUTTON_MIN for slot in range(layout.MAX_SLOTS)]
+    """How many list slots hold a unit (5, or 6 with a summon): from the top
+    down to the first slot without a ⇅.
+
+    The list never has a gap, so what shows below the first empty slot is the
+    map behind the list.  It used to make the frame not the planning list
+    (-1): on 塔洛斯 第十赛季第 15 关 (Leo's 4K clone 2026-11-19, two units)
+    the water behind slot 6 glints in thin white streaks that pass for the
+    arrows in about 4 looks of 10, and the stage was left each time it did.
+    Whether the screen is the planning screen is planning_visible's call."""
     count = 0
-    while count < len(filled) and filled[count]:
+    while count < layout.MAX_SLOTS and swap_button_shown(frame, count):
         count += 1
-    if any(filled[count:]):
-        return -1  # a gap in the list: not the planning list
     return count
 
 

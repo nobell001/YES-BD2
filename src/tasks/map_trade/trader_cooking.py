@@ -11,7 +11,7 @@ from src.tasks.map_trade import trade_detail
 from src.tasks.map_trade.action_icons import (
     COOKING_ICON,
     SKILL_GROUP_CENTERS_REFERENCE,
-    selected_skill_group,
+    read_skill_group_waiting,
 )
 from src.tasks.map_trade.models import (
     COOKING_RECIPE_TEMPLATES,
@@ -454,10 +454,12 @@ class CookingFlowMixin:
         return False
 
     def _read_skill_group(self) -> int | None:
+        """The selected group on the field; an unclear read (a toast over the
+        buttons) is looked at again for a few seconds."""
         capture = getattr(self.vision, "capture", None)
         if not callable(capture):
             return None
-        return selected_skill_group(capture())
+        return read_skill_group_waiting(capture, self.task.sleep)
 
     def _restore_skill_group(self, *, stopped: bool = False, on_field: bool = True) -> None:
         """Back to the group the player had before cooking switched it."""
@@ -494,6 +496,12 @@ class CookingFlowMixin:
         self.task.operate_click(*point, after_sleep=0.0)  # 不用确认：下面读技能组确认
         self.task.sleep(COOKING_SKILL_GROUP_SWITCH_SETTLE_SECONDS)
         after = self._read_skill_group()
+        if after is not None and after != before:
+            # Read clearly as another group: the press was swallowed (or
+            # landed on a toast).  The group button is harmless: once more.
+            self.task.operate_click(*point, after_sleep=0.0)  # 不用确认：下面读技能组确认
+            self.task.sleep(COOKING_SKILL_GROUP_SWITCH_SETTLE_SECONDS)
+            after = self._read_skill_group()
         if after == before:
             self.task.log_info(f"料理：做完料理，技能组从第{now or '?'}组切回原本的第{before}组。")
         else:
@@ -919,6 +927,9 @@ class CookingFlowMixin:
             relative_roi=COOKING_RESULT_ROI,
             target_height=ocr_size.READ_HEIGHT,
         )
+        # What OCR read, kept for the warning when nothing matched: since
+        # #582 the warning said only 「OCR=-」 (player v0.4.3 2026-11-19).
+        self._last_result_bar_raw = str(text or "").strip()
         simplified = self.vision.simplify(text)
         if (
             _has_positive_quantity(simplified)
@@ -927,17 +938,23 @@ class CookingFlowMixin:
             return text
         return ""
 
-    def _cooking_in_progress(self, frame, recipe: str) -> bool:
-        """「製作中.. N%」 shows: this batch is still cooking."""
-        text = self.vision.simplify(
-            self.vision.ocr_text(
-                frame,
-                f"料理-{recipe}制作中",
-                relative_roi=COOKING_PROGRESS_ROI,
-                target_height=ocr_size.READ_HEIGHT,
+    def _cooking_progress(self, frame, recipe: str) -> str:
+        """「製作中.. N%」 as read (normalized), "" when it does not show."""
+        text = normalize_text(
+            self.vision.simplify(
+                self.vision.ocr_text(
+                    frame,
+                    f"料理-{recipe}制作中",
+                    relative_roi=COOKING_PROGRESS_ROI,
+                    target_height=ocr_size.READ_HEIGHT,
+                )
             )
         )
-        return bool(COOKING_IN_PROGRESS_PATTERN.search(normalize_text(text)))
+        return text if COOKING_IN_PROGRESS_PATTERN.search(text) else ""
+
+    def _cooking_in_progress(self, frame, recipe: str) -> bool:
+        """「製作中.. N%」 shows: this batch is still cooking."""
+        return bool(self._cooking_progress(frame, recipe))
 
     def _wait_for_cooking_result(self, recipe: str, timeout: float, *, earlier_bar: str = ""):
         """The result bar of the batch just started, with its detail page.
@@ -953,10 +970,26 @@ class CookingFlowMixin:
         still = StillTimer()
         earlier_count = trade_detail.result_quantity(earlier_bar, recipe) if earlier_bar else None
         noted = set()
+        last_progress = ""
+        raw_bar = ""
         while True:
             frame = self.vision.capture()
             stuck = still.still_for(frame, monotonic()) >= STUCK_SECONDS
+            if stuck:
+                # A big batch cooks longer than STUCK_SECONDS and only the
+                # small 「製作中.. N%」 changes: the picture looks still
+                # (player v0.4.3 1080p 2026-11-19: 巧克力面包 given up after
+                # 10 s, 返回 then ignored because it still cooked).  A new
+                # percentage is the game working: keep waiting, up to timeout.
+                progress = self._cooking_progress(frame, recipe)
+                if progress and progress != last_progress:
+                    if not last_progress:
+                        self._status("料理状态", f"{recipe} 还在制作中（{progress}），画面少动，继续等")
+                    last_progress = progress
+                    still.reset()
+                    stuck = False
             text = self._cooking_result_bar(frame, recipe, f"料理-{recipe}结果")
+            raw_bar = getattr(self, "_last_result_bar_raw", "") or raw_bar
             last_text = text or last_text
             if not text or monotonic() - started >= COOKING_EARLIER_BAR_HOLD_SECONDS:
                 earlier_count = None  # the earlier bar is gone: the next one is new
@@ -979,9 +1012,10 @@ class CookingFlowMixin:
                 return frame
             if monotonic() >= end_at or stuck:
                 self.task.log_warning(
-                    f"料理：{recipe} 未识别到含料理名和数量的结果条，OCR={last_text or '-'}"
+                    f"料理：{recipe} 未识别到含料理名和数量的结果条，OCR={last_text or raw_bar or '-'}"
                     + ("（只看到上一批的结果条）" if "earlier" in noted else "")
                     + ("（还显示制作中）" if "cooking" in noted else "")
+                    + (f"（最后看到{last_progress}）" if last_progress else "")
                     + (f"（画面 {STUCK_SECONDS:.0f} 秒没动）" if stuck else "")
                     + "。"
                 )

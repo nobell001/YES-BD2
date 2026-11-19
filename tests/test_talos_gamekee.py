@@ -16,10 +16,19 @@ from tools import talos_gamekee as gamekee
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "talos"
 
 
-def charts() -> dict[int, tuple[int, dict]]:
-    """stage -> (chart id, chart) of the 10-22 period (title 「Ⅸ战术教材N」)."""
-    data = json.loads((FIXTURES / "gamekee_season9_charts.json").read_text(encoding="utf-8"))
-    return {int(chart["title"][-1]): (int(key), chart) for key, chart in data.items()}
+def charts(season: int = 9) -> dict[int, tuple[int, dict]]:
+    """stage -> (chart id, chart) of the 10-22 period (title 「Ⅸ战术教材N」) or the 11-19 one (「Ⅹ…」)."""
+    data = json.loads((FIXTURES / f"gamekee_season{season}_charts.json").read_text(encoding="utf-8"))
+    return {int(chart["title"].split("战术教材")[1]): (int(key), chart) for key, chart in data.items()}
+
+
+def bursts(item) -> dict[tuple[int, str], int]:
+    return {
+        (turn["turn"], unit): level
+        for turn in item.record["turns"]
+        for unit, level in turn.get("bursts", {}).items()
+        if level
+    }
 
 
 def tab(title, chart=None):
@@ -75,17 +84,9 @@ class ConvertTest(unittest.TestCase):
 
     def test_bursts_and_preempt_from_the_note(self):
         # 「3回合，开紫色皮蛋（2号位）的3级爆发」: 2号位 of the list is 帕莱特
-        def bursts(stage):
-            return {
-                (turn["turn"], unit): level
-                for turn in self.converted[stage].record["turns"]
-                for unit, level in turn.get("bursts", {}).items()
-                if level
-            }
-
-        self.assertEqual({(3, "帕莱特"): 3}, bursts(3))
-        self.assertEqual({(1, "马莫尼勒"): 3, (3, "帕莱特"): 3, (7, "帕莱特"): 1}, bursts(5))
-        self.assertEqual({(3, "尤里"): 3, (7, "尤里"): 3, (11, "尤里"): 3}, bursts(9))
+        self.assertEqual({(3, "帕莱特"): 3}, bursts(self.converted[3]))
+        self.assertEqual({(1, "马莫尼勒"): 3, (3, "帕莱特"): 3, (7, "帕莱特"): 1}, bursts(self.converted[5]))
+        self.assertEqual({(3, "尤里"): 3, (7, "尤里"): 3, (11, "尤里"): 3}, bursts(self.converted[9]))
         preempt = [turn.get("preempt") for turn in self.converted[7].record["turns"]]
         self.assertIn("格兰希特", preempt[0])
 
@@ -93,6 +94,38 @@ class ConvertTest(unittest.TestCase):
         turns = gamekee.chart_turns(charts()[3][1]["content"])
         unsure = gamekee.apply_notes(turns, "3回合，开不存在的人的3级爆发")
         self.assertEqual(["3回合，开不存在的人的3级爆发"], unsure)
+
+    def test_the_next_season_notes(self):
+        # 2026-11-19 (第十赛季): the notes wrote bursts five new ways; a line read
+        # wrong (or not at all) plays the stage without the burst it needs
+        converted = {stage: gamekee.convert(stage, chart_id, chart) for stage, (chart_id, chart) in charts(10).items()}
+        self.assertEqual(list(range(1, 17)), sorted(converted))
+        self.assertEqual({}, {stage: item.unsure for stage, item in converted.items() if item.unsure})
+        expected = {
+            1: {(3, "神圣悠丝缇亚"): 3},  # 「3回合，开神ut 3级爆发」
+            5: {(1, "安洁莉卡"): 1},  # 「安洁莉卡开1级爆发」 (no turn: the one round)
+            6: {  # 「第7回合，拉菲娜2级，莱维娅1级，罗安3级」 (no 爆发; 莱维亚 in the chart)
+                (7, "拉菲娜"): 2, (7, "莱维亚"): 1, (7, "罗安"): 3, (13, "莱维亚"): 1, (13, "罗安"): 3,
+            },
+            7: {(1, "提尔"): 3},  # 「1回合，小狗（3号位）开3级爆发」; 「5回合，…开不开无所谓」: none
+            9: {(1, "奥利维耶"): 3},  # 「1回合，奥利维耶3级爆发」
+            10: {(3, "神圣悠丝缇亚"): 3},
+            11: {(1, "拉德尔"): 2},  # 「开铁面具（1号位）2级爆发」
+            12: {(1, "莎赫拉查德"): 3},  # 「1回合，开莎拉3级爆发」
+            15: {(1, "达丽安"): 1},  # 「开达利安9（2号位）1级爆发」
+            16: {(1, "露比雅"): 3, (3, "西利亚"): 3},
+        }
+        for stage, item in converted.items():
+            with self.subTest(stage=stage):
+                self.assertEqual(expected.get(stage, {}), bursts(item))
+                self.assertEqual(date(2026, 11, 19), item.made)
+        self.assertEqual({"格兰希特": "技能1"}, converted[14].record["turns"][0]["preempt"])
+
+    def test_a_short_name_fits_one_unit_only(self):
+        turns = gamekee.chart_turns(charts(10)[11][1]["content"])  # 悠丝缇亚 and 莎赫拉查德, no 神圣悠丝缇亚
+        self.assertEqual(["1回合，开神ut 3级爆发"], gamekee.apply_notes(turns, "1回合，开神ut 3级爆发"))
+        self.assertEqual([], gamekee.apply_notes(turns, "1回合，开ut 2级爆发"))
+        self.assertEqual(2, turns[0]["bursts"]["悠丝缇亚"])
 
     def test_written_records_replace_the_last_season(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -120,12 +153,15 @@ class RunTest(unittest.TestCase):
     def test_the_hand_made_season_is_left_alone(self):
         # the shipped nine (10-22) were made from videos; the page still shows that season
         content = page(("第九赛季攻略", [tab("1", 2308)]))
+        hand_made = {"season": "第九赛季（10-22 ~ 11-18）", "stages": 9, "made": "2026-10-22"}
         with (
+            tempfile.TemporaryDirectory() as folder,
             mock.patch.object(gamekee, "fetch_page", lambda: content),
             mock.patch.object(gamekee, "fetch_chart", side_effect=AssertionError("fetched")),
             mock.patch.object(gamekee, "write", side_effect=AssertionError("written")),
         ):
-            self.assertEqual(0, gamekee.main([]))
+            (Path(folder) / stages.SOURCE_FILE).write_text(json.dumps(hand_made), encoding="utf-8")
+            self.assertEqual(0, gamekee.main([], Path(folder)))
 
     def test_a_new_season_is_written_with_its_player_note(self):
         by_id = {chart_id: chart for chart_id, chart in charts().values()}

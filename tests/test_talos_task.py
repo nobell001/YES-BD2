@@ -34,6 +34,28 @@ def frames(name):
         )
 
 
+# The flow and screen tests are written for a nine-stage period (3x3, records
+# from 10-22), whatever period the shipped records are for now.
+_NINE = []
+
+
+def setUpModule():
+    from datetime import date as _date
+
+    for patch in (
+        mock.patch.object(stages, "STAGE_COUNT", 9),
+        mock.patch.object(stages, "missing_records", lambda root=None: []),
+        mock.patch.object(stages, "records_made", lambda root=None: _date(2026, 10, 22)),
+    ):
+        patch.start()
+        _NINE.append(patch)
+
+
+def tearDownModule():
+    while _NINE:
+        _NINE.pop().stop()
+
+
 class StageListTest(unittest.TestCase):
     def test_each_tile_says_whether_its_stage_is_cleared(self):
         # Leo 「你要看第幾格有叉代表那關打完 不是只看有幾個叉」
@@ -126,7 +148,7 @@ class AutoBattleTest(unittest.TestCase):
 
         with (
             mock.patch.object(TalosTask, "_enter_stage", enter),
-            mock.patch.object(TalosTask, "_auto_battle_visible", lambda self: shown[-1]),
+            mock.patch.object(TalosTask, "_auto_battle_sure", lambda self, s: shown[-1]),
             mock.patch.object(TalosTask, "_stop_auto_battle", lambda self, s: steps.append("stop")),
             mock.patch.object(TalosTask, "_leave_fight", lambda self, why: steps.append("leave")),
             mock.patch.object(TalosTask, "_to_list", lambda self: steps.append("list") or True),
@@ -147,6 +169,111 @@ class AutoBattleTest(unittest.TestCase):
         self.assertFalse(opened)
         self.assertEqual(["enter", "stop", "leave", "list", "enter", "stop", "leave"], steps[:-1])
         self.assertIn("自动战斗", steps[-1])
+
+
+def real_reference_boxes(frame, roi, _label):
+    """The task's reading of ``roi`` on a 1920x1080 picture of the 繁中 client:
+    real OCR, then the 繁中 word table, in reference coordinates."""
+    from src.utils import game_language
+    from src.utils.game_text import fix_boxes
+    from tests.test_page_lookalikes import navigator_with_real_ocr
+
+    x, y, w, h = roi
+    boxes = navigator_with_real_ocr().task.ocr(frame=frame[y : y + h, x : x + w])
+    with mock.patch.object(game_language, "client_is_traditional", lambda: True):
+        fix_boxes(boxes)
+    for box in boxes:
+        box.x, box.y = box.x + x, box.y + y
+    return boxes
+
+
+def needs_ocr(test):
+    from tests.test_page_lookalikes import ONNXPaddleOcr
+
+    return unittest.skipIf(ONNXPaddleOcr is None, "onnxocr not installed")(test)
+
+
+class TwFightTest(unittest.TestCase):
+    """Leo's 4K 2026-11-19 22:11, 繁中 client: stage 1 was taken for auto
+    battle, then 离开's 「確定要停止當前戰鬥嗎？」 was not known, so the run
+    went round the 暂停 menu (「一直暫停 然後循環」)."""
+
+    def task_on(self, name):
+        task = bare_task()
+        frame = load_fhd_bgr(FIXTURES / name)
+        task.capture_frame = lambda: frame
+        task._reference_boxes = real_reference_boxes
+        return task
+
+    @needs_ocr
+    def test_the_tw_leave_question_is_known(self):
+        self.assertTrue(self.task_on("leave_confirm_tw_4k_720p_as_1080.jpg")._leave_dialog_visible())
+        self.assertFalse(self.task_on("pause_menu_tw_4k_as_1080.jpg")._leave_dialog_visible())
+
+    def test_both_clients_leave_questions(self):
+        for words in ("是否中断当前进行中的战斗？", "确定要停止当前战斗吗？"):
+            with self.subTest(words=words):
+                task = bare_task()
+                task.capture_frame = lambda: None
+                task._reference_boxes = lambda frame, roi, label, words=words: [SimpleNamespace(name=words)]
+                self.assertTrue(task._leave_dialog_visible())
+
+    @needs_ocr
+    def test_battle_ready_is_not_auto_battle(self):
+        task = self.task_on("battle_ready_tw_4k_720p_as_1080.jpg")
+        self.assertFalse(task._auto_battle_visible())
+
+    def test_auto_battle_needs_two_looks(self):
+        task = bare_task()
+        task.capture_frame = lambda: None
+        task.sleep = lambda seconds: None
+        reads = ["自动战斗中", ""]
+        with mock.patch.object(TalosTask, "_auto_battle_read", lambda self, frame: reads.pop(0)):
+            self.assertFalse(task._auto_battle_sure(1))
+        self.assertIn("再看一次不是", task.lines[-1])
+        reads = ["自动战斗中", "结束自动战斗"]
+        with (
+            mock.patch.object(TalosTask, "_auto_battle_read", lambda self, frame: reads.pop(0)),
+            mock.patch.object(TalosTask, "_keep_picture", lambda self, frame, kind: None),
+        ):
+            self.assertTrue(task._auto_battle_sure(1))
+        self.assertIn("自动战斗中", task.lines[-1])  # what was read is in the log
+
+    def test_the_planning_screen_is_never_auto_battle(self):
+        task = bare_task()
+        task._text_in = lambda frame, roi, name: "自动战斗中"
+        with mock.patch.object(talos_module.fight_vision, "planning_visible", lambda frame: True):
+            self.assertEqual("", task._auto_battle_read(None))
+        with mock.patch.object(talos_module.fight_vision, "planning_visible", lambda frame: False):
+            self.assertEqual("自动战斗中自动战斗中", task._auto_battle_read(None))
+
+
+class BothClientsWordsTest(unittest.TestCase):
+    """Leo 2026-11-19 「你繁中簡中都要設計好啊」: every 繁中 word the fight
+    shows, as the task reads it (OCR text goes through the 繁中 word table
+    first), meets the task's words."""
+
+    SHOWN = {  # 繁中 on screen -> the task's words that must find it
+        "塔洛斯戰術教材": talos_module.TITLE_KEYWORDS,
+        "戰鬥": talos_module.BATTLE_KEYWORDS,
+        "任務": talos_module.MISSION_KEYWORDS,
+        "全部領取": talos_module.MISSION_CLAIM.keywords,
+        "全部獲得": talos_module.MISSION_CLAIM.keywords,
+        "自動戰鬥中": talos_module.AUTO_BATTLE_WORDS,
+        "結束自動戰鬥": talos_module.AUTO_BATTLE_STOP_WORDS,
+        "暫停": talos_module.PAUSE_KEYWORDS,
+        "離開": talos_module.LEAVE_WORDS,
+        "確定要停止當前戰鬥嗎？": talos_module.LEAVE_QUESTION_KEYWORDS,
+        "確認": talos_module.CONFIRM_WORDS,
+    }
+
+    def test_tw_words_after_the_word_table(self):
+        from src.utils.game_text import to_tool_text
+        from src.utils.ocr_utils import keyword_match_count
+
+        for shown, words in self.SHOWN.items():
+            with self.subTest(shown=shown):
+                self.assertGreaterEqual(keyword_match_count(to_tool_text(shown, True), words), 1)
 
 
 class FlowTest(unittest.TestCase):

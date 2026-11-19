@@ -71,6 +71,54 @@ class PixelReadersTest(unittest.TestCase):
             "list_2k_two_units_lower.png", planning=True, topdown=True, slots=2, selected=[1]
         )
 
+    def test_a_light_map_behind_an_empty_slot_is_not_a_unit(self):
+        # 塔洛斯 Ⅹ-15 (Leo's 4K clone 2026-11-19 22:46): two units, a cream
+        # pillar of the bridge map behind empty slot 4 read 57 % white, so the
+        # list looked broken and the planning screen was not believed (the
+        # stage was left 4 times).  Painted here over the same kind of list.
+        base = load_fhd_bgr(FIXTURES / "list_2k_two_units_lower.png")
+        x, y = layout.slot_swap(3)
+        for size in SIZES:
+            frame = base.copy()
+            # a cream pillar over most of the box (every channel over 200)
+            frame[int(y - 16) : int(y + 16), int(x - 14) : int(x + 3)] = (215, 228, 236)
+            if size != SIZES[0]:
+                frame = cv2.resize(frame, size, interpolation=cv2.INTER_CUBIC)
+            with self.subTest(size=size):
+                self.assertGreater(vision.swap_button_score(frame, 3), 50)
+                self.assertGreater(vision.swap_solid_score(frame, 3), vision.SWAP_SOLID_MAX)
+                self.assertEqual(2, vision.slot_count(frame))
+
+    def test_glints_below_the_last_unit_do_not_matter(self):
+        # 塔洛斯 Ⅹ-15: the water behind slot 6 glints in thin streaks (read
+        # 9.5-19 % white, 0-13 % solid) in 4 looks of 10; the list was then
+        # taken for broken and the stage left.  Streaks painted the same way.
+        base = load_fhd_bgr(FIXTURES / "list_2k_two_units_lower.png")
+        x, y = layout.slot_swap(5)
+        frame = base.copy()
+        for row in range(int(y - 14), int(y + 14), 4):
+            frame[row, int(x - 12) : int(x + 12)] = (230, 235, 240)  # a glint line
+        self.assertGreaterEqual(vision.swap_button_score(frame, 5), vision.SWAP_BUTTON_MIN)
+        self.assertLess(vision.swap_solid_score(frame, 5), vision.SWAP_SOLID_MAX)
+        self.assertEqual(2, vision.slot_count(frame))
+
+    def test_talos_s15_bridge_lists_two_units(self):
+        # the real frames (Leo's 4K clone, 1920x1080 game, 2026-11-19 22:5x):
+        # a cream pillar behind empty slot 4, water glinting behind slot 6
+        for name in ("talos_s15_bridge_pillar_slot4.jpg", "talos_s15_bridge_glint_slot6.jpg"):
+            for size, frame in frames(name):
+                with self.subTest(fixture=name, size=size):
+                    self.assertTrue(vision.planning_visible(frame))
+                    self.assertEqual(2, vision.slot_count(frame))
+
+    def test_the_arrows_are_never_solid(self):
+        # a button, also with a drag arc across it, is strokes, never a patch
+        for name in ("planning_topdown_t1.png", "list_t1_slot2_skill1_arc.png", "list_t11_saved_arc.png"):
+            for size, frame in frames(name):
+                for slot in range(vision.slot_count(frame)):
+                    with self.subTest(fixture=name, size=size, slot=slot):
+                        self.assertLess(vision.swap_solid_score(frame, slot), vision.SWAP_SOLID_MAX)
+
     def test_dead_units_are_out_at_the_bottom(self):
         self.check("out_slots_t11.png", planning=True, topdown=False, slots=5, out=[2, 3, 4])
 

@@ -141,3 +141,5 @@ Costume fixtures (4K PC, Leo 2026-10-06, a real fight's TURN 1, 艾尼尔 select
 | `talos_grid_zoom_92_2k.png` | 92%: 1.22 (the usual room's search had read it as 1.11) |
 | `talos_grid_zoom_101_2k.png` | 101%: 1.33, the size the wheel turns back to |
 | `talos_grid_zoom_114_2k.png` | 114%: about 1.49 |
+| `talos_s15_bridge_pillar_slot4.jpg` | 塔洛斯 第十赛季第 15 关 TURN 1 planning, Leo's 4K PC 桌面分身 2026-11-19 22:5x (game 1920x1080, JPEG 92): two units on the light bridge map; a cream pillar behind empty slot 4 reads 57 % white, 50 % solid |
+| `talos_s15_bridge_glint_slot6.jpg` | same screen half a second apart: water glinting behind empty slot 6 in thin streaks (19 % white, 14 % solid) |

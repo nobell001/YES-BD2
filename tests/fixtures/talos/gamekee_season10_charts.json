@@ -1,0 +1,3714 @@
+{
+ "2331": {
+  "id": 2331,
+  "title": "Ⅹ战术教材1",
+  "created_at": 1795074459,
+  "updated_at": 1795074459,
+  "content": {
+   "title": "Ⅹ战术教材1",
+   "remark": "3回合，开神ut 3级爆发\n\n还有主线3人组的事",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "name": "布莱德",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "黎维塔",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "神圣悠丝缇亚",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "找回的命运"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "神圣悠丝缇亚",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "找回的命运"
+       }
+      },
+      {
+       "name": "黎维塔",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "布莱德",
+       "type": "role",
+       "actionType": "skills"
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "name": "布莱德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "使徒"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "黎维塔",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "暗黑圣女"
+       }
+      },
+      {
+       "name": "神圣悠丝缇亚",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "找回的命运"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "神圣悠丝缇亚",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "找回的命运"
+       }
+      },
+      {
+       "name": "黎维塔",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "暗黑圣女"
+       }
+      },
+      {
+       "name": "布莱德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "使徒"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "2318": {
+  "id": 2318,
+  "title": "Ⅹ战术教材2",
+  "created_at": 1795069235,
+  "updated_at": 1795069235,
+  "content": {
+   "title": "Ⅹ战术教材2",
+   "remark": "请输入文本",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "莉亚特里斯",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "罗戴夫之星"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "伊柯利普斯",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "空间魔女"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "草药猎人"
+       }
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "草药猎人"
+       }
+      },
+      {
+       "name": "莉亚特里斯",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "罗戴夫之星"
+       }
+      },
+      {
+       "name": "伊柯利普斯",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "空间魔女"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "2319": {
+  "id": 2319,
+  "title": "Ⅹ战术教材3",
+  "created_at": 1795069330,
+  "updated_at": 1795069330,
+  "content": {
+   "title": "Ⅹ战术教材3",
+   "remark": "请输入文本",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "伊柯利普斯",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "空间魔女"
+       }
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "伊柯利普斯",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "空间魔女"
+       }
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "skills"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "2320": {
+  "id": 2320,
+  "title": "Ⅹ战术教材4",
+  "created_at": 1795069551,
+  "updated_at": 1795069551,
+  "content": {
+   "title": "Ⅹ战术教材4",
+   "remark": "妈妈组\n也是请输入文本",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "芮彼泰雅",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "贪婪之星"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "奥利维耶",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "堕落之翼"
+       }
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "芮彼泰雅",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "贪婪之星"
+       }
+      },
+      {
+       "name": "奥利维耶",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "堕落之翼"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "奥利维耶",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "堕落之翼"
+       }
+      },
+      {
+       "name": "芮彼泰雅",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "贪婪之星"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "芮彼泰雅",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "贪婪之星"
+       }
+      },
+      {
+       "name": "奥利维耶",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "堕落之翼"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "2321": {
+  "id": 2321,
+  "title": "Ⅹ战术教材5",
+  "created_at": 1795069683,
+  "updated_at": 1795069683,
+  "content": {
+   "title": "Ⅹ战术教材5",
+   "remark": "安洁莉卡开1级爆发",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "神圣悠丝缇亚",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "找回的命运"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "安洁莉卡",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "黎维塔",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "暗黑圣女"
+       }
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "神圣悠丝缇亚",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "找回的命运"
+       }
+      },
+      {
+       "name": "黎维塔",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "暗黑圣女"
+       }
+      },
+      {
+       "name": "安洁莉卡",
+       "type": "role",
+       "actionType": "skills"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "2333": {
+  "id": 2333,
+  "title": "Ⅹ战术教材6",
+  "created_at": 1795081758,
+  "updated_at": 1795081758,
+  "content": {
+   "title": "Ⅹ战术教材6",
+   "remark": "本关需要频繁调整位置，忽略sp条\n第1回合，无爆发\n第3回合，空过\n第5回合，无爆发\n第7回合，拉菲娜2级，莱维娅1级，罗安3级；这样把utm旁边两个左右护法秒掉\n第9回合，无爆发\n第11回合，卖掉米卡艾拉\n第13回合，莱维娅1级，罗安3级；随便了\n\n神人关卡设计师，懒得喷了",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "葛拉娜德",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "莱维亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "猜忌之夜"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "拉菲娜",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "钢铁引擎"
+       }
+      },
+      {
+       "name": "米卡艾拉",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "神圣者"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "罗安",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "最后的希望"
+       }
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "葛拉娜德",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "米卡艾拉",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "神圣者"
+       }
+      },
+      {
+       "name": "拉菲娜",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "钢铁引擎"
+       }
+      },
+      {
+       "name": "莱维亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "猜忌之夜"
+       }
+      },
+      {
+       "name": "罗安",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "最后的希望"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "name": "葛拉娜德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "葛洛堤的女王"
+       }
+      },
+      {
+       "name": "莱维亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "猜忌之夜"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "米卡艾拉",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "神圣者"
+       }
+      },
+      {
+       "name": "拉菲娜",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "钢铁引擎"
+       }
+      },
+      {
+       "name": "罗安",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "最后的希望"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "葛拉娜德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "葛洛堤的女王"
+       }
+      },
+      {
+       "name": "米卡艾拉",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "神圣者"
+       }
+      },
+      {
+       "name": "拉菲娜",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "钢铁引擎"
+       }
+      },
+      {
+       "name": "莱维亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "猜忌之夜"
+       }
+      },
+      {
+       "name": "罗安",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "最后的希望"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "name": "葛拉娜德",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "葛洛堤的女王"
+       }
+      },
+      {
+       "name": "莱维亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "猜忌之夜"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "米卡艾拉",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "神圣者"
+       }
+      },
+      {
+       "name": "拉菲娜",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "钢铁引擎"
+       }
+      },
+      {
+       "name": "罗安",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "最后的希望"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "葛拉娜德",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "葛洛堤的女王"
+       }
+      },
+      {
+       "name": "米卡艾拉",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "神圣者"
+       }
+      },
+      {
+       "name": "拉菲娜",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "钢铁引擎"
+       }
+      },
+      {
+       "name": "莱维亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "猜忌之夜"
+       }
+      },
+      {
+       "name": "罗安",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "最后的希望"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "name": "葛拉娜德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "葛洛堤的女王"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "莱维亚",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "猜忌之夜"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "罗安",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "最后的希望"
+       }
+      },
+      {
+       "name": "拉菲娜",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "钢铁引擎"
+       }
+      },
+      {
+       "name": "米卡艾拉",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "神圣者"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "葛拉娜德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "葛洛堤的女王"
+       }
+      },
+      {
+       "name": "米卡艾拉",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "神圣者"
+       }
+      },
+      {
+       "name": "拉菲娜",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "钢铁引擎"
+       }
+      },
+      {
+       "name": "莱维亚",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "猜忌之夜"
+       }
+      },
+      {
+       "name": "罗安",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "最后的希望"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "name": "葛拉娜德",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "葛洛堤的女王"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "莱维亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "猜忌之夜"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "罗安",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "最后的希望"
+       }
+      },
+      {
+       "name": "拉菲娜",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "钢铁引擎"
+       }
+      },
+      {
+       "name": "米卡艾拉",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "神圣者"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "葛拉娜德",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "葛洛堤的女王"
+       }
+      },
+      {
+       "name": "米卡艾拉",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "神圣者"
+       }
+      },
+      {
+       "name": "拉菲娜",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "钢铁引擎"
+       }
+      },
+      {
+       "name": "莱维亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "猜忌之夜"
+       }
+      },
+      {
+       "name": "罗安",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "最后的希望"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "name": "葛拉娜德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "葛洛堤的女王"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "莱维亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "猜忌之夜"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "米卡艾拉",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "神圣者"
+       }
+      },
+      {
+       "name": "拉菲娜",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "钢铁引擎"
+       }
+      },
+      {
+       "name": "罗安",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "最后的希望"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "葛拉娜德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "葛洛堤的女王"
+       }
+      },
+      {
+       "name": "米卡艾拉",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "神圣者"
+       }
+      },
+      {
+       "name": "拉菲娜",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "钢铁引擎"
+       }
+      },
+      {
+       "name": "莱维亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "猜忌之夜"
+       }
+      },
+      {
+       "name": "罗安",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "最后的希望"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "name": "葛拉娜德",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "葛洛堤的女王"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "莱维亚",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "猜忌之夜"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "米卡艾拉",
+       "type": "role",
+       "actionType": "dead",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "dead",
+        "choosedSkin": "神圣者"
+       }
+      },
+      {
+       "name": "拉菲娜",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "钢铁引擎"
+       }
+      },
+      {
+       "name": "罗安",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "最后的希望"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "葛拉娜德",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "葛洛堤的女王"
+       }
+      },
+      {
+       "name": "拉菲娜",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "钢铁引擎"
+       }
+      },
+      {
+       "name": "莱维亚",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "猜忌之夜"
+       }
+      },
+      {
+       "name": "罗安",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "最后的希望"
+       }
+      },
+      {
+       "name": "米卡艾拉",
+       "type": "role",
+       "actionType": "dead",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "dead",
+        "choosedSkin": "神圣者"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "2322": {
+  "id": 2322,
+  "title": "Ⅹ战术教材7",
+  "created_at": 1795070741,
+  "updated_at": 1795070741,
+  "content": {
+   "title": "Ⅹ战术教材7",
+   "remark": "1回合，小狗（3号位）开3级爆发；剩2sp\n3回合，剩8sp\n5回合，小狗（3号位）开不开无所谓，对面的血量已如风中残烛",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "布莱德",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "使徒"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "马莫尼勒",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "提尔",
+       "type": "role",
+       "actionType": "skills"
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "马莫尼勒",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "布莱德",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "使徒"
+       }
+      },
+      {
+       "name": "提尔",
+       "type": "role",
+       "actionType": "skills"
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "马莫尼勒",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "布莱德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "使徒"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "提尔",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "星光守护者"
+       }
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "马莫尼勒",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "布莱德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "使徒"
+       }
+      },
+      {
+       "name": "提尔",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "星光守护者"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "马莫尼勒",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "布莱德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "使徒"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "提尔",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "星光守护者"
+       }
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "马莫尼勒",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "布莱德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "使徒"
+       }
+      },
+      {
+       "name": "提尔",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "星光守护者"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "2323": {
+  "id": 2323,
+  "title": "Ⅹ战术教材8",
+  "created_at": 1795070942,
+  "updated_at": 1795070942,
+  "content": {
+   "title": "Ⅹ战术教材8",
+   "remark": "请输入文本",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "黛安娜",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "未知探究者"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "皎洁死神"
+       }
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "黛安娜",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "未知探究者"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "皎洁死神"
+       }
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "苍蓝魔女"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "2324": {
+  "id": 2324,
+  "title": "Ⅹ战术教材9",
+  "created_at": 1795071134,
+  "updated_at": 1795071134,
+  "content": {
+   "title": "Ⅹ战术教材9",
+   "remark": "1回合，奥利维耶3级爆发，剩0sp",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "奥利维耶",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "格兰希特",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "虚无之星"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "name": "格兰希特",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "虚无之星"
+       }
+      },
+      {
+       "name": "奥利维耶",
+       "type": "role",
+       "actionType": "skills"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "2325": {
+  "id": 2325,
+  "title": "Ⅹ战术教材10",
+  "created_at": 1795071826,
+  "updated_at": 1795071826,
+  "content": {
+   "title": "Ⅹ战术教材10",
+   "remark": "3回合，开神ut 3级爆发\n\n哇，母女丼\n好不容易找到这条母女存活的世界线，都是我的翅膀口牙",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "神圣悠丝缇亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "找回的命运"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "奥利维耶",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "芮彼泰雅",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "芮彼泰雅",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "奥利维耶",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "神圣悠丝缇亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "找回的命运"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "奥利维耶",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "信实之翼"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "神圣悠丝缇亚",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "找回的命运"
+       }
+      },
+      {
+       "name": "芮彼泰雅",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "贪婪之星"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "芮彼泰雅",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "贪婪之星"
+       }
+      },
+      {
+       "name": "奥利维耶",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "信实之翼"
+       }
+      },
+      {
+       "name": "神圣悠丝缇亚",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "找回的命运"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "2332": {
+  "id": 2332,
+  "title": "Ⅹ战术教材11",
+  "created_at": 1795077587,
+  "updated_at": 1795077587,
+  "content": {
+   "title": "Ⅹ战术教材11",
+   "remark": "注意这关需要频繁换位置\n第1回合，开铁面具（1号位）2级爆发，剩3sp\n第3回合，空过\n第5回合，不开爆发\n第7回合，空过\n第9回合，空过\n第11回合，空过\n第13回合，所有技能启动启动启动\n什么叫合理利用死亡倒计时吧。无论如何都压不到11t以下，先暂时这样了，后面回来再优化。",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "格雷",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "格雷",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "苍蓝魔女"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "血骑士"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "格雷",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "迷雾神射手"
+       }
+      },
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "霍尔蒙克斯"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "霍尔蒙克斯"
+       }
+      },
+      {
+       "name": "格雷",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "迷雾神射手"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "血骑士"
+       }
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "苍蓝魔女"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "name": "格雷",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "迷雾神射手"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "血骑士"
+       }
+      },
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "霍尔蒙克斯"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "霍尔蒙克斯"
+       }
+      },
+      {
+       "name": "格雷",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "迷雾神射手"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "血骑士"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "name": "格雷",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "迷雾神射手"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "霍尔蒙克斯"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "血骑士"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "霍尔蒙克斯"
+       }
+      },
+      {
+       "name": "格雷",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "迷雾神射手"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "血骑士"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "name": "格雷",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "迷雾神射手"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "霍尔蒙克斯"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "血骑士"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "霍尔蒙克斯"
+       }
+      },
+      {
+       "name": "格雷",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "迷雾神射手"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "血骑士"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "name": "格雷",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "迷雾神射手"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "霍尔蒙克斯"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "血骑士"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "霍尔蒙克斯"
+       }
+      },
+      {
+       "name": "格雷",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "迷雾神射手"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "血骑士"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "name": "格雷",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "迷雾神射手"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "霍尔蒙克斯"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "血骑士"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "苍蓝魔女"
+       }
+      },
+      {
+       "name": "拉德尔",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "霍尔蒙克斯"
+       }
+      },
+      {
+       "name": "格雷",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "迷雾神射手"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "血骑士"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "2326": {
+  "id": 2326,
+  "title": "Ⅹ战术教材12",
+  "created_at": 1795071930,
+  "updated_at": 1795071930,
+  "content": {
+   "title": "Ⅹ战术教材12",
+   "remark": "1回合，开莎拉3级爆发\n\n哇，刚来母女丼，这次又来姐妹丼。",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "泰瑞丝",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "泰瑞丝",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "莎赫拉查德",
+       "type": "role",
+       "actionType": "skills"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "2327": {
+  "id": 2327,
+  "title": "Ⅹ战术教材13",
+  "created_at": 1795072565,
+  "updated_at": 1795072565,
+  "content": {
+   "title": "Ⅹ战术教材13",
+   "remark": "sp不够开不了爆发\n5回合就是空过的，触发烧伤烧死对面\n又双叒是姐妹丼！",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "name": "露比雅",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "沙漠之刺"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "席比雅",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "沙漠之花"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "席比雅",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "沙漠之花"
+       }
+      },
+      {
+       "name": "露比雅",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "沙漠之刺"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "露比雅",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "沙漠之刺"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "席比雅",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "沙漠之花"
+       }
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "席比雅",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "沙漠之花"
+       }
+      },
+      {
+       "name": "露比雅",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "沙漠之刺"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "露比雅",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "沙漠之刺"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "席比雅",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "沙漠之花"
+       }
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "席比雅",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "沙漠之花"
+       }
+      },
+      {
+       "name": "露比雅",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "沙漠之刺"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "2328": {
+  "id": 2328,
+  "title": "Ⅹ战术教材14",
+  "created_at": 1795072834,
+  "updated_at": 1795072834,
+  "content": {
+   "title": "Ⅹ战术教材14",
+   "remark": "开格兰希特的先发制人\n\n最绷不住的一关，叮叮叮叮叮叮叮",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "皎洁死神"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "格兰希特",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "虚无之星"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "泰瑞丝",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "格兰希特",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "虚无之星"
+       }
+      },
+      {
+       "name": "泰瑞丝",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "皎洁死神"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "2329": {
+  "id": 2329,
+  "title": "Ⅹ战术教材15",
+  "created_at": 1795072966,
+  "updated_at": 1795072966,
+  "content": {
+   "title": "Ⅹ战术教材15",
+   "remark": "1回合，开达利安9（2号位）1级爆发\n\n吼，还有蕾贝丽斯组",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "索尼娅",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "达丽安",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "索尼娅",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "name": "达丽安",
+       "type": "role",
+       "actionType": "skills"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "2330": {
+  "id": 2330,
+  "title": "Ⅹ战术教材16",
+  "created_at": 1795074070,
+  "updated_at": 1795074070,
+  "content": {
+   "title": "Ⅹ战术教材16",
+   "remark": "1回合，开露比娅（4号位）3级爆发，剩7sp\n3回合，开西利亚（2号位）3级爆发，剩0sp，对面只剩下1个丝血黑魔法师\n\n最开始打了个7t然后发现还能优化，应该是最简的解法了。\n",
+   "roundInfos": [
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "西利亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "大魔女后裔"
+       }
+      },
+      {
+       "name": "露比雅",
+       "type": "role",
+       "actionType": "skills"
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "皎洁死神"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "伊柯利普斯",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "空间魔女"
+       }
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "伊柯利普斯",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "空间魔女"
+       }
+      },
+      {
+       "name": "西利亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "大魔女后裔"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "皎洁死神"
+       }
+      },
+      {
+       "name": "露比雅",
+       "type": "role",
+       "actionType": "skills"
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "露比雅",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "沙漠之刺"
+       }
+      },
+      {
+       "name": "西利亚",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "大魔女后裔"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "皎洁死神"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "伊柯利普斯",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "空间魔女"
+       }
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "露比雅",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "沙漠之刺"
+       }
+      },
+      {
+       "name": "西利亚",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "大魔女后裔"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "repel",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "repel",
+        "choosedSkin": "皎洁死神"
+       }
+      },
+      {
+       "name": "伊柯利普斯",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "空间魔女"
+       }
+      }
+     ]
+    },
+    {
+     "ourPositionData": [
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "露比雅",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "沙漠之刺"
+       }
+      },
+      {
+       "name": "西利亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "大魔女后裔"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "皎洁死神"
+       }
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "type": 0
+      },
+      {
+       "name": "伊柯利普斯",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "空间魔女"
+       }
+      }
+     ],
+     "ourSortData": [
+      {
+       "name": "露比雅",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "沙漠之刺"
+       }
+      },
+      {
+       "name": "西利亚",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "大魔女后裔"
+       }
+      },
+      {
+       "name": "悠丝缇亚",
+       "type": "role",
+       "actionType": "skills",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "skills",
+        "choosedSkin": "皎洁死神"
+       }
+      },
+      {
+       "name": "伊柯利普斯",
+       "type": "role",
+       "actionType": "damage",
+       "roleInfos": {
+        "index": 0,
+        "actionType": "damage",
+        "choosedSkin": "空间魔女"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

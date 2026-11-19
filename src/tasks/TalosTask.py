@@ -92,7 +92,7 @@ MISSION_ROI = (150, 970, 220, 70)
 MISSION_POINT = (262, 1005)
 MISSION_KEYWORDS = ("任务", "任務")
 # 任务 popup (2K clone 2026-10-28): 「塔洛斯战术教材任务」, 全部获得 at 960,801.
-MISSION_CLAIM = ClaimButton((780, 765, 360, 72), ("全部获得", "全部獲得", "全部領取", "全部获取"))
+MISSION_CLAIM = ClaimButton((780, 765, 360, 72), ("全部获得", "全部獲得", "全部领取", "全部領取", "全部获取"))
 
 STAGE_TRIES = 2  # a stage that stops is opened once more, then skipped
 PLANNING_WAIT = 45.0  # 战斗 → the planning screen (a load)
@@ -106,6 +106,7 @@ AUTO_BATTLE_STOP_POINT = (1757, 999)
 AUTO_BATTLE_WORDS = ("自动战斗中", "自動戰鬥中", "结束自动战斗", "結束自動戰鬥")
 AUTO_BATTLE_STOP_WORDS = ("结束自动战斗", "結束自動戰鬥")
 OPEN_TRIES = 2  # a stage the game fought by itself is left and opened once more
+AUTO_BATTLE_SECOND_LOOK = 0.5  # auto battle words must be read on two looks this far apart
 
 
 class StageSwitch(Exception):
@@ -416,7 +417,7 @@ class TalosTask(_ClaimTaskBase):
             fight = self._enter_stage(stage)
             if fight is not True:
                 return False
-            if not self._auto_battle_visible():
+            if not self._auto_battle_sure(stage):
                 return True
             self._stop_auto_battle(stage)
             self._leave_fight("游戏自己在自动战斗")
@@ -464,12 +465,49 @@ class TalosTask(_ClaimTaskBase):
     def _fight_shown(self, frame) -> bool:
         return fight_vision.planning_visible(frame) or self._auto_battle_visible(frame)
 
-    def _auto_battle_visible(self, frame=None) -> bool:
-        frame = self.capture_frame() if frame is None else frame
+    def _auto_battle_read(self, frame) -> str:
+        """The auto battle words read on ``frame``, or "" (none, or the
+        planning screen: it never shows while the game fights by itself)."""
+        if fight_vision.planning_visible(frame):
+            return ""
         text = self._text_in(frame, AUTO_BATTLE_ROI, "自动战斗中") + self._text_in(
             frame, AUTO_BATTLE_STOP_ROI, "结束自动战斗"
         )
-        return keyword_match_count(text, AUTO_BATTLE_WORDS, fuzzy_ratio=0.8) >= 1
+        return text if keyword_match_count(text, AUTO_BATTLE_WORDS, fuzzy_ratio=0.8) >= 1 else ""
+
+    def _auto_battle_visible(self, frame=None) -> bool:
+        return bool(self._auto_battle_read(self.capture_frame() if frame is None else frame))
+
+    def _auto_battle_sure(self, stage: int) -> bool:
+        """The game fights by itself: its words on two looks a moment apart.
+
+        Leo's 4K 2026-11-19 22:11:45 (繁中, stage 1): one look took the start of
+        a normal fight (BATTLE READY, then TURN 1 planning) for auto battle, and
+        the stage was left for nothing.  What was read was not logged and the
+        frame not kept, so the cause is not known; both are kept now."""
+        first = self._auto_battle_read(self.capture_frame())
+        if not first:
+            return False
+        self.sleep(AUTO_BATTLE_SECOND_LOOK)
+        frame = self.capture_frame()
+        second = self._auto_battle_read(frame)
+        if not second:
+            self.log_info(f"{LABEL}：第 {stage} 关读到「{first}」像自动战斗，再看一次不是，照常打")
+            return False
+        self.log_info(f"{LABEL}：第 {stage} 关读到「{first}」「{second}」：游戏在自动战斗")
+        self._keep_picture(frame, "talos_auto_battle")
+        return True
+
+    def _keep_picture(self, frame, kind: str) -> None:
+        """Keep ``frame`` with the report pictures (7 days), to see what was read."""
+        try:
+            from src.tasks import run_report
+
+            path = run_report.save_picture(frame[:, :, :3], kind)
+        except Exception:
+            path = None
+        if path:
+            self.log_info(f"{LABEL}：已保存当时画面：{path}")
 
     def _stop_auto_battle(self, stage: int) -> None:
         """End the game's auto battle (it stays off for the next fights); the
@@ -587,18 +625,18 @@ class TalosTask(_ClaimTaskBase):
         self._press_text("离开", PAUSE_LEAVE_ROI, LEAVE_WORDS, PAUSE_LEAVE_POINT)  # 不用确认：暂停画面还在会再按一次
         if not self._wait_for(self._leave_dialog_visible, timeout=4.0):
             if not self._pause_visible():
-                self.log_info(f"{LABEL}：按了离开，没出现「是否中断」")
+                self.log_info(f"{LABEL}：按了离开，没出现离开确认框（是否中断/确定要停止当前战斗）")
                 return False
             self.log_info(f"{LABEL}：按了离开还在暂停画面，再按一次")
             self._press_text("离开", PAUSE_LEAVE_ROI, LEAVE_WORDS, PAUSE_LEAVE_POINT)  # 不用确认：只补这一次
             if not self._wait_for(self._leave_dialog_visible, timeout=4.0):
-                self.log_info(f"{LABEL}：按了两次离开，没出现「是否中断」")
+                self.log_info(f"{LABEL}：按了两次离开，没出现离开确认框（是否中断/确定要停止当前战斗）")
                 return False
         self._press_text("确认", LEAVE_DIALOG_ROI, CONFIRM_WORDS, LEAVE_CONFIRM_POINT)  # 不用确认：「是否中断」还在会再按一次
         if self._wait_for(self._list_visible, timeout=PLANNING_WAIT):
             return True
         if self._leave_dialog_visible():
-            self.log_info(f"{LABEL}：按了确认「是否中断」还在，再按一次")
+            self.log_info(f"{LABEL}：按了确认，离开确认框还在，再按一次")
             self._press_text("确认", LEAVE_DIALOG_ROI, CONFIRM_WORDS, LEAVE_CONFIRM_POINT)  # 不用确认：只补这一次
             if self._wait_for(self._list_visible, timeout=PLANNING_WAIT):
                 return True
@@ -643,6 +681,9 @@ class TalosTask(_ClaimTaskBase):
 
 # Leaving a fight (2K PC 2026-10-28): ‖ top right, the 暂停 screen's 离开
 # (beside 重新挑战 and 点击继续), then 「是否中断当前进行中的战斗？」 取消 / 确认.
+# The 繁中 client asks 「確定要停止當前戰鬥嗎？」 under the title 離開 (Leo's 4K
+# 2026-11-19 22:11): not known, the leave was taken for failed and the run
+# went round the 暂停 menu (「一直暫停 然後循環」).
 PAUSE_POINT = (1791, 53)
 PAUSE_TITLE_ROI = (840, 190, 240, 70)
 PAUSE_KEYWORDS = ("暂停", "暫停")
@@ -650,7 +691,10 @@ PAUSE_LEAVE_ROI = (690, 975, 220, 60)
 PAUSE_LEAVE_POINT = (797, 1005)
 LEAVE_WORDS = ("离开", "離開")
 LEAVE_DIALOG_ROI = (700, 430, 520, 220)
-LEAVE_QUESTION_KEYWORDS = ("是否中断", "是否中斷", "进行中的战斗", "進行中的戰鬥")
+LEAVE_QUESTION_KEYWORDS = (
+    "是否中断", "是否中斷", "进行中的战斗", "進行中的戰鬥",  # 简中
+    "停止当前战斗", "停止當前戰鬥",  # 繁中
+)
 LEAVE_CONFIRM_POINT = (1044, 611)
 CONFIRM_WORDS = ("确认", "確認")
 # 主页's way in: the event banner on the right (to be measured).
@@ -676,7 +720,8 @@ def word_centre(box, words: tuple[str, ...]) -> float | None:
     return None
 
 
-def _layout(count: int) -> tuple[tuple[int, ...], tuple[int, ...], int]:
+def _layout(count: int | None) -> tuple[tuple[int, ...], tuple[int, ...], int]:
+    count = stages.STAGE_COUNT if count is None else count
     columns = stages.grid_columns(count)
     if columns not in TILE_LAYOUTS:
         raise ValueError(f"{count} stages: no tile layout for a {columns}x{columns} list")
@@ -712,14 +757,14 @@ def list_columns(frame: np.ndarray) -> int | None:
     return None
 
 
-def tile_point(stage: int, count: int = stages.STAGE_COUNT) -> tuple[int, int]:
+def tile_point(stage: int, count: int | None = None) -> tuple[int, int]:
     """Centre of stage's tile on the list (1920x1080 reference), row by row."""
     xs, ys, _ = _layout(count)
     columns = len(xs)
     return xs[(stage - 1) % columns], ys[(stage - 1) // columns]
 
 
-def tile_half(count: int = stages.STAGE_COUNT) -> int:
+def tile_half(count: int | None = None) -> int:
     return _layout(count)[2]
 
 
@@ -757,8 +802,9 @@ def merge_marks(*reads: dict[int, bool]) -> dict[int, bool]:
     return marks
 
 
-def tile_marks(frame: np.ndarray, count: int = stages.STAGE_COUNT) -> dict[int, bool]:
+def tile_marks(frame: np.ndarray, count: int | None = None) -> dict[int, bool]:
     """Stage -> cleared, read from each tile of the list (unsure ones left out)."""
+    count = stages.STAGE_COUNT if count is None else count
     reference = cv2.resize(frame[:, :, :3], (1920, 1080), interpolation=cv2.INTER_AREA)
     marks = {}
     half = tile_half(count)

@@ -728,13 +728,17 @@ def request_job(
     run_mode: str | None = None,
     by_player: bool = True,
     scheduled: dict | None = None,
+    stages: list[int] | None = None,
 ) -> None:
     """``by_player`` False: 打开就自动跑 handed it over, not a press (a job
     file without the key is a press, as before).  ``scheduled``: 定时启动
     started it; the slot's own items and settings go with it, since the
-    tool in the clone is another process."""
+    tool in the clone is another process.  ``stages``: the 塔洛斯 stages
+    ticked on the page (left out: the stages not cleared)."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     job = {"task": task, "run_mode": run_mode, "at": time.time()}
+    if stages is not None:
+        job["stages"] = [int(stage) for stage in stages]
     if not by_player:
         job["by_player"] = False
     if scheduled is not None:

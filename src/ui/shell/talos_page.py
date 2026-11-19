@@ -6,7 +6,9 @@ nine stages, 4x4 for sixteen); a tile says cleared, not played, failed last time
 being played now.  Leo 2026-10-28 「要可以選擇關卡 預設全選排除打過的」: a
 tile is ticked by a click, the stages not cleared are ticked to begin with.
 开始打 runs TalosTask (src/tasks/TalosTask.py) on the ticked stages: from
-主页, those stages in order, then 任务 → 全部获得.
+主页, those stages in order, then 任务 → 全部获得.  Leo 2026-11-19 「這個也要能在
+桌面分身跑」: 「在桌面分身跑」 under it, like 推剧情's, hands the same ticks to the
+tool in the clone (src/ui/shell/clone_flow.py); a run there shows here too.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QGridLayout, QSizePolicy
 
-from src.ui.shell import actions, data
+from src.ui.shell import actions, clone_flow, data
 from src.ui.shell.page import Page, pill, set_pill
 from src.ui.shell.widgets import (
     Button,
@@ -132,6 +134,13 @@ class TalosPage(Page):
         self.start_button = Button("开始打", "primary", "play", "lg", on_click=self.start)
         self.start_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         column.addWidget(self.start_button)
+        self.start_clone = Button("在桌面分身跑", "secondary", "monitor", on_click=self.start_in_clone)
+        self.start_clone.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.start_clone.setToolTip(
+            t("纯后台执行：游戏在独立的分身窗口里跑，缩小也照跑；你照常用电脑，鼠标键盘不会被抢")
+        )
+        self.start_clone.setVisible(clone_flow.available())
+        column.addWidget(self.start_clone)
         self.note = Text("游戏停在主页就能开始，打勾的关会照顺序打完", "muted", wrap=True)
         self.note.setAlignment(Qt.AlignHCenter)
         column.addWidget(self.note)
@@ -167,8 +176,34 @@ class TalosPage(Page):
             return
         # Untouched ticks: the task reads the list's ✕ itself and plays what
         # is not cleared (a new install doesn't know yet which are).
-        task.chosen_stages = None if self._picked is None else picked
+        task.chosen_stages = self._ticks()
         actions.start(task, self.window())
+
+    def _ticks(self) -> list[int] | None:
+        """The ticked stages for the task; None while untouched (the task
+        reads the list's ✕ itself and plays what is not cleared)."""
+        return None if self._picked is None else sorted(self.picked())
+
+    def start_in_clone(self) -> None:
+        task = self.task()
+        if task is None or not self.picked() or data.busy() or clone_flow.busy_in_clone():
+            return
+        if not clone_flow.ready_to_go():
+            # First-time setup and sign-in fixes go through their notes (首页's too).
+            clone_flow.ask_and_start(self.window(), task)
+        else:
+            clone_flow.open_clone(self.window(), task, stages=self._ticks())
+        self.refresh()
+
+    def remote(self):
+        """塔洛斯 running in the 桌面分身 (seen from outside), else None."""
+        task = self.task()
+        if task is None or data.busy():
+            return None
+        remote = clone_flow.remote_task()
+        if remote is None or remote.name != task.name:
+            return None
+        return remote
 
     def refresh(self) -> None:
         progress = _progress()
@@ -177,7 +212,8 @@ class TalosPage(Page):
         if task is not None and task.enabled and data.current_task() is task:
             playing = task.stage_picker.current
             progress.cleared |= task.stage_picker.cleared
-        busy = playing is not None
+        remote = self.remote()
+        busy = playing is not None or remote is not None
         if self._was_busy and not busy:
             self._picked = None  # a run ended: tick what is still not cleared
         self._was_busy = busy
@@ -205,7 +241,13 @@ class TalosPage(Page):
         else:
             set_pill(self.count, t("开始后先看游戏里打过哪些"))
         self.start_button.setEnabled(not busy and bool(picked))
-        if busy:
+        self.start_clone.setVisible(clone_flow.available() and not busy)
+        self.start_clone.setEnabled(
+            task is not None and bool(picked) and actions.can_start() and not clone_flow.busy_in_clone()
+        )
+        if remote is not None:
+            self.start_button.setText(t("正在桌面分身里打"))
+        elif busy:
             self.start_button.setText(t("正在打"))
         elif not picked:
             self.start_button.setText(t("勾选要打的关"))

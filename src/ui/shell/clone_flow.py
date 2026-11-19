@@ -263,7 +263,9 @@ def auto_start(window, task, run_mode: str | None, scheduled: dict | None = None
     return open_clone(window, task, run_mode, auto)
 
 
-def hand_to_clone(window, task, run_mode: str | None = None, auto: dict | None = None) -> bool:
+def hand_to_clone(
+    window, task, run_mode: str | None = None, auto: dict | None = None, stages: list[int] | None = None
+) -> bool:
     """Outside: the tool is open in the clone and free, so it runs ``task``.
 
     Leo 2026-10-07: 继续 after a run in the clone stopped should go on there,
@@ -274,7 +276,7 @@ def hand_to_clone(window, task, run_mode: str | None = None, auto: dict | None =
         return False
     if clone_outdated():
         return False
-    _request_job(window, task, run_mode, auto)
+    _request_job(window, task, run_mode, auto, stages)
     logger.info(f"clone: handed {task.name} (mode {run_mode or '-'}) to the tool in the clone")
     if window is not None:
         message(window, "交给桌面分身里的工具跑，进度在这里看")
@@ -349,16 +351,20 @@ def clone_outdated() -> bool:
     return bool(mine) and theirs != mine
 
 
-def _request_job(window, task, run_mode: str | None, auto: dict | None = None) -> None:
+def _request_job(
+    window, task, run_mode: str | None, auto: dict | None = None, stages: list[int] | None = None
+) -> None:
     """No window is 打开就自动跑 on the desktop: the clone must not take it
     for a press, which skips the wait after a failure (#153).  ``auto``:
     打开就自动跑 / 定时启动 sent it (see :func:`auto_start`)."""
+    extra = {} if stages is None else {"stages": list(stages)}
     if window is None or auto is not None:
         scheduled = (auto or {}).get("scheduled")
-        extra = {} if scheduled is None else {"scheduled": scheduled}
+        if scheduled is not None:
+            extra["scheduled"] = scheduled
         clone_desktop.request_job(str(task.name), run_mode, by_player=False, **extra)
     else:
-        clone_desktop.request_job(str(task.name), run_mode)
+        clone_desktop.request_job(str(task.name), run_mode, **extra)
 
 
 def restart_outdated_clone(window, task, run_mode: str | None = None) -> bool:
@@ -376,10 +382,13 @@ def _end_outdated_clone(window) -> bool:
     return False
 
 
-def open_clone(window, task=None, run_mode: str | None = None, auto: dict | None = None) -> bool:
+def open_clone(
+    window, task=None, run_mode: str | None = None, auto: dict | None = None, stages: list[int] | None = None
+) -> bool:
     """Open the clone and start the tool in it; with ``task``, it runs that task.
 
-    ``auto``: 打开就自动跑 / 定时启动 sent it, nobody pressed (:func:`auto_start`)."""
+    ``auto``: 打开就自动跑 / 定时启动 sent it, nobody pressed (:func:`auto_start`).
+    ``stages``: 塔洛斯's ticked stages, for the run in the clone."""
     global _launch
     if not clone_desktop.ready():
         message(window, "桌面分身还没设定好，请先到「设置」按「第一次设定」", error=True)
@@ -389,13 +398,13 @@ def open_clone(window, task=None, run_mode: str | None = None, auto: dict | None
     if (
         task is not None
         and clone_desktop.viewer_running()
-        and hand_to_clone(window, task, run_mode, auto)
+        and hand_to_clone(window, task, run_mode, auto, stages)
     ):
         # Already open with the tool in it: opening the viewer again only
         # showed 「桌面分身已經開著了」 (Leo 2026-10-07).
         return True
     if task is not None:
-        _request_job(window, task, run_mode, auto)
+        _request_job(window, task, run_mode, auto, stages)
     else:
         clone_desktop.clear_job()
     if not clone_desktop.open_viewer():
@@ -530,6 +539,7 @@ def _run_pending_job() -> None:
             return
         run_mode = job.get("run_mode")
         by_player = job.get("by_player", True) is not False
+        _take_stages(task, job.get("stages"))
         _take_scheduled(job.get("scheduled"))
         _reload_settings()
         log_in_this_run()
@@ -564,6 +574,17 @@ def _run_pending_job() -> None:
     )
     # A press on the desktop, unless 打开就自动跑 there handed it over.
     actions.start(task, None, run_mode, by_player=by_player)
+
+
+def _take_stages(task, stages) -> None:
+    """塔洛斯 started from its page outside: the stages ticked there (Leo
+    2026-11-19 「這個也要能在桌面分身跑」).  None: the stages not cleared."""
+    if not hasattr(task, "chosen_stages"):
+        return
+    if isinstance(stages, list) and all(isinstance(stage, int) for stage in stages) and stages:
+        task.chosen_stages = sorted(stages)
+    else:
+        task.chosen_stages = None
 
 
 def _take_scheduled(scheduled) -> None:

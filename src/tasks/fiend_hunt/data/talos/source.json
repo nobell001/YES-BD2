@@ -1,7 +1,25 @@
 {
  "page": "https://www.gamekee.com/zsca2/697611.html",
- "season": "第九赛季（10-22 ~ 11-18）",
- "stages": 9,
- "made": "2026-10-22",
- "note": "records made by hand from the season's guide videos, before tools/talos_gamekee.py"
+ "season": "第十赛季攻略（11月19日~12月16日）",
+ "stages": 16,
+ "made": "2026-11-19",
+ "charts": {
+  "1": 2331,
+  "2": 2318,
+  "3": 2319,
+  "4": 2320,
+  "5": 2321,
+  "6": 2333,
+  "7": 2322,
+  "8": 2323,
+  "9": 2324,
+  "10": 2325,
+  "11": 2332,
+  "12": 2326,
+  "13": 2327,
+  "14": 2328,
+  "15": 2329,
+  "16": 2330
+ },
+ "unsure": {}
 }

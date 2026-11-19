@@ -63,7 +63,7 @@ ENTER, SPACE, ESC = 0x0D, 0x20, 0x1B
 # a spending dialog the player opened while the state is on).
 SPEND_WORDS = (
     "購買", "购买", "消耗", "鑽石", "钻石", "付費", "付费", "支付", "花費", "花费",
-    "確定購買", "确定购买", "結帳", "结账", "儲值", "储值", "抽取", "分解", "出售",
+    "確定購買", "确定购买", "結帳", "结账", "结帐", "儲值", "储值", "抽取", "分解", "出售",
     # Legal and terms dialogs are never pressed (product rule).
     "條款", "条款", "同意", "隱私", "隐私",
     # Leaving the game: never Enter there either.
