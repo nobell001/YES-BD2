@@ -4368,3 +4368,18 @@ msgstr "Trade Run spot"
 
 msgid "在哪里买卖；选的地方进不去时，自动改去另一处"
 msgstr "Where to buy and sell. If the picked place can't be reached, it goes to the other one."
+
+msgid "看影片"
+msgstr "Watch video"
+
+msgid "收藏清单更新了"
+msgstr "Favorites chart updated"
+
+msgid "跑商改版了：高价的蘑菇、虾、袋装鸡胸肉，做完料理还剩很多时可以取消收藏。"
+msgstr "Trade Run changed: the high-price Mushroom, Shrimp and Chicken Breast Pack can be unfavourited when plenty is left after cooking."
+
+msgid "打开收藏清单"
+msgstr "Open the favorites chart"
+
+msgid "点这里打开，斜线格就是可以取消收藏的。里面也有新规则的影片可以看。"
+msgstr "Click here to open it. Striped cells are the ones you can unfavourite. There is also a video on the new rules."

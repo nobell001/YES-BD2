@@ -688,6 +688,9 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
         self.assertFalse(free_gacha_module.result_page_text("23/100"))
         self.assertFalse(free_gacha_module.result_page_text("付费 891 免费 87,152 154 D-11"))
         self.assertFalse(free_gacha_module.result_page_text(""))
+        # The 通行证 page over a dimmed 主页 (player 4K 2026-11-19): the pass
+        # level 「20/24」 and the home button 「付费商店」.
+        self.assertFalse(free_gacha_module.result_page_text("Lv.02 20/24 全部获得 抽抽乐 任务 商店 付费商店"))
 
     def _entry_task(self, waits, home, home_again=False):
         task = object.__new__(FreeGachaTask)

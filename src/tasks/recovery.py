@@ -23,7 +23,7 @@ from src.tasks.map_trade.navigator import Navigator
 from src.tasks.map_trade.home_house import HOUSE_POINT, find_house
 from src.tasks.map_trade.vision import Vision
 from src.tasks.task_vision_mixin import REFERENCE_HEIGHT, REFERENCE_WIDTH
-from src.utils import field_battle, known_popups, title_screen
+from src.utils import field_battle, home_confirmation, known_popups, title_screen
 from src.utils.home_confirmation import HOME_LEFT_COLUMN_REQUIRED_HITS
 from src.utils.wait_limits import LOADING_MAX_SECONDS
 
@@ -62,7 +62,7 @@ TRANSITION_P99_MAX = 70.0
 # 2026-10-15 「我說的10秒是卡死 或者辨識不到」「一定會超過10秒甚至15秒」).
 TRANSITION_WAIT_SECONDS = LOADING_MAX_SECONDS
 # Top-left page title beside the back arrow ("活动", "通行证", "装备"...).
-PAGE_TITLE_RELATIVE_ROI = (225 / REFERENCE_WIDTH, 15 / REFERENCE_HEIGHT, 650 / REFERENCE_WIDTH, 85 / REFERENCE_HEIGHT)
+PAGE_TITLE_RELATIVE_ROI = home_confirmation.PAGE_TITLE_RELATIVE_ROI
 NAVIGATOR_STATES = frozenset(
     {
         ScreenState.SANDBOX,
@@ -372,6 +372,7 @@ def _recover_to_home(task, attempts: int) -> bool:
     escape_stopped = False
     house_presses = 0
     house_blind_pressed = False
+    announcement_clears = 0
     for attempt in range(1, attempts + 1):
         if _home_now(navigator):
             return True
@@ -428,7 +429,11 @@ def _recover_to_home(task, attempts: int) -> bool:
                 return False
             continue
         frame = navigator.vision.capture()
-        if navigator.clear_home_announcement(frame):
+        # Capped: taps that did not bring 主页 were not on a notice, and the
+        # back arrow, H and Esc below must still get their turn (player 4K
+        # v0.4.1 2026-11-19: 10 taps on the 通行证 page, never a back press).
+        if navigator.clear_home_announcement(frame, announcement_clears):
+            announcement_clears += 1
             _wait_home_briefly(task, navigator, BACK_HOME_POLL_SECONDS)
             continue
         if _transition_frame(frame) and _wait_transition(task, navigator):

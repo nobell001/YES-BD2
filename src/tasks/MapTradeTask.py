@@ -79,6 +79,10 @@ def _trade_section_migration_values(legacy: dict) -> dict[str, bool]:
 # Hidden setting (ok-script hides "_" keys): the 额外料理 the saved ticks were
 # chosen from, so a dish added later starts ticked like the first ones did.
 EXTRA_COOKING_OPTIONS_KEY = "_额外料理选项"
+# 收藏清单 got striped 「有剩可取消」 cells and a video link (2026-11-19): players
+# who had the tool before are walked to it once after the update (Leo
+# 2026-11-19 「更新後提醒用戶去打開新的收藏清單」; src/ui/shell/new_setting_notice.py).
+FAVORITES_NOTICE_KEY = "_收藏清单更新提示"
 
 
 def _tick_new_extra_dishes(legacy: dict, config) -> None:
@@ -373,6 +377,7 @@ class MapTradeTask(MapAutomationTaskBase):
                 # Cooked last, from the game's 2026-11-19 update on.
                 EXTRA_COOKING_KEY: list(EXTRA_COOKING_RECIPES),
                 EXTRA_COOKING_OPTIONS_KEY: list(EXTRA_COOKING_RECIPES),
+                FAVORITES_NOTICE_KEY: False,
                 # 收藏重建周期 and 出售保险 were removed from the settings (Leo,
                 # 2026-10-05: 「用處不大」); a saved value is dropped on load and
                 # the trader falls back to never rebuilding / selling MAX.
@@ -498,6 +503,8 @@ class MapTradeTask(MapAutomationTaskBase):
             self.config[SALE_TABLE_KEY] = OLD_TABLE
         carry_checklists_over(self.config)
         _tick_new_extra_dishes(legacy, self.config)
+        if legacy and FAVORITES_NOTICE_KEY not in legacy:
+            self.config[FAVORITES_NOTICE_KEY] = True
         for key, value in section_values.items():
             self.config[key] = value
         key_map = {

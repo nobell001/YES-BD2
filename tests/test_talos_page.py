@@ -65,6 +65,11 @@ class TalosPageTest(unittest.TestCase):
         self.assertEqual(set(range(1, 10)), self.ticked())
         self.assertIn("先看", self.page.count.text())
 
+    def test_the_count_follows_the_stages(self):
+        self.progress = stages.Progress("x", {1})
+        self.page.refresh()
+        self.assertIn("已打完 1/9", self.page.count.text())
+
     def test_ticked_stages_are_the_run(self):
         self.page.tiles[1].check.toggle()  # replay a cleared one
         self.page.tiles[9].check.toggle()  # and leave 9 out

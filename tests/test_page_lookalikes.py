@@ -114,6 +114,12 @@ CHECKS = {
         lambda nav, frame: _channel_dialog(nav, frame),
         {"square_hud_hidden"},
     ),
+    # A notice over 主页 gets its blank spot tapped; a page drawn over the
+    # dimmed 主页 (通行证) reads the same home signs through the dimming but
+    # carries its title at the top left (player 4K v0.4.1 2026-11-19: 10
+    # taps, never the back arrow).  No picture of a notice over 主页 that
+    # reads the home signs yet: it may say yes on none of these.
+    "主页上的公告": (lambda nav, frame: _notice_over_home(nav, frame), set()),
     "抽卡结果页": (
         lambda nav, frame: _gacha_result(nav, frame),
         {"gacha_result"},
@@ -136,6 +142,28 @@ CHECKS = {
         {"story_scene"},
     ),
 }
+
+
+def _notice_over_home(nav, frame):
+    from src.utils.home_confirmation import (
+        HOME_LEFT_COLUMN_REQUIRED_HITS,
+        PAGE_TITLE_RELATIVE_ROI,
+        home_temporary_announcement_detected,
+        page_title_shown,
+    )
+    from src.tasks.map_trade.navigator import HOME_DIMMED_P95_THRESHOLD
+
+    _confirmed, left_hits, p95, gacha = nav._home_confirmation_signals(frame)
+    if not home_temporary_announcement_detected(
+        left_hits=left_hits,
+        required_left_hits=HOME_LEFT_COLUMN_REQUIRED_HITS,
+        brightness=p95,
+        brightness_threshold=HOME_DIMMED_P95_THRESHOLD,
+        gacha_ocr_text=gacha,
+    ):
+        return False
+    title = nav.vision.ocr_text(frame, "页面标题", relative_roi=PAGE_TITLE_RELATIVE_ROI)
+    return not page_title_shown(title)
 
 
 def _story_row(frame):

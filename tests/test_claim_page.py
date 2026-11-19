@@ -200,6 +200,80 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class SettleSlowPcTest(unittest.TestCase):
+    """Player 4K v0.4.1 2026-11-19, 沙漠之花席比雅角色通行证: each full-screen
+    look took ~2.6 s; the reward popup closed 3 s into the 10 s, a look or
+    two after it still read covered (a fading banner), and the run stopped
+    with the page open: 「领取后未能回到页面」."""
+
+    LOOK_SECONDS = 2.6
+
+    def _task(self, covered_after_close: float):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from src.tasks import claim_page
+
+        clock = [0.0]
+        patcher = patch.object(claim_page, "monotonic", lambda: clock[0])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        state = {"popup": True, "closed_at": None}
+        presses = []
+        popup_box = SimpleNamespace(name="点击画面即可返回")
+
+        def sleep(seconds=0.0):
+            clock[0] += max(seconds, 0.0)
+
+        def capture():
+            clock[0] += self.LOOK_SECONDS
+            return None
+
+        def covered():
+            if state["popup"]:
+                return True
+            return clock[0] - state["closed_at"] < covered_after_close
+
+        def click_box(_box, after_sleep=0.0):
+            presses.append("close")
+            state["popup"] = False
+            sleep(after_sleep)
+            state["closed_at"] = clock[0]
+
+        task = SimpleNamespace(
+            config={},
+            info_set=lambda *a, **k: None,
+            log_info=lambda *a, **k: None,
+            capture_frame=capture,
+            _roi_boxes=lambda *a, **k: [popup_box] if state["popup"] else [],
+            _boxes_text=lambda boxes: " ".join(b.name for b in boxes),
+            _box_with=lambda boxes, keywords: next(
+                (b for b in boxes if any(k in b.name for k in keywords)), None
+            ),
+            _save_reward_picture=lambda *a: None,
+            _click_box=click_box,
+            _frame_brightness=lambda frame: 20.0 if covered() else 80.0,
+            _title_visible=lambda *a: not covered(),
+            _click_reference=lambda *a, **k: presses.append("tap") or sleep(k.get("after_sleep", 0)),
+            sleep=sleep,
+            tap_escape=lambda after_sleep=0.0: presses.append("esc") or True,
+            _note_why=lambda *a: None,
+            _save_flow_diagnostic=lambda *a: None,
+            claim_log_name="pass",
+        )
+        return task, presses
+
+    def test_page_back_after_a_covered_look_on_a_slow_pc(self):
+        task, presses = self._task(covered_after_close=6.0)
+        self.assertTrue(ClaimPageMixin._settle_after_claim(task, "席比雅", ("通行证",), 80.0))
+        self.assertEqual(["close"], presses)
+
+    def test_page_covered_for_good_still_fails(self):
+        task, presses = self._task(covered_after_close=10_000.0)
+        self.assertFalse(ClaimPageMixin._settle_after_claim(task, "席比雅", ("通行证",), 80.0))
+        self.assertEqual(1, presses.count("esc"))
+
+
 class OverrideSignatureTest(unittest.TestCase):
     """Live 2026-09-28: a shared helper added to ClaimPageMixin had the name
     of CraftGearTask's own method, and craft gear crashed on the bag page."""

@@ -1,8 +1,8 @@
-"""塔洛斯教材: this month's nine stages (cleared or not) and one start button.
+"""塔洛斯教材: this period's stages (cleared or not) and one start button.
 
 Leo 2026-10-28 「放側邊欄」: its own page in the sidebar.
-The nine tiles are laid out like the game's stage list (1 2 3 / 4 5 6 /
-7 8 9); a tile says cleared, not played, failed last time (why on hover) or
+The tiles are laid out like the game's stage list, row by row (3x3 for
+nine stages, 4x4 for sixteen); a tile says cleared, not played, failed last time (why on hover) or
 being played now.  Leo 2026-10-28 「要可以選擇關卡 預設全選排除打過的」: a
 tile is ticked by a click, the stages not cleared are ticked to begin with.
 开始打 runs TalosTask (src/tasks/TalosTask.py) on the ticked stages: from
@@ -56,6 +56,7 @@ class StageTile(Inset):
         "fail": ("fail", "上次没打下来"),
         "run": ("run", "正在打"),
         "unknown": ("wait", "还没看过"),
+        "none": ("wait", "还没有轴"),  # the guide has no chart for it yet: skipped
     }
 
     toggled = Signal(int, bool)
@@ -106,7 +107,6 @@ class TalosPage(Page):
 
     def __init__(self, parent=None):
         super().__init__("shellTalos", "塔洛斯教材", "", parent)
-        self.set_sub("每月 9 关，照内建的轴自动打；打过的跳过，打完去任务领奖")
 
         card = Card()
         column = vbox(card, (22, 20, 22, 20), 14)
@@ -121,11 +121,12 @@ class TalosPage(Page):
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(10)
         self.tiles: dict[int, StageTile] = {}
-        for stage in range(1, 10):
+        columns = _stages().grid_columns(_stages().STAGE_COUNT)  # the game's list: 3x3, 4x4
+        for stage in range(1, _stages().STAGE_COUNT + 1):
             tile = StageTile(stage)
             tile.toggled.connect(self._toggled)
             self.tiles[stage] = tile
-            grid.addWidget(tile, (stage - 1) // 3, (stage - 1) % 3)
+            grid.addWidget(tile, (stage - 1) // columns, (stage - 1) % columns)
         column.addLayout(grid)
 
         self.start_button = Button("开始打", "primary", "play", "lg", on_click=self.start)
@@ -140,6 +141,7 @@ class TalosPage(Page):
         self._picked: set[int] | None = None
         self._cleared: set[int] = set()
         self._was_busy = False
+        self._no_record = set(_stages().missing_records())
 
     def task(self):
         return data.task_by_class_name(TASK)
@@ -189,13 +191,17 @@ class TalosPage(Page):
                 tile.set_state("done")
             elif stage in progress.failed:
                 tile.set_state("fail", progress.failed[stage])
+            elif stage in self._no_record:
+                tile.set_state("none")
             elif not progress.known:
                 tile.set_state("unknown")
             else:
                 tile.set_state("todo")
         done = len(progress.cleared)
+        total = len(self.tiles)
+        self.set_sub(tf("本期 {n} 关，照内建的轴自动打；打过的跳过，打完去任务领奖", n=total))
         if progress.known or done:
-            set_pill(self.count, tf("已打完 {n}/9", n=done), "ok" if done == 9 else None)
+            set_pill(self.count, tf("已打完 {n}/{total}", n=done, total=total), "ok" if done == total else None)
         else:
             set_pill(self.count, t("开始后先看游戏里打过哪些"))
         self.start_button.setEnabled(not busy and bool(picked))

@@ -76,6 +76,11 @@ SETTLED_BRIGHTNESS_RATIO = 0.8
 # Title-bar brightness before and after a blind tap counts as unchanged.
 SAME_BRIGHTNESS_DELTA = 3.0
 SETTLED_CALM_SECONDS = 1.2
+# Looks after the last tap before 「没回到页面」: a full-screen read takes
+# ~2.6 s at 4K on a player's PC (v0.4.1 2026-11-19), so the 10 s fitted three
+# looks after the reward popup closed; one look still under a fading banner
+# left too few calm ones and 沙漠之花席比雅角色通行证 failed on its own page.
+SETTLE_MIN_LOOKS = 3
 # Live 2K: lit 252 (pass) / 213 (mission), grey 127 / 82.  Under the grey
 # line only when clearly grey: a lit mission pill darkened a quarter by a
 # screen filter or HDR reads 160 and must still be pressed, while a grey one
@@ -584,7 +589,9 @@ class ClaimPageMixin(TaskVisionMixin):
         title_keywords: tuple[str, ...],
         baseline_brightness: float,
     ) -> bool:
-        end_at = monotonic() + float(self.config.get("领取结果等待秒数", 10.0))
+        wait = float(self.config.get("领取结果等待秒数", STUCK_SECONDS))
+        end_at = monotonic() + wait
+        hard_end = monotonic() + LOADING_MAX_SECONDS  # 自己等：每关一次弹窗等待重算，总共不超过这个
         stable_frames = 0
         unknown_frames = 0
         blind_taps = 0
@@ -592,9 +599,23 @@ class ClaimPageMixin(TaskVisionMixin):
         handled = 0
         tapped_brightness = None
         calm_since = monotonic()
-        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
-        while not looked or monotonic() <= end_at:
-            looked = True
+        looks = 0  # 上次点击之后看了几眼
+        last_seen = "没看到页面"
+
+        def acted() -> None:
+            # Each tap (popup closed, blank tap, Esc) is progress: the 10 s
+            # count starts again from it, and the page gets its looks.
+            nonlocal end_at, looks
+            end_at = max(end_at, monotonic() + wait)  # 自己等：从这次点击重新算 10 秒
+            looks = 0
+
+        while True:
+            now = monotonic()
+            if looks and now > hard_end:
+                break
+            if looks >= SETTLE_MIN_LOOKS and now > end_at:
+                break
+            looks += 1
             frame = self.capture_frame()
             boxes = self._roi_boxes(frame, None, f"{label}结果")
             text = self._boxes_text(boxes)
@@ -602,11 +623,13 @@ class ClaimPageMixin(TaskVisionMixin):
 
             dismiss = self._box_with(boxes, OVERLAY_DISMISS_KEYWORDS)
             if dismiss is not None:
+                last_seen = "奖励弹窗还在"
                 self._save_reward_picture(frame)
                 self.log_info(f"{label}：关闭奖励弹窗（{getattr(dismiss, 'name', '')}）。")
                 self._click_box(dismiss, after_sleep=0.8)  # 不用确认：循环里弹窗还在下一轮再关
                 stable_frames = unknown_frames = 0
                 handled += 1
+                acted()
                 continue
             if keyword_match_count(text, REWARD_DIALOG_TITLES) >= 1:
                 confirm = self._box_with(boxes, (CONFIRM_TEXT,))
@@ -616,6 +639,7 @@ class ClaimPageMixin(TaskVisionMixin):
                     self._click_box(confirm, after_sleep=0.8)  # 不用确认：循环里弹窗还在下一轮再按确认
                     stable_frames = unknown_frames = 0
                     handled += 1
+                    acted()
                     continue
 
             brightness = self._frame_brightness(frame)
@@ -633,6 +657,15 @@ class ClaimPageMixin(TaskVisionMixin):
                 # title bar, live 2K 2026-09-29) that has faded since.
                 baseline_brightness = brightness
                 dimmed = False
+            if not title_visible:
+                last_seen = "左上角没读到页面标题（弹窗或提示还盖着）"
+            elif dimmed:
+                last_seen = (
+                    f"页面在但偏暗（亮度 {brightness:.0f}，领取前 {baseline_brightness:.0f}），"
+                    "像是还有东西盖着"
+                )
+            else:
+                last_seen = "回到页面了，但还没稳定够久"
             if title_visible and not dimmed:
                 unknown_frames = 0
                 stable_frames += 1
@@ -657,6 +690,7 @@ class ClaimPageMixin(TaskVisionMixin):
                     blind_taps += 1
                     handled += 1
                     unknown_frames = 0
+                    acted()
                     continue
                 if unknown_frames >= 3 and not escaped:
                     # Three blank-space taps did not close it (player
@@ -666,12 +700,13 @@ class ClaimPageMixin(TaskVisionMixin):
                     if self.tap_escape(after_sleep=0.8):
                         tapped_brightness = brightness
                         handled += 1
+                        acted()
                     unknown_frames = 0
                     continue
             self.sleep(0.5)
 
-        self.log_info(f"{label}：领取后未能回到页面。")
-        self._note_why(f"领取后弹窗没关掉，没回到「{label}」页面")
+        self.log_info(f"{label}：领取后未能回到页面（最后一眼：{last_seen}）。")
+        self._note_why(f"领取后{last_seen}，没等到「{label}」页面稳定下来")
         self._save_flow_diagnostic(f"{self.claim_log_name}_{label}_settle_failed")
         return False
 

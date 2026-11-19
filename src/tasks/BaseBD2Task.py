@@ -43,7 +43,9 @@ from src.utils.frozen_screen import (
 from src.utils.game_day import DAILY_REFRESH_HOUR
 from src.utils.home_confirmation import (
     HOME_ANNOUNCEMENT_CLEAR_RELATIVE_POINT,
+    PAGE_TITLE_RELATIVE_ROI,
     home_temporary_announcement_detected,
+    page_title_shown,
 )
 from src.utils.image_utils import (
     best_pixel_valid_match,
@@ -2070,6 +2072,17 @@ class BaseBD2Task(BaseTask):
             gacha_ocr_text=gacha_ocr_text,
         ):
             return False
+        title = self._page_title_over_home()
+        if title:
+            # A page drawn over the dimmed 主页 (通行证), not a notice: its
+            # blank spot does nothing there, its back arrow goes home.
+            if title != getattr(self, "_page_over_home_logged", ""):
+                self._page_over_home_logged = title
+                self.log_info(
+                    f"{context}：主页字样透过暗下来的画面读得到，但左上角是「{title}」页面，"
+                    "不是公告，不点公告空白处。"
+                )
+            return False
 
         now = monotonic()
         last_click_at = float(
@@ -2092,6 +2105,24 @@ class BaseBD2Task(BaseTask):
         self._sleep_after_recognition()
         self.operate_click(clear_x, clear_y, after_sleep=0.2)
         return True
+
+    def _page_title_over_home(self) -> str:
+        """The page title read at the top left now ("" when none)."""
+        try:
+            from src.tasks.map_trade.vision import Vision
+
+            vision = getattr(self, "_page_title_vision", None)
+            if vision is None:
+                vision = self._page_title_vision = Vision(self)
+            text = vision.ocr_text(
+                self.capture_frame(), "主页上的页面标题", relative_roi=PAGE_TITLE_RELATIVE_ROI
+            )
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception as exc:  # no title read: the notice check stands as before
+            self.info_set("主页上的页面标题 OCR 错误", str(exc))
+            return ""
+        return str(text).strip() if page_title_shown(text) else ""
 
     def open_cartridge_quick_switcher(
         self,

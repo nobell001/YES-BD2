@@ -22,6 +22,7 @@ run is paused the in-game status bar can pick another stage (stage_picker).
 from __future__ import annotations
 
 import re
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 
@@ -54,8 +55,19 @@ TITLE_KEYWORDS = ("塔洛斯战术教材", "塔洛斯戰術教材", "战术教�
 TILE_X = (1221, 1445, 1670)
 TILE_Y = (313, 537, 762)
 TILE_HALF = 70
+# Tile centres for each grid the list has been seen with: columns ->
+# (x of each column, y of each row, half a tile).  2026-11-19: sixteen
+# stages on a 4x4 list, tiles ~201 px apart (round pictures found with
+# HoughCircles on a 1080p guide video frame of the whole game window).
+TILE_LAYOUTS: dict[int, tuple[tuple[int, ...], tuple[int, ...], int]] = {
+    3: (TILE_X, TILE_Y, TILE_HALF),
+    4: ((1142, 1343, 1545, 1746), (235, 438, 639, 840), 63),
+}
+# 「活动 还剩27天」 under the title (2K PC 10-28, guide video 11-19).
+PERIOD_ROI = (230, 72, 330, 38)
 CLEARED_X = Path(__file__).resolve().parent / "talos" / "data" / "cleared_x.png"
 CLEARED_MIN, NOT_CLEARED_MAX = 0.7, 0.55
+LIST_GRID_MIN, LIST_GRID_OTHER_MAX = 0.6, 0.3  # share of a grid's tiles with a round picture
 MARKS_SETTLE = 1.2  # the ✕ fades in after the list shows
 
 # The stage's popup (2K PC 2026-10-28): 「关卡N 普通」 top left, 战斗 bottom
@@ -111,7 +123,7 @@ class TalosTask(_ClaimTaskBase):
         super().__init__(*args, **kwargs)
         self.name = LABEL
         self.description = (
-            "主页 → 塔洛斯战术教材 → 没打过的关卡照内建的轴自动打（第 1~9 关）"
+            f"主页 → 塔洛斯战术教材 → 没打过的关卡照内建的轴自动打（第 1~{stages.STAGE_COUNT} 关）"
             " → 任务全部获得。出错的关会退出、再打一次，还不行就跳过打下一关。"
         )
         self.icon = FluentIcon.GAME
@@ -141,14 +153,18 @@ class TalosTask(_ClaimTaskBase):
         picked, self._resume_pick = self._resume_pick, None
         self._plan = list(chosen) if chosen is not None else None
         self.stage_picker.chosen = None  # a pick left by a stopped run is not this run's
-        missing = stages.missing_records()
-        if missing:
-            self._note_why(f"工具里少了第 {missing} 关的轴（请更新工具）")
+        if not stages.STAGE_COUNT:
+            self._note_why("工具里没有塔洛斯的轴（请更新工具）")
             return self._claim_fail("准备")
         path = accounts.path(stages.PROGRESS_FILE)
         progress = stages.Progress.load(path, stages.edition())
         if not self._open_page_from_home(LABEL, self._entry_point, TITLE_KEYWORDS):
             return self._claim_fail(f"打开{LABEL}")
+        other = self._other_period(progress)
+        progress.save(path)
+        if other:
+            self._leave_to_home(LABEL, TITLE_KEYWORDS)
+            return self._report_not_updated(other)
         marks = self._read_marks()
         progress.merge_screen(marks)
         progress.save(path)
@@ -156,6 +172,11 @@ class TalosTask(_ClaimTaskBase):
         queue = sorted(set(chosen)) if chosen is not None else stages.to_play(progress.cleared)
         if picked is not None:
             queue = stages.next_order(picked, progress.cleared)
+        # 攻略网站 had no chart for these yet (Leo 11-19: skip them, say why)
+        no_record = [stage for stage in queue if stage in stages.missing_records()]
+        queue = [stage for stage in queue if stage not in no_record]
+        if no_record:
+            self.log_info(f"{LABEL}：第 {no_record} 关还没有轴（攻略网站还没出），先跳过")
         self.log_info(
             f"{LABEL}：已打过 {sorted(progress.cleared) or '无'}，这次要打 {queue or '无'}"
         )
@@ -178,14 +199,16 @@ class TalosTask(_ClaimTaskBase):
             progress.save(path)
         claimed = self._claim_missions()
         self._leave_to_home(LABEL, TITLE_KEYWORDS)  # the next task starts from 主页
-        return self._report(progress.cleared, claimed)
+        return self._report(progress.cleared, claimed, no_record)
 
-    def _report(self, cleared: set[int], claimed: bool | None) -> bool:
+    def _report(self, cleared: set[int], claimed: bool | None, no_record: list[int] = ()) -> bool:
         failed = {stage: why for stage, why in self._results.items() if why != "won"}
         done = sorted(cleared)
         parts = [f"已通关 {len(done)}/{stages.STAGE_COUNT}：{done or '无'}"]
         for stage, why in sorted(failed.items()):
             parts.append(f"第 {stage} 关没打下来（{why}）")
+        if no_record:
+            parts.append(f"第 {list(no_record)} 关还没有轴（攻略网站还没出），跳过")
         if claimed is True:
             parts.append("任务奖励已全部领取")
         elif claimed is False:
@@ -199,6 +222,43 @@ class TalosTask(_ClaimTaskBase):
             self._note_why("；".join(f"第 {s} 关：{w}" for s, w in sorted(failed.items())))
             return self._claim_fail("打关")
         return True
+
+    def _report_not_updated(self, why: str) -> bool:
+        """Leo 2026-11-19 「如果週期沒對上 就先跳出 跟用戶說攻略尚未更新」: not a
+        failure of the tool, nothing kept; the next run looks again."""
+        message = f"攻略尚未更新：{why}，这次先不打"
+        self.info_set("结果", message)
+        self.log_info(f"{LABEL}：{message}", notify=True)
+        return True
+
+    # -- a new period -------------------------------------------------------------
+
+    def _other_period(self, progress: stages.Progress) -> str:
+        """Why the list on screen is another period than the records ("" when
+        it is the records' period).  The period's end read with these records
+        is kept in ``progress`` (one of the cues next time)."""
+        frame = self.capture_frame()
+        columns = list_columns(frame)
+        text = self._boxes_text(self._reference_boxes(frame, PERIOD_ROI, "活动剩余天数"))
+        today = game_date()
+        end = stages.period_end(text, today)
+        why = stages.period_change(
+            count=stages.STAGE_COUNT,
+            columns=columns,
+            end=end,
+            made=stages.records_made(),
+            seen_end=progress.period_end,
+            today=today,
+        )
+        grid = f"{columns}x{columns}" if columns else "认不出"
+        self.log_info(
+            f"{LABEL}：关卡格 {grid}，「{text or '没读到剩余天数'}」→ 这期到 {end or '不知道'}"
+            f"，工具里的轴 {stages.STAGE_COUNT} 关（{stages.records_made() or '日期不明'}）"
+            + (f"；换期了：{why}" if why else "")
+        )
+        if not why and end is not None and progress.period_end is None:
+            progress.period_end = end
+        return why
 
     # -- one stage ----------------------------------------------------------------
 
@@ -309,7 +369,7 @@ class TalosTask(_ClaimTaskBase):
     def _popup_visible(self, frame=None, stage: int | None = None) -> bool:
         frame = self.capture_frame() if frame is None else frame
         text = self._text_in(frame, POPUP_TITLE_ROI, "关卡标题")
-        found = re.search(r"关卡\s*(\d)", text.replace("關", "关"))
+        found = re.search(r"关卡\s*(\d+)", text.replace("關", "关"))
         if found is None:
             return False
         return stage is None or int(found.group(1)) == stage
@@ -369,7 +429,7 @@ class TalosTask(_ClaimTaskBase):
     def _enter_stage(self, stage: int) -> bool:
         """Stage popup → 战斗 → the fight (planning screen, or the game's own auto battle)."""
         self.check_switch()
-        x, y = TILE_X[(stage - 1) % 3], TILE_Y[(stage - 1) // 3]
+        x, y = tile_point(stage)
         if not self.press_and_confirm(
             f"第 {stage} 关",
             lambda: self._click_reference(x, y, after_sleep=1.0),
@@ -616,15 +676,67 @@ def word_centre(box, words: tuple[str, ...]) -> float | None:
     return None
 
 
+def _layout(count: int) -> tuple[tuple[int, ...], tuple[int, ...], int]:
+    columns = stages.grid_columns(count)
+    if columns not in TILE_LAYOUTS:
+        raise ValueError(f"{count} stages: no tile layout for a {columns}x{columns} list")
+    return TILE_LAYOUTS[columns]
+
+
+def game_date() -> date:
+    """Today in game days (the day turns at 08:00 Taiwan time)."""
+    return (datetime.now(timezone(timedelta(hours=8))) - timedelta(hours=8)).date()
+
+
+def list_columns(frame: np.ndarray) -> int | None:
+    """How many tiles a row of the stage list has (3 or 4), from where the
+    round stage pictures are; None when no grid fits clearly.  On the
+    fixtures the right grid has 94-100 % of its tiles found, the other 0 %."""
+    reference = cv2.resize(frame[:, :, :3], (1920, 1080), interpolation=cv2.INTER_AREA)
+    gray = cv2.medianBlur(cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY), 5)
+    found = cv2.HoughCircles(
+        gray, cv2.HOUGH_GRADIENT, dp=1.2, minDist=90, param1=100, param2=40, minRadius=40, maxRadius=85
+    )
+    circles = [] if found is None else found[0]
+    scores = {}
+    for columns, (xs, ys, half) in TILE_LAYOUTS.items():
+        near = half * 0.4
+        hits = sum(
+            any(abs(cx - x) < near and abs(cy - y) < near for cx, cy, _ in circles) for y in ys for x in xs
+        )
+        scores[columns] = hits / (len(xs) * len(ys))
+    best = max(scores, key=scores.get)
+    others = [score for columns, score in scores.items() if columns != best]
+    if scores[best] >= LIST_GRID_MIN and all(score <= LIST_GRID_OTHER_MAX for score in others):
+        return best
+    return None
+
+
+def tile_point(stage: int, count: int = stages.STAGE_COUNT) -> tuple[int, int]:
+    """Centre of stage's tile on the list (1920x1080 reference), row by row."""
+    xs, ys, _ = _layout(count)
+    columns = len(xs)
+    return xs[(stage - 1) % columns], ys[(stage - 1) // columns]
+
+
+def tile_half(count: int = stages.STAGE_COUNT) -> int:
+    return _layout(count)[2]
+
+
 @lru_cache(maxsize=1)
 def _cleared_x() -> np.ndarray:
     return cv2.imdecode(np.fromfile(CLEARED_X, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
 
 
-def cleared_tile(tile: np.ndarray) -> bool | None:
-    """A tile (reference px, TILE_HALF each way) crossed out with the big ✕;
-    None when it can't tell."""
+def cleared_tile(tile: np.ndarray, half: int = TILE_HALF) -> bool | None:
+    """A tile (reference px, ``half`` each way) crossed out with the big ✕;
+    None when it can't tell.  The ✕ was cut from a 3x3 list's tile; a list
+    with smaller tiles (4x4) draws it smaller by the same share."""
     template = _cleared_x()
+    if half != TILE_HALF:
+        scale = half / TILE_HALF
+        size = (max(8, round(template.shape[1] * scale)), max(8, round(template.shape[0] * scale)))
+        template = cv2.resize(template, size, interpolation=cv2.INTER_AREA)
     if tile.shape[0] < template.shape[0] or tile.shape[1] < template.shape[1]:
         return None
     gray = cv2.cvtColor(tile, cv2.COLOR_BGR2GRAY) if tile.ndim == 3 else tile
@@ -645,15 +757,16 @@ def merge_marks(*reads: dict[int, bool]) -> dict[int, bool]:
     return marks
 
 
-def tile_marks(frame: np.ndarray) -> dict[int, bool]:
+def tile_marks(frame: np.ndarray, count: int = stages.STAGE_COUNT) -> dict[int, bool]:
     """Stage -> cleared, read from each tile of the list (unsure ones left out)."""
     reference = cv2.resize(frame[:, :, :3], (1920, 1080), interpolation=cv2.INTER_AREA)
     marks = {}
-    for index in range(stages.STAGE_COUNT):
-        x, y = TILE_X[index % 3], TILE_Y[index // 3]
-        seen = cleared_tile(reference[y - TILE_HALF : y + TILE_HALF, x - TILE_HALF : x + TILE_HALF])
+    half = tile_half(count)
+    for stage in range(1, count + 1):
+        x, y = tile_point(stage, count)
+        seen = cleared_tile(reference[y - half : y + half, x - half : x + half], half)
         if seen is not None:
-            marks[index + 1] = seen
+            marks[stage] = seen
     return marks
 
 

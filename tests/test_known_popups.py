@@ -131,7 +131,7 @@ class EscapeStepTest(unittest.TestCase):
             _home_confirmation_signals=lambda f: (home["now"], 0, 0, ""),
             vision=SimpleNamespace(capture=lambda: frame),
             classify=lambda frame=None: recovery.ScreenState.UNKNOWN,
-            clear_home_announcement=lambda f: False,
+            clear_home_announcement=lambda f, clicks_so_far=0: False,
         )
         outcomes = list(dialogs)
 

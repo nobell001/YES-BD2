@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from typing import Callable
 
@@ -22,6 +23,26 @@ HOME_ANNOUNCEMENT_CLEAR_RELATIVE_POINT = (
     HOME_ANNOUNCEMENT_CLEAR_REFERENCE_POINT[0] / FHD_1080.width,
     HOME_ANNOUNCEMENT_CLEAR_REFERENCE_POINT[1] / FHD_1080.height,
 )
+# Top-left page title beside the back arrow (「通行证」「任务」「邮箱」...).
+# 主页 has no text there, with or without a notice over it.
+PAGE_TITLE_RELATIVE_ROI = (
+    225 / FHD_1080.width,
+    15 / FHD_1080.height,
+    650 / FHD_1080.width,
+    85 / FHD_1080.height,
+)
+_PAGE_TITLE_PATTERN = re.compile(r"[\u4e00-\u9fff]{2,}")
+
+
+def page_title_shown(title_text: object) -> bool:
+    """Two or more Chinese characters read in PAGE_TITLE_RELATIVE_ROI: a page
+    with its own title (and back arrow) is open.
+
+    Some pages are drawn over a dimmed 主页 (通行证, player 4K v0.4.1
+    2026-11-19): 我的小屋/好友 and 抽抽乐 still read through the dimming, the
+    same three signs as a notice over 主页.  Tapping the notice's blank spot
+    there does nothing; the page's back arrow is its way home."""
+    return bool(_PAGE_TITLE_PATTERN.search(str(title_text or "")))
 
 # 左上图标列整列大 ROI（我的小屋/格鲁TALK/街机游戏）。检测模型需要上下文，
 # 禁止单独拆出单标签小 ROI（实测丢字/返回空）。来源：BUG-20260829-01 实测标定。

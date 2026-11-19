@@ -2,14 +2,23 @@
 
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import cv2
 
 from src.tasks import TalosTask as talos_module
 from src.tasks.talos import stages
-from src.tasks.TalosTask import StageSwitch, TalosTask, merge_marks, tile_marks, word_centre
+from src.tasks.TalosTask import (
+    StageSwitch,
+    TalosTask,
+    list_columns,
+    merge_marks,
+    tile_marks,
+    word_centre,
+)
 from tests.helpers.recognition_fixtures import load_fhd_bgr
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "talos"
@@ -41,14 +50,26 @@ class StageListTest(unittest.TestCase):
         }
         for size, frame in frames("list_2k_cleared_1_2_3.png"):
             with self.subTest(size=size):
-                self.assertEqual(expected, tile_marks(frame))
+                self.assertEqual(expected, tile_marks(frame, 9))
+                self.assertEqual(3, list_columns(frame))
+
+    def test_sixteen_stages_on_a_4x4_list(self):
+        # 2026-11-19 period: sixteen stages, 1-4 crossed out
+        expected = {stage: stage <= 4 for stage in range(1, 17)}
+        for size, frame in frames("list_4x4_1080_cleared_1_2_3_4.png"):
+            with self.subTest(size=size):
+                self.assertEqual(4, list_columns(frame))
+                self.assertEqual(expected, tile_marks(frame, 16))
+
+    def test_no_grid_on_a_blank_screen(self):
+        self.assertIsNone(list_columns(load_fhd_bgr(FIXTURES / "list_2k_cleared_1_2_3.png") * 0))
 
     def test_a_gap_is_read_tile_by_tile(self):
         # 2K PC 2026-10-28: 1-4 and 6 crossed, 5 not (counting ✕ would say 6 next)
         expected = {stage: stage in (1, 2, 3, 4, 6) for stage in range(1, 10)}
         for size, frame in frames("list_2k_cleared_1_2_3_4_6.png"):
             with self.subTest(size=size):
-                self.assertEqual(expected, tile_marks(frame))
+                self.assertEqual(expected, tile_marks(frame, 9))
 
     def test_a_cross_seen_in_either_read_counts(self):
         # the ✕ of a stage just won fades in: the first read can miss it
@@ -71,7 +92,8 @@ class StageListTest(unittest.TestCase):
         for size, frame in frames("list_2k_cleared_1_2_3.png"):
             with self.subTest(size=size):
                 dim = cv2.convertScaleAbs(frame, alpha=0.6, beta=20)
-                marks = tile_marks(dim)
+                marks = tile_marks(dim, 9)
+                self.assertEqual(3, list_columns(dim))
                 self.assertEqual([1, 2, 3], [stage for stage, cleared in marks.items() if cleared])
 
 
@@ -131,7 +153,15 @@ class FlowTest(unittest.TestCase):
     """The run with the pages faked: which stages are played, retried, skipped."""
 
     def run_task(
-        self, fights, marks=None, saved=(), claimed=True, chosen=None, resume=None, left_pick=None
+        self,
+        fights,
+        marks=None,
+        saved=(),
+        claimed=True,
+        chosen=None,
+        resume=None,
+        left_pick=None,
+        other="",
     ):
         """``fights``: stage -> list of (won, why) for each try."""
         task = bare_task()
@@ -152,6 +182,7 @@ class FlowTest(unittest.TestCase):
                 mock.patch.object(talos_module.accounts, "path", lambda name: path),
                 mock.patch.object(TalosTask, "_open_page_from_home", lambda *a: True),
                 mock.patch.object(TalosTask, "_read_marks", lambda self: dict(marks or {})),
+                mock.patch.object(TalosTask, "_other_period", lambda self, progress: other),
                 mock.patch.object(TalosTask, "_to_list", lambda self: True),
                 mock.patch.object(TalosTask, "_open_stage", lambda self, stage: True),
                 mock.patch.object(TalosTask, "_fight", lambda self, stage: fight(stage)),
@@ -167,6 +198,16 @@ class FlowTest(unittest.TestCase):
                 result = task.run_claim()
             kept = stages.Progress.load(path, stages.edition()).cleared
         return task, result, played, kept
+
+    def test_another_period_stops_and_says_the_guide_is_not_updated(self):
+        # Leo 2026-11-19 「如果週期沒對上 就先跳出 跟用戶說攻略尚未更新」
+        fights = {stage: [(True, "")] for stage in range(1, 10)}
+        task, result, played, _ = self.run_task(fights, other="游戏这期的关卡是 4x4")
+        self.assertTrue(result)  # not a failure of the tool: nothing to play yet
+        self.assertEqual([], played)
+        self.assertIn("攻略尚未更新", task.info["结果"])
+        self.assertIn("home", task.lines)  # back to 主页 for the next task
+
 
     def test_plays_the_uncleared_stages_in_order_and_remembers_them(self):
         fights = {stage: [(True, "")] for stage in range(1, 10)}
@@ -352,6 +393,30 @@ class ScreenSwitchTest(unittest.TestCase):
         with mock.patch.object(GameFightScreen, "press_battle") as press:
             screen.press_battle()
         press.assert_called_once()
+
+
+class PeriodLockTest(unittest.TestCase):
+    """The list itself tells a new period (no update, no network)."""
+
+    def check(self, name, words, today):
+        task = bare_task()
+        task.capture_frame = lambda: load_fhd_bgr(FIXTURES / name)
+        task._reference_boxes = lambda frame, roi, label: [SimpleNamespace(name=words)]
+        progress = stages.Progress("x")
+        with mock.patch.object(talos_module, "game_date", lambda: today):
+            why = task._other_period(progress)
+        return why, progress
+
+    def test_the_records_own_period(self):
+        # 2K PC 10-28 with the shipped nine (made 10-22): 21 days left
+        why, progress = self.check("list_2k_cleared_1_2_3.png", "活动还剩21天", date(2026, 10, 28))
+        self.assertEqual("", why)
+        self.assertEqual(date(2026, 11, 18), progress.period_end)  # remembered for next time
+
+    def test_sixteen_stages_with_last_period_records(self):
+        why, progress = self.check("list_4x4_1080_cleared_1_2_3_4.png", "活动还剩27天", date(2026, 11, 19))
+        self.assertIn("4x4", why)
+        self.assertIsNone(progress.period_end)
 
 
 if __name__ == "__main__":

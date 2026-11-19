@@ -416,6 +416,31 @@ def status_bar_steps(shell) -> list[Step]:
     ]
 
 
+def favorites_steps(shell) -> list[Step]:
+    """Leo 2026-11-19 「更新後提醒用戶去打開新的收藏清單」: the chart now
+    stripes the dear goods that may be unfavourited, and links his video."""
+
+    def trade_item():
+        return shell.sidebar.items.get("trade")
+
+    def favorites_row():
+        return getattr(shell.pages.get("trade"), "favorites_row", None)
+
+    return [
+        Step(
+            trade_item,
+            "收藏清单更新了",
+            "跑商改版了：高价的蘑菇、虾、袋装鸡胸肉，做完料理还剩很多时可以取消收藏。",
+        ),
+        Step(
+            favorites_row,
+            "打开收藏清单",
+            "点这里打开，斜线格就是可以取消收藏的。里面也有新规则的影片可以看。",
+            before=lambda: shell.navigate("trade"),
+        ),
+    ]
+
+
 def _show_once(shell, class_name: str, key: str, steps, on_done: Callable[[], None]) -> bool:
     task = data.task_by_class_name(class_name)
     config = getattr(task, "config", None)
@@ -492,7 +517,15 @@ def show_status_bar_notice(shell, on_done: Callable[[], None] = lambda: None) ->
     return _show_once(shell, "DailyBatchTask", STATUS_BAR_NOTICE_KEY, status_bar_steps, on_done)
 
 
+def show_favorites_notice(shell, on_done: Callable[[], None] = lambda: None) -> bool:
+    """Show 跑商's updated 收藏清单 once after this update."""
+    from src.tasks.MapTradeTask import FAVORITES_NOTICE_KEY
+
+    return _show_once(shell, "MapTradeTask", FAVORITES_NOTICE_KEY, favorites_steps, on_done)
+
+
 NOTICES = (
+    show_favorites_notice,
     show_new_dailies_notice,
     show_quick_hunt_notice,
     show_event_battle_notice,

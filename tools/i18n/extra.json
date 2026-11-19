@@ -2133,5 +2133,30 @@
   "en": "Enter the story in the clone window; it pauses on the home screen, press Continue once you're in",
   "ja": "分身ウィンドウでストーリーに入ってください。ホームでは一時停止し、入ったら「続行」を押します",
   "ko": "분신 창에서 스토리로 들어가세요. 홈에서는 일시정지되며, 들어간 뒤 계속을 누르세요"
+ },
+ "看影片": {
+  "en": "Watch video",
+  "ja": "動画を見る",
+  "ko": "영상 보기"
+ },
+ "收藏清单更新了": {
+  "en": "Favorites chart updated",
+  "ja": "お気に入り早見表が更新されました",
+  "ko": "즐겨찾기 표가 업데이트됐어요"
+ },
+ "跑商改版了：高价的蘑菇、虾、袋装鸡胸肉，做完料理还剩很多时可以取消收藏。": {
+  "en": "Trade Run changed: the high-price Mushroom, Shrimp and Chicken Breast Pack can be unfavourited when plenty is left after cooking.",
+  "ja": "交易周回が改定されました：高価なキノコ・エビ・鶏の胸肉パックは、料理のあとも大量に余るならお気に入りを外せます。",
+  "ko": "교역 파밍이 바뀌었어요: 비싼 버섯·새우·닭가슴살 팩은 요리 후에도 많이 남으면 즐겨찾기를 해제해도 됩니다."
+ },
+ "打开收藏清单": {
+  "en": "Open the favorites chart",
+  "ja": "お気に入り早見表を開く",
+  "ko": "즐겨찾기 표 열기"
+ },
+ "点这里打开，斜线格就是可以取消收藏的。里面也有新规则的影片可以看。": {
+  "en": "Click here to open it. Striped cells are the ones you can unfavourite. There is also a video on the new rules.",
+  "ja": "ここを押すと開きます。斜線のマスがお気に入りを外せる商品です。新ルールの動画も見られます。",
+  "ko": "여기를 눌러 여세요. 빗금 칸이 즐겨찾기를 해제해도 되는 상품입니다. 새 규칙 영상도 볼 수 있어요."
  }
 }

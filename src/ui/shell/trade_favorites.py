@@ -22,6 +22,7 @@ from src.tasks.map_trade.data import (
 )
 from src.ui.shell import icons, motion, theme
 from src.ui.shell.widgets import (
+    Button,
     Card,
     IconTile,
     Inset,
@@ -46,6 +47,17 @@ SHEET = (
 
 
 SPARE_FAVORITES_NOTE = "斜线格是高价的蘑菇、虾、袋装鸡胸肉，做完料理还剩很多时可以取消收藏"
+# Leo's video on the 2026-11-19 跑商 changes (Leo 2026-11-19 「收藏清單 加個
+# 超連結連到我的新影片」).  Opens in the player's browser; nothing is fetched.
+TRADE_VIDEO_URL = "https://www.bilibili.com/video/BV1qQst6BE4e/"
+TRADE_VIDEO_LABEL = "看影片"
+
+
+def open_trade_video() -> None:
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QDesktopServices
+
+    QDesktopServices.openUrl(QUrl(TRADE_VIDEO_URL))
 
 
 def chart_cells(code: str) -> list[bool]:
@@ -282,6 +294,11 @@ class FavoritesCard(Card):
         line = hbox(spare, (12, 9, 12, 9), 10)
         line.addWidget(IconTile("info", 28, 16, kind="trade"))
         line.addWidget(Text(SPARE_FAVORITES_NOTE, "sub", wrap=True), 1)
+        self.video_button = Button(
+            TRADE_VIDEO_LABEL, "secondary", "play", size="sm", on_click=open_trade_video
+        )
+        self.video_button.setToolTip(TRADE_VIDEO_URL)
+        line.addWidget(self.video_button, 0, Qt.AlignVCenter)
         column.addWidget(spare)
         from qfluentwidgets import FlowLayout
 

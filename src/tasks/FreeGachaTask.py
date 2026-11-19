@@ -915,9 +915,18 @@ RESULT_CURRENCY_KEYWORDS = ["付费", "免费"]
 TICKET_POPUP_MIN_HITS = 2
 
 
+# 主页's bottom button 「付费商店」 is no 「付费」 currency: under the 通行证
+# page (drawn over a dimmed 主页) it read with the pass's 「20/24」 as a result
+# page (player 4K v0.4.1 2026-11-19, tests/test_page_lookalikes.py).
+NOT_CURRENCY_WORDS = ("付费商店", "付費商店")
+
+
 def result_page_text(text: str) -> bool:
+    currency_text = str(text)
+    for word in NOT_CURRENCY_WORDS:
+        currency_text = currency_text.replace(word, " ")
     return bool(count_values(text)) and (
-        keyword_match_count(text, RESULT_CURRENCY_KEYWORDS) >= 1
+        keyword_match_count(currency_text, RESULT_CURRENCY_KEYWORDS) >= 1
     )
 
 
