@@ -297,6 +297,12 @@ class AutoLoginTask(BaseBD2Task):
         if game_running() is not False:  # running, or cannot tell
             self._game_gone_since = None
             return False
+        watch = getattr(self, "_no_picture", None)
+        if watch is not None:
+            # A gone game drew nothing for that process only: the next
+            # opening gets its own full time before it is closed again
+            # (Codex P2 on #609).
+            watch.reset()
         if self._state != "waiting":
             # Closed mid-login: the next opening logs in from the start.
             self._reset_login_state()

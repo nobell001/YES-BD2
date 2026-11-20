@@ -270,6 +270,27 @@ class AutoLoginNoPictureTest(unittest.TestCase):
         self.assertEqual([1], task.reopened)
 
 
+    def test_a_closed_game_gives_the_next_opening_its_full_time(self):
+        """The game went away mid-count (closed, crashed): the next process
+        is not closed on its first flat look (Codex P2 on #609)."""
+        task = _login_task()
+        clock = Clock()
+        task._no_picture = NoPictureWatch(FakeLog(130), clock)
+        frame = _read(PLAYER_FRAME)
+        task._set_stage = lambda *_a, **_k: None
+        task._set_action = lambda *_a, **_k: None
+        task._cancel_run_when_game_stays_gone = lambda: None
+        with mock.patch.object(module.game_process, "close_game", return_value=True) as close:
+            for second in range(int(NO_PICTURE_SECONDS) - 2):
+                clock.now = 100.0 + second
+                self.assertFalse(task._game_draws_nothing(frame))
+            with mock.patch.object(module, "game_running", return_value=False):
+                self.assertTrue(task._game_closed())
+            clock.now = 100.0 + NO_PICTURE_SECONDS + 5
+            self.assertFalse(task._game_draws_nothing(frame))  # a new count starts
+            close.assert_not_called()
+
+
 class PlayerLogPathTest(unittest.TestCase):
     def test_path_under_the_users_locallow(self):
         with mock.patch.dict(game_no_picture.os.environ, {"USERPROFILE": "C:/Users/p"}):
