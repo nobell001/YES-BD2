@@ -392,6 +392,28 @@ def _navigator_may_help(task, navigator) -> bool:
     return False
 
 
+def _leave_task_fight(task) -> str:
+    """A task's own fight screen, left its own way before anything else is
+    pressed: "none", "left" or "stuck" (``task.leave_own_fight``).
+
+    塔洛斯 (YES-BD2 #90, player 2026-11-20): on its fight screen the top
+    right is ‖, where the house sits on other pages, and its 暂停 menu ends
+    in 点击继续, which reads as a popup to close.  The way home pressed the
+    blind house (暂停 opened), closed the menu by 点击继续, pressed back,
+    H and Esc, which do nothing in a fight, and went round again: eleven
+    minutes, stages 5-10, until the player stopped it."""
+    leave = getattr(task, "leave_own_fight", None)
+    if not callable(leave):
+        return "none"
+    try:
+        return str(leave() or "none")
+    except (TaskDisabledException, FinishedException):
+        raise
+    except Exception as exc:
+        task.log_info(f"恢复主页：看是不是还在战斗里时出错：{exc!r}")
+        return "none"
+
+
 def _recover_to_home(task, attempts: int) -> bool:
     vision = Vision(task)
     navigator = Navigator(task, vision)
@@ -414,6 +436,14 @@ def _recover_to_home(task, attempts: int) -> bool:
             return True
         if attempt == 1:
             _note_leaving_step(task, navigator)
+        fight = _leave_task_fight(task)
+        if fight == "left":
+            continue
+        if fight == "stuck":
+            task._recovery_why = "还在战斗画面里，按右上角暂停 → 离开退不出这场战斗"
+            task.log_warning(f"恢复主页：{task._recovery_why}。", notify=True)
+            _keep_failure_picture(task, navigator)
+            return False
         state = navigator.classify()
         task.info_set("恢复主页", f"第{attempt}次：{state.value}")
         if state == ScreenState.HOME:

@@ -193,10 +193,27 @@ class PassRewardTask(_ClaimTaskBase):
         self._pass_misses: dict[str, str] = {}
         claimed = 0
         scrolls = 0
-        for _step in range(PASS_MAX_CARDS * PASS_MAX_VISITS + PASS_LIST_SCROLL_ROUNDS + 1):
+        rechecked: set[str] = set()
+        last_look = False
+        for _step in range(
+            PASS_MAX_CARDS * (PASS_MAX_VISITS + 2) + 2 * PASS_LIST_SCROLL_ROUNDS + 2
+        ):
             frame = self.capture_frame()
             target = self._next_pass_badge(frame, skipped)
             if target is None:
+                if scrolls >= PASS_LIST_SCROLL_ROUNDS and not last_look:
+                    last_look = True
+                    if self._recheck_skipped(None, skipped, visits, rechecked):
+                        # Passes left grey with their red ◆! still on: one
+                        # last look from the top of the list, in case the
+                        # press on the card was not taken and the button
+                        # read was the pass shown before (YES-BD2 #89).
+                        for _ in range(scrolls):
+                            self.scroll_client(
+                                PASS_LIST_SCROLL_POINT, 1, count=3, interval=0.05, after_sleep=0.8
+                            )
+                        scrolls = PASS_LIST_SCROLL_ROUNDS
+                        continue
                 if scrolls >= PASS_LIST_SCROLL_ROUNDS:
                     break
                 scrolls += 1
@@ -215,6 +232,8 @@ class PassRewardTask(_ClaimTaskBase):
             if not self._claim_badged_pass(key, badge_y):
                 return self._claim_fail(f"领取{key}")
             claimed += 1
+            if key not in self._pass_misses:
+                self._recheck_skipped(key, skipped, visits, rechecked)
         self.info_set("通行证数量", claimed)
         if not claimed and not skipped:
             # Said in the run report too: a pass the game shows as claimable
@@ -228,6 +247,39 @@ class PassRewardTask(_ClaimTaskBase):
         if not self._leave_to_home("通行证", PASS_TITLE_KEYWORDS):
             return self._claim_fail("通行证返回主页")
         return True
+
+    def _recheck_skipped(
+        self, key: str | None, skipped: dict[str, str], visits: dict[str, int], rechecked: set[str]
+    ) -> bool:
+        """A claim can make another pass claimable: one more look at the
+        passes left as having nothing to claim (grey or no 全部获得).
+
+        YES-BD2 #89 (player 2560x1440, 简中, 2026-11-20 10:43): Blood Royale
+        赛季通行证 kept its red ◆! with 全部获得 grey and no badged tab, was
+        left after two looks; then 沙漠之花席比雅角色通行证's 任务 tab was
+        claimed (「完成任务4/4完成！」), and afterwards Blood Royale's 任务
+        tab carried a red ◆! (the player's picture): never looked at again.
+        Once per pass, so a badge for something 全部获得 cannot claim does
+        not loop.  ``key`` None: the end of the list (no claim to name).
+        True when a pass is looked at again."""
+        again = [
+            other
+            for other, why in skipped.items()
+            if other != key and other not in rechecked and why in PASS_MISS_REASONS.values()
+        ]
+        for other in again:
+            del skipped[other]
+            visits[other] = PASS_MAX_VISITS - 1
+            rechecked.add(other)
+        if again:
+            names = "、".join(f"「{other}」" for other in again)
+            if key is None:
+                self.log_info(f"通行证：{names} 红点还在但读到灰的，最后再打开看一次。")
+            else:
+                self.log_info(
+                    f"通行证「{key}」领到了，之前没东西可领的 {names} 再看一次（领完可能有新的）。"
+                )
+        return bool(again)
 
     @staticmethod
     def _pass_caption_boxes(boxes: list) -> list:

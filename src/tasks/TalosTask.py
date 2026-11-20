@@ -98,6 +98,7 @@ MISSION_KEYWORDS = ("任务", "任務")
 MISSION_CLAIM = ClaimButton((780, 765, 360, 72), ("全部获得", "全部獲得", "全部领取", "全部領取", "全部获取"))
 
 STAGE_TRIES = 2  # a stage that stops is opened once more, then skipped
+NO_LIST = "回不到关卡列表"
 PLANNING_WAIT = 45.0  # 战斗 → the planning screen (a load)
 # The game's own auto battle (4K PC clone 2026-10-28, stage 7): with it on,
 # 战斗 goes straight into a fight the game plays by itself, no planning
@@ -216,6 +217,7 @@ class TalosTask(_ClaimTaskBase):
             f"{LABEL}：已打过 {sorted(progress.cleared) or '无'}，这次要打 {queue or '无'}"
         )
         self._results = {}
+        lost_list = False
         while queue:
             stage = queue.pop(0)
             try:
@@ -232,7 +234,16 @@ class TalosTask(_ClaimTaskBase):
             else:
                 progress.failed[stage] = self._results.get(stage, "没打下来")
             progress.save(path)
-        claimed = self._claim_missions()
+            if self._results.get(stage) == NO_LIST and queue:
+                # Every later stage starts from the list too: looking for it
+                # again stage by stage only repeats the same way out (YES-BD2
+                # #90: stages 5-10, ~2 minutes each, until the player stopped).
+                self.log_warning(f"{LABEL}：回不到关卡列表，后面的第 {queue} 关这次先不打")
+                for rest in queue:
+                    self._results[rest] = "前面回不到关卡列表，没打"
+                queue = []
+                lost_list = True
+        claimed = False if lost_list else self._claim_missions()
         self._leave_to_home(LABEL, TITLE_KEYWORDS)  # the next task starts from 主页
         return self._report(progress.cleared, claimed, no_record)
 
@@ -305,7 +316,7 @@ class TalosTask(_ClaimTaskBase):
             again = "（再打一次）" if attempt > 1 else ""
             self.log_info(f"{LABEL}：第 {stage} 关开始{again}")
             if not self._to_list():
-                why = "回不到关卡列表"
+                why = NO_LIST
                 break
             if not self._open_stage(stage):
                 why = self._take_why() or "关卡打不开"
@@ -421,6 +432,11 @@ class TalosTask(_ClaimTaskBase):
                 self._click_reference(*POPUP_CLOSE_POINT, after_sleep=1.0)  # 不用确认：下面再看
                 continue
             if self._press_back_on_result(frame):  # 不用确认：循环三次，再 Esc，再回主页重进
+                continue
+            if self._fight_screen(frame):
+                # Still in the last stage's fight: back, Esc and the way home
+                # do nothing there, its own way out is ‖ → 离开 → 确认.
+                self._leave_by_pause()
                 continue
             self.tap_escape(after_sleep=1.5)
         if self._wait_for_title(LABEL, TITLE_KEYWORDS, timeout=STUCK_SECONDS, quiet=True):
@@ -644,20 +660,61 @@ class TalosTask(_ClaimTaskBase):
         self.log_info(f"{LABEL}：暂停时你动了游戏，先按右上角暂停 → 离开退出这关")
         self._leave_fight("暂停时你动了游戏")
 
-    def _pause_visible(self) -> bool:
-        text = self._text_in(self.capture_frame(), PAUSE_TITLE_ROI, "暂停")
+    def leave_own_fight(self) -> str:
+        """recovery.py's first look on each try: still in a 塔洛斯 fight?
+
+        There the top right holds ‖ (暂停) where the house sits on other
+        pages, and the 暂停 menu's 点击继续 reads as a popup to close: the way
+        home pressed the one, closed the menu with the other, round and round
+        (YES-BD2 #90, player 2560x1440 2026-11-20 11:07-11:18, stages 5-10).
+        "none": not a fight; "left": out by ‖ → 离开 → 确认 (on the list);
+        "stuck": in a fight and that way out did not work."""
+        frame = self.capture_frame()
+        if not self._fight_screen(frame) and not self._leave_dialog_visible(frame):
+            return "none"
+        self.log_info(f"恢复主页：还在{LABEL}的战斗里（右上角是暂停，不是主页），按暂停 → 离开退出这关")
+        self._fighting = None
+        return "left" if self._leave_by_pause() else "stuck"
+
+    def _fight_screen(self, frame=None) -> bool:
+        """A fight's planning screen (BATTLE bottom right) or its 暂停 menu."""
+        frame = self.capture_frame() if frame is None else frame
+        return fight_vision.planning_visible(frame) or self._pause_visible(frame)
+
+    def _pause_visible(self, frame=None) -> bool:
+        frame = self.capture_frame() if frame is None else frame
+        text = self._text_in(frame, PAUSE_TITLE_ROI, "暂停")
         return keyword_match_count(text, PAUSE_KEYWORDS, fuzzy_ratio=0.8) >= 1
 
-    def _leave_dialog_visible(self) -> bool:
-        text = self._text_in(self.capture_frame(), LEAVE_DIALOG_ROI, "离开确认")
+    def _leave_dialog_visible(self, frame=None) -> bool:
+        frame = self.capture_frame() if frame is None else frame
+        text = self._text_in(frame, LEAVE_DIALOG_ROI, "离开确认")
         return keyword_match_count(text, LEAVE_QUESTION_KEYWORDS, fuzzy_ratio=0.8) >= 1
 
-    def _leave_by_pause(self) -> bool:
-        if not self._pause_visible():
-            self._click_reference(*PAUSE_POINT, after_sleep=1.0)  # 不用确认：下面等暂停画面
-            if not self._wait_for(self._pause_visible, timeout=4.0):
-                self.log_info(f"{LABEL}：按了右上角暂停，没出现暂停画面")
+    def _open_pause(self) -> bool:
+        """‖ top right until the 暂停 menu shows (``PAUSE_PRESSES`` at most).
+
+        One press is not always taken: YES-BD2 #90 stage 5 stopped while
+        choosing a card's skill, ‖ showed no menu, and the run gave up on
+        the stage after one press and an Esc; the same spot pressed later
+        (by the way home) did open the menu.  Pressed again only while the
+        fight is still there (not on the list, no 离开 question up)."""
+        for press in range(1, PAUSE_PRESSES + 1):
+            self._click_reference(*PAUSE_POINT, after_sleep=1.0)  # 不用确认：下面等暂停画面，没出现最多再按两次
+            if self._wait_for(self._pause_visible, timeout=4.0):
+                return True
+            self.log_info(f"{LABEL}：按了右上角暂停，没出现暂停画面（第 {press} 次）")
+            frame = self.capture_frame()
+            if self._list_visible(frame) or self._leave_dialog_visible(frame):
                 return False
+        return False
+
+    def _leave_by_pause(self) -> bool:
+        if self._leave_dialog_visible():
+            # The question is already up (an earlier 离开 press): answer it.
+            return self._confirm_leave()
+        if not self._pause_visible() and not self._open_pause():
+            return self._leave_dialog_visible() and self._confirm_leave()
         self._press_text("离开", PAUSE_LEAVE_ROI, LEAVE_WORDS, PAUSE_LEAVE_POINT)  # 不用确认：暂停画面还在会再按一次
         if not self._wait_for(self._leave_dialog_visible, timeout=4.0):
             if not self._pause_visible():
@@ -668,6 +725,9 @@ class TalosTask(_ClaimTaskBase):
             if not self._wait_for(self._leave_dialog_visible, timeout=4.0):
                 self.log_info(f"{LABEL}：按了两次离开，没出现离开确认框（是否中断/确定要停止当前战斗）")
                 return False
+        return self._confirm_leave()
+
+    def _confirm_leave(self) -> bool:
         self._press_text("确认", LEAVE_DIALOG_ROI, CONFIRM_WORDS, LEAVE_CONFIRM_POINT)  # 不用确认：「是否中断」还在会再按一次
         if self._wait_for(self._list_visible, timeout=PLANNING_WAIT):
             return True
@@ -721,6 +781,7 @@ class TalosTask(_ClaimTaskBase):
 # 2026-11-19 22:11): not known, the leave was taken for failed and the run
 # went round the 暂停 menu (「一直暫停 然後循環」).
 PAUSE_POINT = (1791, 53)
+PAUSE_PRESSES = 3  # ‖ not taken at once (YES-BD2 #90): pressed again, at most this often
 PAUSE_TITLE_ROI = (840, 190, 240, 70)
 PAUSE_KEYWORDS = ("暂停", "暫停")
 PAUSE_LEAVE_ROI = (690, 975, 220, 60)

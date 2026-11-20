@@ -131,6 +131,99 @@ class PassBadgeTest(unittest.TestCase):
         self.assertEqual(["基础通行证"], PassRewardTask._pass_cards(task))
 
 
+class PassLookedAgainAfterAClaimTest(unittest.TestCase):
+    """YES-BD2 #89 (player 2560x1440, 简中, 2026-11-20 10:43): Blood Royale
+    赛季通行证 had a red ◆! but nothing to claim (全部获得 grey, no badged
+    tab) and was left after two looks; claiming 沙漠之花席比雅角色通行证
+    afterwards made Blood Royale's 任务 tab claimable, never looked at."""
+
+    CARDS = [box("孤注一掷特别赛季通行证", 300), box("Blood Royale赛季通行证", 407), box("沙漠之花席比雅角色通行证", 514)]
+    BADGE = {"孤注一掷特别赛季通行证": 288, "Blood Royale赛季通行证": 394, "沙漠之花席比雅角色通行证": 500}
+
+    def run_passes(self, blood_royale_after_sibia=True):
+        state = {"claimed": set(), "visits": []}
+
+        def screens(_state):
+            return [y for name, y in self.BADGE.items() if name not in state["claimed"]], self.CARDS
+
+        task = PassBadgeTest._task(PassBadgeTest(), screens)
+        task.warnings = []
+        task.log_warning = lambda text, **_k: task.warnings.append(text)
+
+        def claim_badged(key, _badge_y):
+            state["visits"].append(key)
+            claimable = key != "Blood Royale赛季通行证" or (
+                blood_royale_after_sibia and "沙漠之花席比雅角色通行证" in state["claimed"]
+            )
+            if claimable:
+                state["claimed"].add(key)
+                task._pass_misses.pop(key, None)
+            else:
+                task._pass_misses[key] = "「全部获得」是灰的，游戏里没有可领的"
+            return True
+
+        task._claim_badged_pass = claim_badged
+        with mock.patch("src.tasks.RewardClaimTasks.run_report.add_current_note"):
+            self.assertTrue(PassRewardTask.run_claim(task))
+        return task, state
+
+    def test_a_pass_left_empty_is_looked_at_again_after_another_claim(self):
+        task, state = self.run_passes()
+        self.assertEqual(
+            [
+                "孤注一掷特别赛季通行证",
+                "Blood Royale赛季通行证",
+                "Blood Royale赛季通行证",
+                "沙漠之花席比雅角色通行证",
+                "Blood Royale赛季通行证",  # before: never opened again
+            ],
+            state["visits"],
+        )
+        self.assertIn("Blood Royale赛季通行证", state["claimed"])
+        self.assertEqual([], task.warnings)
+
+    def test_still_empty_is_looked_at_only_once_more(self):
+        task, state = self.run_passes(blood_royale_after_sibia=False)
+        self.assertEqual(3, state["visits"].count("Blood Royale赛季通行证"))
+        self.assertTrue(any("Blood Royale" in w and "灰的" in w for w in task.warnings))
+
+    def test_a_lost_card_press_gets_a_last_look(self):
+        # Leo 11-20 「全部獲得不是灰的」「也有紅點」: the button was lit; the
+        # grey read may have been the pass shown before (press on the card
+        # not taken).  With no later claim, the end of the list looks again.
+        state = {"claimed": set(), "visits": []}
+        cards = [box("Blood Royale赛季通行证", 407)]
+
+        def screens(_state):
+            return ([] if state["claimed"] else [394]), cards
+
+        task = PassBadgeTest._task(PassBadgeTest(), screens)
+        task.log_warning = lambda text, **_k: None
+
+        def claim_badged(key, _badge_y):
+            state["visits"].append(key)
+            if len(state["visits"]) >= 3:  # the third press on the card is taken
+                state["claimed"].add(key)
+                task._pass_misses.pop(key, None)
+            else:
+                task._pass_misses[key] = "「全部获得」是灰的，游戏里没有可领的"
+            return True
+
+        task._claim_badged_pass = claim_badged
+        with mock.patch("src.tasks.RewardClaimTasks.run_report.add_current_note"):
+            self.assertTrue(PassRewardTask.run_claim(task))
+        self.assertEqual(3, len(state["visits"]))
+        self.assertIn("Blood Royale赛季通行证", state["claimed"])
+        self.assertTrue(any("最后再打开看一次" in line for line in task.logs))
+
+    def test_traditional_captions_too(self):
+        # 繁中 client: the captions are simplified before they are keys
+        self.assertEqual(
+            "沙漠之花席比雅角色通行证",
+            PassRewardTask._pass_caption_near(None, [box("沙漠之花席比雅角色通行證", 520)], 500),
+        )
+
+
 class PassFallbackTest(unittest.TestCase):
     """Player 2026-10-26: 角色通行证 never claimed, no error, the task 完成.
     A badged pass whose 全部获得 is missing or grey is tried on the whole

@@ -11,6 +11,7 @@ from qfluentwidgets import FluentIcon
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.map_trade.models import MatchResult, TemplateSpec
 from src.utils import (
+    game_no_picture,
     game_process,
     maintenance_notice,
     scheduled_start,
@@ -83,6 +84,20 @@ PRELOGIN_QUIET_RECOVERY_SECONDS = 180.0
 # open, and the next time the player opened the game, hours later, the
 # login released it and 一键日常 started by itself (YES-BD2 #70, 2026-11-04).
 GAME_GONE_EXTRA_SECONDS = 60
+# Leo's 4K 桌面分身 2026-11-20: the game ran but drew nothing (picture size
+# 0, flat colours flashing), so no login page or 主页 ever showed and
+# 一键日常 waited 21 minutes (game_no_picture.py).  Once proven, the game is
+# closed and opened again, this many times for one waiting run; still no
+# picture after that cancels the run with the reason.
+NO_PICTURE_REOPENS_MAX = 1
+NO_PICTURE_REOPEN_NOTE = (
+    "游戏画不出画面（{proof}，已 {s} 秒），一键日常/周常在等登录，"
+    "关掉游戏重开一次。"
+)
+NO_PICTURE_GIVE_UP_NOTE = (
+    "一键日常/周常已取消：游戏重开后还是画不出画面（{proof}）。"
+    "请关掉游戏自己重开，看得到画面后再按开始。"
+)
 GAME_GONE_NOTE = (
     "一键日常/周常已取消：在等游戏登录时，游戏关掉了，{m} 分钟都没再打开。"
     "下次打开游戏不会自己开始跑，要跑请再按开始。"
@@ -159,6 +174,7 @@ class AutoLoginTask(BaseBD2Task):
         "公告清理点击 X 百分比",
         "公告清理点击 Y 百分比",
         "画面颜色",
+        "画面",
         "匹配错误",
         "Log",
         "Warning",
@@ -232,6 +248,8 @@ class AutoLoginTask(BaseBD2Task):
         self._terms_warned = False
         self._maintenance_hits = 0
         self._maintenance_warned = False
+        self._no_picture = game_no_picture.NoPictureWatch()
+        self._no_picture_reopens = 0
 
     def on_create(self):
         self._enabled = bool(self.config.get("_enabled", True))
@@ -339,6 +357,9 @@ class AutoLoginTask(BaseBD2Task):
                 self._set_action("游戏窗口尚未就绪，等待脚本自动启动游戏。")
             return False
 
+        if self._game_draws_nothing(frame):
+            return False
+
         if self._state in PRELOGIN_STATES:
             confirmed, _button, _spec, _ratio, _gacha_text = (
                 self._home_confirmation_signals(frame)
@@ -379,6 +400,76 @@ class AutoLoginTask(BaseBD2Task):
             return self._wait_loading_then_home(frame)
 
         return self._wait_browndustx_then_login(frame)
+
+    def mark_logged_in(self) -> None:
+        self._no_picture_reopens = 0
+        super().mark_logged_in()
+
+    def _game_draws_nothing(self, frame) -> bool:
+        """The game runs but draws nothing while a run waits for this login
+        (game_no_picture.py): open it again once, then give the run up.
+        True when this look was handled so.
+
+        Only with 一键日常/周常 waiting: the tool owns the game then.  A
+        player who just has 自动登录 on keeps their game untouched.
+        """
+        watch = getattr(self, "_no_picture", None)
+        if watch is None:
+            watch = self._no_picture = game_no_picture.NoPictureWatch()
+        if not self._gated_batch_waiting():
+            watch.reset()
+            return False
+        if watch.look(frame):
+            return self._reopen_game_without_picture(watch)
+        if watch.since is not None:
+            self.info_set("画面", f"{watch.proof}（{watch.held_for():.0f} 秒）")
+        return False
+
+    def _reopen_game_without_picture(self, watch) -> bool:
+        """Proven: close the game and open it again, or give the run up."""
+        proof, held = watch.proof, watch.held_for()
+        watch.reset()
+        self.info_set("画面", f"游戏画不出画面：{proof}")
+        if int(getattr(self, "_no_picture_reopens", 0) or 0) >= NO_PICTURE_REOPENS_MAX:
+            self._no_picture_reopens = 0
+            if self._cancel_login_gated_batches():
+                scheduled_start.mark_run_pending(False)
+            self._set_stage("游戏画不出画面")
+            self._set_action("重开后还是画不出画面，已取消这次执行。")
+            self.log_warning(
+                f"自动登录：{NO_PICTURE_GIVE_UP_NOTE.format(proof=proof)}", notify=True
+            )
+            return True
+        self._no_picture_reopens = int(getattr(self, "_no_picture_reopens", 0) or 0) + 1
+        self.log_warning(
+            f"自动登录：{NO_PICTURE_REOPEN_NOTE.format(proof=proof, s=round(held))}",
+            notify=True,
+        )
+        if not game_process.close_game():
+            self._no_picture_reopens = 0
+            if self._cancel_login_gated_batches():
+                scheduled_start.mark_run_pending(False)
+            self._set_stage("游戏画不出画面")
+            self._set_action("游戏关不掉，已取消这次执行。")
+            self.log_warning(
+                "自动登录：一键日常/周常已取消：游戏画不出画面，按 Alt+F4 也关不掉。"
+                "请自己关掉游戏重开，看得到画面后再按开始。",
+                notify=True,
+            )
+            return True
+        self._reset_login_state("游戏画不出画面，已关掉重开，等待登录页。")
+        self._set_stage("游戏画不出画面，重开中")
+        self._open_game_again()
+        return True
+
+    def _open_game_again(self) -> None:
+        """Open the game the way a start does when it is closed."""
+        try:
+            from ok import og
+
+            og.app.start_controller.start(None)
+        except Exception as exc:
+            self.log_error("自动登录：重新打开游戏失败。", exc)
 
     def finish_in_game(self) -> bool:
         """Mark login done when the game is already inside (brought home by
