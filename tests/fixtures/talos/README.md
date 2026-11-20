@@ -13,3 +13,5 @@
 | `pause_menu_tw_4k_as_1080.jpg` | Leo's 4K PC 2026-11-19 22:13, 繁中 client (2560x1440 → 1080p): the battle's 暫停 menu; the button is 「繼續」 (no 點擊) and the setting 「技能詮釋動畫」 with its 「關閉」 |
 | `leave_confirm_tw_4k_720p_as_1080.jpg` | same run 22:11:48 (a 1280x720 sample, enlarged): 離開 → 「確定要停止當前戰鬥嗎？」 取消 / 確認 over the 暫停 menu |
 | `battle_ready_tw_4k_720p_as_1080.jpg` | same run 22:11:44 (1280x720 sample, enlarged): stage 1 BATTLE READY, a normal fight start (no auto battle words) |
+| `s13_t3_hold_pan_before_2k_clone_540p.jpg`, `s13_t3_hold_pan_after_2k_clone_540p.jpg` | 2K PC 桌面分身 (繁中) 2026-11-20 12:28:41 / 12:28:43, recording at 960x540: stage 13 T3 top-down right after 切换视角, then after the first cell hold, which moved the whole view two cells up-left (no drag sent) |
+| `s13_t3_drag_before_2k_clone.jpg`, `s13_t3_drag_after_2k_clone.jpg` | same clone 12:29:36 / 12:29:37 (1080p): stage 13 T3 before and after 席比雅 was dragged two rows down; the view did not move |

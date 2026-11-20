@@ -506,6 +506,37 @@ class ViewOffsetTest(unittest.TestCase):
         self.assertAlmostEqual(-75, dy, delta=2)
 
 
+class ViewShiftTest(unittest.TestCase):
+    """2K clone 2026-11-20, stage 13 T3: a cell hold moved the whole view."""
+
+    TALOS = Path(__file__).resolve().parent / "fixtures" / "talos"
+
+    def frame(self, name):
+        frame = cv2.imread(str(self.TALOS / name))
+        self.assertIsNotNone(frame, name)
+        return frame
+
+    def test_hold_that_moved_the_view(self):
+        moved = vision.view_shift(
+            self.frame("s13_t3_hold_pan_before_2k_clone_540p.jpg"),
+            self.frame("s13_t3_hold_pan_after_2k_clone_540p.jpg"),
+        )
+        self.assertIsNotNone(moved)
+        self.assertGreater(moved, 100)
+
+    def test_unit_dragged_two_rows_is_no_move_of_the_view(self):
+        moved = vision.view_shift(
+            self.frame("s13_t3_drag_before_2k_clone.jpg"),
+            self.frame("s13_t3_drag_after_2k_clone.jpg"),
+        )
+        self.assertIsNotNone(moved)
+        self.assertLess(moved, 10)
+
+    def test_same_frame_is_no_move(self):
+        frame = self.frame("s13_t3_drag_before_2k_clone.jpg")
+        self.assertLess(vision.view_shift(frame, frame.copy()), 1)
+
+
 class GridOnScreenTest(unittest.TestCase):
     """Where the cells are drawn, from their corner brackets."""
 

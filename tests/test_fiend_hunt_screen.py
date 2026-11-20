@@ -711,7 +711,52 @@ class ReadStateTest(unittest.TestCase):
         captures = []
         screen.capture = lambda: captures.append(1) or game.capture()
         self.assertIsNone(screen.lit_slot((0, 0)))
-        self.assertEqual(screen_module.SELECT_POLLS, len(captures))
+        # one look before the hold (did it move the camera?) and the polls after
+        self.assertEqual(1 + screen_module.SELECT_POLLS, len(captures))
+
+    def test_hold_that_moved_the_camera_puts_it_back_and_reads_again(self):
+        # 2K clone 2026-11-20 (stages 3, 6, 13): the first hold after 切换视角
+        # moved the view two cells up-left; every hold after it missed and the
+        # stage was left.  Now the view is put back and the screen read again.
+        game = FakeGame()
+        screen = make_screen(game)
+        pans = [True]
+        resets = []
+
+        def check(before, after, what):
+            if pans and pans.pop():
+                raise screen_module.ViewPanned(what)
+
+        screen._check_pan = check
+        screen._reset_view = lambda: resets.append(1)
+        state = screen.read_state(1)
+        self.assertEqual(START, state.cells)
+        self.assertEqual([1], resets)
+
+    def test_hold_that_moves_the_camera_twice_stops(self):
+        game = FakeGame()
+        screen = make_screen(game)
+
+        def check(before, after, what):
+            raise screen_module.ViewPanned(what)
+
+        screen._check_pan = check
+        screen._reset_view = lambda: None
+        with self.assertRaises(ScreenReadError):
+            screen.read_state(1)
+
+    def test_confirming_hold_that_moved_the_camera_is_no_answer(self):
+        game = FakeGame()
+        screen = make_screen(game)
+        resets = []
+
+        def check(before, after, what):
+            raise screen_module.ViewPanned(what)
+
+        screen._check_pan = check
+        screen._reset_view = lambda: resets.append(1)
+        self.assertIsNone(screen.lit_slot(START["班塔纳"]))
+        self.assertEqual([1], resets)
 
     def test_missing_unit_stops(self):
         game = FakeGame()
@@ -1336,6 +1381,37 @@ class SizedGridTest(unittest.TestCase):
             screen._place_grid("frame")
         self.assertEqual(grid, screen._grid)
 
+    def test_grid_moved_by_a_drag_is_told_and_later_drags_press_longer(self):
+        # YES-BD2 #90 (player, stage 2 T1): after a drag the grid read 499,352
+        # instead of 499,399 — the press didn't pick the unit up and panned
+        # the camera.  塔洛斯 stage 13 T3 went the same way without being seen.
+        from src.tasks.fiend_hunt import screen as screen_module
+
+        before, after = vision.Grid(1.31, 499, 399), vision.Grid(1.31, 499, 352)
+        screen, wheels, lines, patches = self.screen([before, before, after, after])
+        with patches[0], patches[1], patches[2], patches[3]:
+            screen._place_grid("frame")
+            self.assertEqual(screen_module.DRAG_HOLD, screen.drag_hold)
+            screen._dragged = True  # what drag() leaves
+            with mock.patch.object(GameFightScreen, "_keep_panned") as keep:
+                screen._place_grid("frame")
+        self.assertEqual(after, screen._grid)
+        self.assertEqual(screen_module.DRAG_HOLD_AFTER_PAN, screen.drag_hold)
+        self.assertTrue(any("没拿起角色" in line for line in lines))
+        keep.assert_called_once()
+
+    def test_grid_moved_by_the_battle_is_not_blamed_on_a_drag(self):
+        from src.tasks.fiend_hunt import screen as screen_module
+
+        before, after = vision.Grid(1.31, 499, 399), vision.Grid(1.31, 499, 352)
+        screen, wheels, lines, patches = self.screen([before, before, after, after])
+        with patches[0], patches[1], patches[2], patches[3]:
+            screen._place_grid("frame")
+            screen._place_grid("frame")  # no drag since: a new turn's place
+        self.assertEqual(after, screen._grid)
+        self.assertEqual(screen_module.DRAG_HOLD, screen.drag_hold)
+        self.assertFalse(any("没拿起角色" in line for line in lines))
+
     def test_another_size_is_zoomed_back(self):
         small = vision.Grid(1.08, 581, 424)
         usual = vision.Grid(1.33, 492, 397)
@@ -1519,7 +1595,8 @@ class PreemptSwitchTest(unittest.TestCase):
 
 class PostInputTest(unittest.TestCase):
     """The cursor stays on the cell after a release (2K PC 2026-10-07: put
-    back 25 ms after it, the game selected the unit but opened no cards)."""
+    back 25 ms after it, the game selected the unit but opened no cards;
+    2K clone 2026-11-20: put back at all, a hold panned the camera)."""
 
     def test_the_cursor_waits_on_the_cell_after_the_release(self):
         events = []
@@ -1537,7 +1614,8 @@ class PostInputTest(unittest.TestCase):
 
         def operate(action, block, restore_cursor):
             action()
-            events.append(("restore",))
+            if restore_cursor:
+                events.append(("restore",))
 
         task = SimpleNamespace(
             executor=SimpleNamespace(interaction=interaction),
@@ -1565,4 +1643,48 @@ class PostInputTest(unittest.TestCase):
                 press()
                 up = events.index(("up",))
                 self.assertEqual(("sleep", screen_module.AFTER_RELEASE), events[up + 1])
-                self.assertEqual(("restore",), events[up + 2])
+                # never put back: a slow frame still holding the button would
+                # pan the camera or drop the unit where the cursor went (塔洛斯
+                # stage 13 T3, 2K clone 2026-11-20)
+                self.assertNotIn(("restore",), events)
+                # the cursor is on the point a few frames before the press
+                down = events.index(("down",))
+                self.assertEqual(("move",), events[down - 2])
+                waited = sum(e[1] for e in events[:down] if e[0] == "sleep")
+                self.assertAlmostEqual(screen_module.PRESS_SETTLE_DESKTOP, waited)
+
+    def test_the_cursor_walks_to_a_far_press(self):
+        # 2K clone 2026-11-20: the first hold after the far 切换视角 tap panned
+        # the camera; the holds after it, close together, never did.
+        events = []
+        win32api = SimpleNamespace(
+            SetCursorPos=lambda pos: events.append(("cursor", pos)),
+            MAKELONG=lambda x, y: (x, y),
+        )
+        win32con = SimpleNamespace(
+            WM_MOUSEMOVE="move", WM_LBUTTONDOWN="down", WM_LBUTTONUP="up", MK_LBUTTON=1
+        )
+        interaction = SimpleNamespace(
+            post=lambda message, *args: events.append((message,) + args),
+            capture=SimpleNamespace(get_abs_cords=lambda x, y: (x, y)),
+        )
+        task = SimpleNamespace(
+            executor=SimpleNamespace(interaction=interaction),
+            width=1920,
+            height=1080,
+            operate=lambda action, block, restore_cursor: action(),
+        )
+        press = screen_module.PostInput(task)
+        modules = {"win32api": win32api, "win32con": win32con}
+        with (
+            mock.patch.dict("sys.modules", modules),
+            mock.patch.object(screen_module.time, "sleep", lambda seconds: None),
+        ):
+            press.tap((1420.0, 974.0))  # 切换视角
+            events.clear()
+            press.hold((841.0, 552.0), 0.2)
+        down = events.index(("down", 1, (841, 552)))
+        cursor = [e[1] for e in events[:down] if e[0] == "cursor"]
+        self.assertEqual(screen_module.WALK_STEPS, len(cursor))
+        self.assertEqual((841, 552), cursor[-1])
+        self.assertTrue(all(abs(b[0] - a[0]) < 120 for a, b in zip([(1420, 974)] + cursor, cursor)))

@@ -91,6 +91,10 @@ AFTER_TAP = 0.4
 BURST_STEPS, AFTER_BURST = 4, 0.25  # ◀ ▶ presses per level change; wait after each
 AFTER_CLEAR = 0.45  # from a ⇅ tap (clearing a selection) to the next portrait tap
 DRAG_HOLD, DRAG_SECONDS, DRAG_STEPS, AFTER_DRAG = 0.15, 0.3, 10, 0.2
+# After a drag panned the camera instead of picking the unit up (the grid
+# moved under it: a slow PC took the short press for a pan), the rest of
+# the fight presses a little longer before moving.
+DRAG_HOLD_AFTER_PAN = 0.4
 SWAP_HOLD, SWAP_SECONDS, SWAP_STEPS, AFTER_SWAP = 0.15, 0.3, 10, 0.25
 VIEW_TOGGLE_POLLS, VIEW_SETTLE = 30, 0.15
 VIEW_TOGGLE_TAPS = 2  # 切换视角 taps per view change: one more if the first was lost
@@ -233,11 +237,42 @@ def _write_png(path: Path, frame: np.ndarray) -> None:
     path.write_bytes(data.tobytes())  # imwrite can't take non-ASCII paths
 
 
+# A move of the whole view larger than this (1080p px) between the frames
+# around a press: the game took the press for a drag of the floor.
+PAN_MIN = 30.0
+
+
+class ViewPanned(ScreenReadError):
+    """A press moved the camera: every cell is now somewhere else on screen."""
+
+
+# The game reads the cursor once a frame.  Pressed 50 ms after the cursor
+# jumped, a slow frame (the clone, a slow PC) saw the button go down where the
+# cursor was before (the BATTLE button) and the jump to the cell as a drag:
+# the first hold of 塔洛斯 stage 13 T3 panned the camera two cells up-left
+# (2K clone 2026-11-20, twice).  So the cursor waits on the point for a few
+# frames first.
+PRESS_SETTLE_DESKTOP = 0.12
+PRESS_SETTLE_CLONE = 0.2
+WALK_STEPS = 6  # cursor moves spread over that time on the way to a press
+
+
+def _press_settle() -> float:
+    try:
+        from src.interaction.BD2Interaction import _in_clone
+
+        clone = _in_clone()
+    except Exception:
+        clone = False
+    return PRESS_SETTLE_CLONE if clone else PRESS_SETTLE_DESKTOP
+
+
 class PostInput:
     """Posted left-button messages to the game window, cursor following."""
 
     def __init__(self, task) -> None:
         self.task = task
+        self._at: tuple[int, int] | None = None  # client point the cursor was last put on
 
     def _interaction(self):
         interaction = getattr(self.task.executor, "interaction", None)
@@ -250,10 +285,38 @@ class PostInput:
         return layout.to_client(point, width, height)
 
     def _run(self, action: Callable[[], None]) -> None:
-        self.task.operate(action, block=True, restore_cursor=True)
+        # The cursor stays on the game.  Put back right after the release, a
+        # game drawing few frames (a slow PC, the clone, the fire after a
+        # battle) still holds the button when the cursor jumps away: a hold
+        # becomes a camera pan and a dragged unit is dropped on the way
+        # (塔洛斯 stage 13 T3 on the 2K clone 2026-11-20: the view moved two
+        # cells up-left while only cells were held).
+        self.task.operate(action, block=True, restore_cursor=False)
 
     def tap(self, point: layout.Point) -> None:
         self.hold(point, 0.05)
+
+    def _walk_to(self, interaction, x: int, y: int) -> None:
+        """Bring the cursor to (x, y) in small steps, button up, then let it sit.
+
+        The first hold after the far 切换视角 tap panned the camera two cells
+        up-left while the holds after it, close to each other, never did (2K
+        clone 2026-11-20: stages 3, 6, 13): a jump across the screen read as
+        a drag.  Steps the game can see on its frames, as a hand would move.
+        """
+        import win32api
+        import win32con
+
+        settle = _press_settle()
+        start = self._at or (x, y)
+        steps = WALK_STEPS if start != (x, y) else 1
+        for index in range(1, steps + 1):
+            px = round(start[0] + (x - start[0]) * index / steps)
+            py = round(start[1] + (y - start[1]) * index / steps)
+            win32api.SetCursorPos(interaction.capture.get_abs_cords(px, py))
+            interaction.post(win32con.WM_MOUSEMOVE, 0, win32api.MAKELONG(px, py))
+            time.sleep(settle / steps)
+        self._at = (x, y)
 
     def hold(self, point: layout.Point, seconds: float) -> None:
         import win32api
@@ -263,9 +326,7 @@ class PostInput:
         x, y = self._client(point)
 
         def action() -> None:
-            win32api.SetCursorPos(interaction.capture.get_abs_cords(x, y))
-            interaction.post(win32con.WM_MOUSEMOVE, 0, win32api.MAKELONG(x, y))
-            time.sleep(0.05)
+            self._walk_to(interaction, x, y)
             interaction.post(win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, win32api.MAKELONG(x, y))
             try:
                 time.sleep(seconds)
@@ -285,9 +346,7 @@ class PostInput:
         (x1, y1), (x2, y2) = self._client(start), self._client(end)
 
         def action() -> None:
-            win32api.SetCursorPos(interaction.capture.get_abs_cords(x1, y1))
-            interaction.post(win32con.WM_MOUSEMOVE, 0, win32api.MAKELONG(x1, y1))
-            time.sleep(0.05)
+            self._walk_to(interaction, x1, y1)
             interaction.post(
                 win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, win32api.MAKELONG(x1, y1)
             )
@@ -304,6 +363,7 @@ class PostInput:
                 time.sleep(0.2)
             finally:
                 interaction.post(win32con.WM_LBUTTONUP, 0, win32api.MAKELONG(x2, y2))
+                self._at = (x2, y2)
                 time.sleep(AFTER_RELEASE)
 
         self._run(action)
@@ -403,6 +463,8 @@ class GameFightScreen:
         # The frame just before the last drag, kept to show what a drag that
         # panned the camera started on (twice in real fights, 2026-10-01).
         self._before_drag: tuple[np.ndarray, Drag] | None = None
+        self._dragged = False  # a drag since the grid was last placed
+        self.drag_hold = DRAG_HOLD
         self._cleared_at = float("-inf")  # clock of the last ⇅ tap that cleared a selection
         # The grid as drawn when it isn't where layout has it (zoomed with the
         # mouse wheel or moved, 4K PC 2026-10-08): cells are pressed there.
@@ -428,6 +490,16 @@ class GameFightScreen:
         return team
 
     def read_state(self, turn: int) -> TurnState:
+        try:
+            return self._read_state(turn)
+        except ViewPanned:
+            # 2K clone 2026-11-20: the first hold after 切换视角 moved the view
+            # two cells up-left, and every hold after it missed.  Put the
+            # camera back and read once more; a second time stops.
+            self._reset_view()
+            return self._read_state(turn)
+
+    def _read_state(self, turn: int) -> TurnState:
         frame = self._ready_frame()
         live_turn = vision.read_turn(frame, self.ocr)
         if live_turn is None:
@@ -497,8 +569,15 @@ class GameFightScreen:
         return ListGlance(team, count, len(out))
 
     def lit_slot(self, cell: Cell) -> int | None:
-        """Hold ``cell``: the list slot its unit is selected in (then cleared)."""
-        slot, unmarked, frame = self._hold_cell(cell, read_name=False)
+        """Hold ``cell``: the list slot its unit is selected in (then cleared).
+
+        None too when the hold moved the camera (put back first).
+        """
+        try:
+            slot, unmarked, frame = self._hold_cell(cell, read_name=False)
+        except ViewPanned:
+            self._reset_view()
+            return None
         if slot is None and unmarked is not None:
             self._keep_picture(frame, "fiend-grid")
             raise ScreenReadError(f"按住 {unmarked} 后，认不出左边选中的是第几位")
@@ -609,15 +688,25 @@ class GameFightScreen:
     def drag(self, drag: Drag) -> None:
         self.card_labels.clear()
         self._before_drag = (self.capture(), drag)
+        self._dragged = True
         self.input.drag(
             self._press(drag.source),
             self._press(drag.target),
-            DRAG_HOLD,
+            self.drag_hold,
             DRAG_SECONDS,
             DRAG_STEPS,
         )
         self.sleep(AFTER_DRAG)
-        self._clear_selection(self.capture())  # the dragged unit stays selected
+        after = self.capture()
+        try:
+            self._check_pan(self._before_drag[0], after, "拖动")
+        except ViewPanned:
+            # the unit stayed where it was: put the camera back so the check
+            # after the drags sees where everyone really stands
+            self.drag_hold = max(self.drag_hold, DRAG_HOLD_AFTER_PAN)
+            self._reset_view()
+            return
+        self._clear_selection(after)  # the dragged unit stays selected
 
     def pick_skill(self, slot: int, skill: str) -> bool:
         """Select list slot ``slot`` and light its card ``skill``; True once seen lit.
@@ -868,6 +957,7 @@ class GameFightScreen:
 
     def press_battle(self) -> None:
         self.card_labels.clear()
+        self._dragged = False  # the battle moves the camera by itself
         frame = self.capture()
         self._clear_selection(frame)
         frame = self.capture()
@@ -1097,6 +1187,7 @@ class GameFightScreen:
             # the 2K PC 2026-10-28: dark floors).  切换视角 once and look again,
             # else back to where it was, before the wheel.
             self.log("看不到格子，先按一次切换视角再看")
+            self._dragged = False  # the view changed by itself: not the drag's doing
             flipped = self._flip_view()
             drawn = vision.grid_on_screen(flipped)
             if drawn is None:
@@ -1106,6 +1197,7 @@ class GameFightScreen:
         if not usual(drawn):
             seen = "看不到格子" if drawn is None else f"格子大小 {drawn.scale:.2f}"
             self.log(f"{seen}，不是平常的大小，用滚轮调回 100%")
+            self._dragged = False
             frame, percent = self._zoom_back(usual)
             drawn = vision.grid_on_screen(frame)
             if not usual(drawn):
@@ -1121,11 +1213,21 @@ class GameFightScreen:
                 drawn = again if usual(again) else drawn
             else:
                 raise ScreenReadError("格子的位置每次读的都不一样")
+            if self._grid is not None and self._dragged:
+                # nothing but a drag ran since the last place: it panned the camera
+                self.log(
+                    f"拖动后格子从 {self._grid.left:.0f},{self._grid.top:.0f} "
+                    f"移到 {drawn.left:.0f},{drawn.top:.0f}：刚才拖的那下没拿起角色，"
+                    "画面被拖走了，之后拖动先按久一点"
+                )
+                self._keep_panned(frame)
+                self.drag_hold = max(self.drag_hold, DRAG_HOLD_AFTER_PAN)
             self.log(
                 f"格子照画面上的位置按（大小 {drawn.scale:.2f}，"
                 f"左上 {drawn.left:.0f},{drawn.top:.0f}）"
             )
         self._grid = drawn
+        self._dragged = False
         return frame
 
     def _zoom_back(self, usual) -> tuple[np.ndarray, int | None]:
@@ -1203,6 +1305,35 @@ class GameFightScreen:
             _write_png(path, frame)
 
         self._files.submit(write)
+
+    def _check_pan(self, before, after, what: str) -> None:
+        """Raise ViewPanned when the view moved between ``before`` and ``after``."""
+        if not isinstance(before, np.ndarray) or not isinstance(after, np.ndarray):
+            return
+        moved = vision.view_shift(before, after)
+        if moved is None or moved <= PAN_MIN:
+            return
+        self.log(f"{what}时镜头被拖走了（画面移了约 {moved:.0f} 像素），切换两次视角放回原位")
+        self._save_pan(before, after)
+        raise ViewPanned(f"{what}时镜头被拖走了")
+
+    def _save_pan(self, before: np.ndarray, after: np.ndarray) -> None:
+        if self.folder is None:
+            return
+        stamp = time.strftime("%m%d_%H%M%S")
+        folder = self.folder / PANNED_FOLDER
+        self._save_frame(folder / f"{stamp}_pan_before.png", before)
+        self._save_frame(folder / f"{stamp}_pan_after.png", after)
+        self._files.submit(_keep_newest, folder, PANNED_KEEP)
+
+    def _reset_view(self) -> np.ndarray:
+        """切换视角 twice: the top-down camera comes back to its place."""
+        frame = self.capture()
+        if vision.selected_slots(frame):
+            frame = self._clear_selection(frame)
+        self._toggle_view(topdown=False)
+        frame = self._toggle_view(topdown=True)
+        return self._place_grid(frame)
 
     def _flip_view(self) -> np.ndarray:
         """Tap 切换视角 once without asking which view it is, and let it settle."""
@@ -1294,11 +1425,14 @@ class GameFightScreen:
         are waited for to leave it.  If they stay (an empty cell keeps the
         selection) that slot is returned, and the caller clears and holds again.
         """
+        before = self.capture()
         self.input.hold(self._press(cell), HOLD_SECONDS)
         self.holds += 1
         frame = self._poll(
             lambda shown: vision.selected_slots(shown) not in ([], [previous]), polls
         )
+        row, col = cell
+        self._check_pan(before, frame, f"按住第 {row + 1} 行第 {col + 1} 格")
         selected = vision.selected_slots(frame)
         if len(selected) > 1:
             raise ScreenReadError(f"按住 {cell} 后同时选中了 {len(selected)} 个角色")

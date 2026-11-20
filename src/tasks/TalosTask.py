@@ -349,7 +349,9 @@ class TalosTask(_ClaimTaskBase):
         except ScreenReadError as error:
             return False, f"自动技能：{error}"
         try:
-            outcome = replay_fight(screen, record, pushes=True, log=self._fight_log)
+            # Leo 2026-11-20 「有移動的人物再檢查就好」: before BATTLE only the
+            # units the tool dragged are held again, not every unit.
+            outcome = replay_fight(screen, record, pushes=False, log=self._fight_log)
         except ScreenReadError as error:
             return False, str(error)
         if outcome.finished and screen.end_word == "victory":

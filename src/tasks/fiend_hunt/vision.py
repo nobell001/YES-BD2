@@ -293,6 +293,38 @@ def view_offset(frame: np.ndarray) -> tuple[float, float] | None:
 
 VIEW_RESPONSE_MIN = 0.08
 
+# view_shift: the floor is compared at a quarter of the 1080p size (2-8 ms).
+_SHIFT_SCALE = 0.25
+SHIFT_RESPONSE_MIN = 0.15
+
+
+def view_shift(before: np.ndarray, after: np.ndarray) -> float | None:
+    """How far (1080p px) the camera moved between two frames; None if unsure.
+
+    A press the game takes as a drag of the floor moves the whole view (塔洛斯
+    stage 13/3, 2K clone 2026-11-20: two cells up-left on one hold).  Units,
+    the selection and fire change a little, the floor all of it.  The floor's
+    lines repeat, so the size of a large move can come out a whole cell off:
+    only "moved or not" is meant to be read from it.
+    """
+    parts = []
+    for frame in (before, after):
+        part = to_gray(_ref(frame, layout.VIEW_BOX))
+        parts.append(
+            np.float32(
+                cv2.resize(part, None, fx=_SHIFT_SCALE * 1080 / frame.shape[0],
+                           fy=_SHIFT_SCALE * 1080 / frame.shape[0], interpolation=cv2.INTER_AREA)
+            )
+        )
+    first, second = parts
+    if first.shape != second.shape:
+        second = cv2.resize(second, first.shape[::-1], interpolation=cv2.INTER_AREA)
+    window = cv2.createHanningWindow(first.shape[::-1], cv2.CV_32F)
+    (dx, dy), response = cv2.phaseCorrelate(first, second, window)
+    if response < SHIFT_RESPONSE_MIN:
+        return None
+    return float(np.hypot(dx, dy)) / _SHIFT_SCALE
+
 
 # --- left list ----------------------------------------------------------------------------
 

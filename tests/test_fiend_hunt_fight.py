@@ -707,6 +707,75 @@ class QuickReplayFightTest(ReplayFightTest):
         self.assertEqual([], battle.empty_drags)
         self.assertEqual([1, 3], battle.full_reads)
 
+    def test_drag_that_panned_the_camera_is_not_taken_for_a_move(self):
+        # 塔洛斯 stage 13 (player report 2026-11-20): T3 drags both sisters two
+        # rows down.  A press the game doesn't take as a pick-up pans the
+        # floor by the drag itself (YES-BD2 #90: grid 47 px off after one),
+        # so each unit shows exactly on its target and holding the target
+        # "finds" it there: they were battled from row 0.
+        class Panning(QuickBattle):
+            missed = 1  # presses taken for a pan
+            pan_limit = 2  # rows the camera can go (it stops at the map's edge)
+
+            def __init__(self, **options):
+                super().__init__(**options)
+                self.shift = (0, 0)  # how far the floor moved since the grid was placed
+
+            def shown_at(self, cell):
+                return (cell[0] - self.shift[0], cell[1] - self.shift[1])
+
+            def pan(self, drag):
+                (r1, c1), (r2, c2) = drag.source, drag.target
+                rows = max(-self.pan_limit, min(self.pan_limit, self.shift[0] + r2 - r1))
+                self.shift = (rows, self.shift[1] + c2 - c1)
+
+            def drag(self, drag):
+                self.actions.append((self.turn, "drag", drag))
+                cells = self.teams[self.team]["cells"]
+                source = self.shown_at(drag.source)
+                if self.missed or source not in cells.values():
+                    self.missed = max(0, self.missed - 1)
+                    self.pan(drag)
+                    return
+                occupant = {cell: unit for unit, cell in cells.items()}
+                unit, target = occupant[source], self.shown_at(drag.target)
+                if target in occupant:
+                    cells[occupant[target]] = source
+                cells[unit] = target
+
+            def glance(self):
+                self.shift = (0, 0)  # the grid is placed where it is drawn now
+                return super().glance()
+
+            def read_state(self, turn):
+                self.shift = (0, 0)
+                return super().read_state(turn)
+
+            def lit_slot(self, cell):
+                return super().lit_slot(self.shown_at(cell))
+
+        sisters = {"露比雅": (0, 1), "席比雅": (0, 3)}
+        t1 = turn(1, dict(sisters), ("席比雅", "露比雅"))
+        t3 = turn(3, {"露比雅": (2, 1), "席比雅": (2, 3)}, ("席比雅", "露比雅"))
+        t5 = turn(5, dict(t3.cells), t3.order)
+        battle = Panning(teams={1: {"cells": dict(sisters), "order": ["席比雅", "露比雅"]}})
+        battle.missed = 0
+        record = record_of(t1, t3, t5)
+        real_drag = battle.drag
+
+        def miss_first_drag_of_t3(drag):
+            if battle.turn == 3 and not battle.drags_on(3):
+                battle.missed = 1
+            real_drag(drag)
+
+        battle.drag = miss_first_drag_of_t3
+
+        outcome = replay_fight(battle, record)
+
+        self.assertTrue(outcome.finished)
+        self.assert_battled_as_saved(battle, record)
+        self.assertEqual([1, 3], battle.full_reads)  # the pan was caught and T3 read again
+
     def test_boss_that_never_pushes_skips_the_holds_of_a_turn_left_as_is(self):
         # Leo 2026-10-06: his TEAM1 never moves, and few bosses push anyone.
         t5 = turn(5, dict(T3.cells), T3.order)

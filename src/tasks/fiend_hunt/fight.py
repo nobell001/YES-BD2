@@ -529,6 +529,16 @@ def _arrange(
         )
         if quick is not None:
             live, moved = _after(live, actions)
+            # A drag the game takes as a camera pan (the press didn't pick
+            # the unit up: slow PC, YES-BD2 #90 grid 47 px off after one)
+            # moves the floor by the drag itself, so the unit shows exactly
+            # where it was meant to go and holding that spot "finds" it there.
+            # Straight moves are the worst (塔洛斯 stage 13 T3: both units two
+            # rows down, battled from their old cells).  So the grid is placed
+            # again after drags, before any hold trusts a cell.
+            if actions.drags and quick.glance() != glance_of(live):
+                live, unconfirmed = screen.read_state(saved.turn), set()
+                continue
             unconfirmed |= moved
             kept -= moved
         else:

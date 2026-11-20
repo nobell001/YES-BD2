@@ -548,3 +548,33 @@ class PeriodLockTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplayChecksTest(unittest.TestCase):
+    """Leo 2026-11-20 「有移動的人物再檢查就好」: before BATTLE only the units
+    the tool dragged are held again, not every unit left where it stood."""
+
+    def test_replay_holds_only_the_units_it_moved(self):
+        calls = []
+
+        class Screen:
+            end_word = "victory"
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def set_auto_skill(self, on):
+                return True
+
+        def replay(screen, record, **options):
+            calls.append(options)
+            return SimpleNamespace(finished=True, turns_played=(1,), seconds=60.0)
+
+        task = bare_task()
+        with (
+            mock.patch.object(talos_module, "TalosScreen", Screen),
+            mock.patch.object(talos_module, "replay_fight", replay),
+        ):
+            won, why = task._replay(1)
+        self.assertTrue(won, why)
+        self.assertIs(False, calls[0]["pushes"])
