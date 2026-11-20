@@ -298,11 +298,16 @@ def recover_to_home(task, attempts: int = RECOVERY_ATTEMPTS) -> bool:
     """
     watch = getattr(task, "_frozen_watch", None)
     if watch is None:
-        return _recover_to_home(task, attempts)
+        home = _recover_to_home(task, attempts)
+        if home:
+            task._navigator_dead_screen = None
+        return home
     watch.paused += 1
     home = False
     try:
         home = _recover_to_home(task, attempts)
+        if home:
+            task._navigator_dead_screen = None
         return home
     finally:
         watch.paused -= 1
@@ -358,6 +363,35 @@ def _press_top_right_home(task, navigator, frame, blind: bool = False) -> bool |
     return _wait_after_back(task, navigator, frame)
 
 
+def note_navigator_changed_nothing(task, navigator) -> bool:
+    """After a failed ``navigator.return_home()``: when its presses changed
+    nothing, keep this screen on the task so recovery does not press the
+    same again here (True when kept)."""
+    if not getattr(navigator, "return_home_changed_nothing", False):
+        return False
+    try:
+        task._navigator_dead_screen = _thumb(navigator.vision.capture())
+    except (TaskDisabledException, FinishedException):
+        raise
+    except Exception:
+        return False
+    return task._navigator_dead_screen is not None
+
+
+def _navigator_may_help(task, navigator) -> bool:
+    """The trade navigator's way home, unless it already pressed on this
+    very screen and nothing changed (kept on the task, so the redo's own
+    recovery does not press it again either)."""
+    dead = getattr(task, "_navigator_dead_screen", None)
+    if dead is None:
+        return True
+    now = _thumb(navigator.vision.capture())
+    if now is None or dead.shape != now.shape or _frames_differ(dead, now):
+        task._navigator_dead_screen = None  # another screen: worth a try
+        return True
+    return False
+
+
 def _recover_to_home(task, attempts: int) -> bool:
     vision = Vision(task)
     navigator = Navigator(task, vision)
@@ -367,6 +401,8 @@ def _recover_to_home(task, attempts: int) -> bool:
     keys_released = False
     home_key_pressed = False
     back_did_nothing = False
+    # The trade navigator's own presses changed nothing on this screen.
+    navigator_gave_up = False
     back_moved = 0
     escape_presses = 0
     escape_stopped = False
@@ -382,14 +418,32 @@ def _recover_to_home(task, attempts: int) -> bool:
         task.info_set("恢复主页", f"第{attempt}次：{state.value}")
         if state == ScreenState.HOME:
             return True
-        if state in NAVIGATOR_STATES:
+        may_help = state in NAVIGATOR_STATES and _navigator_may_help(task, navigator)
+        if state in NAVIGATOR_STATES and not may_help and not navigator_gave_up:
+            # Pressed on this very screen already, and nothing changed.
+            navigator_gave_up = back_did_nothing = True
+            if state == ScreenState.SHOP:
+                break  # the shop has no other way out (see below)
+            task.log_info("恢复主页：这个画面跑商自己的返回已经按过没反应，直接改按 H 和 Esc。")
+        if may_help:
+            navigator_gave_up = False
             try:
                 if navigator.return_home().success:
+                    task._navigator_dead_screen = None
                     return True
             except (TaskDisabledException, FinishedException):
                 raise
             except Exception as exc:  # navigator paths assume trade context
                 task.log_warning(f"恢复主页：导航返回失败：{exc}")
+            if note_navigator_changed_nothing(task, navigator):
+                # Its presses (back, 补按, Esc) all left this screen as it
+                # was: called again it presses the same (player v0.4.6
+                # 2026-11-20: ten times here, ten more in the task's redo,
+                # 41 minutes on the 出售 page).  H and Esc below instead.
+                navigator_gave_up = back_did_nothing = True
+                if state == ScreenState.SHOP:
+                    break  # the shop has no other way out (see below)
+                task.log_info("恢复主页：跑商自己的返回按了没反应，画面没变，改按 H 和 Esc。")
             continue
         outcome = _handle_dialog(task, vision)
         if outcome == "title":
@@ -462,6 +516,9 @@ def _recover_to_home(task, attempts: int) -> bool:
                 (back_did_nothing or back_moved >= BACK_MOVES_BEFORE_HOME_KEY)  # when H would come next
                 and not channel_seen
                 and not house_blind_pressed
+                # A trade page (the shop's top right holds its 「%」 button
+                # where the house would be): never pressed blind there.
+                and not navigator_gave_up
             )
             pressed = _press_top_right_home(task, navigator, navigator.vision.capture(), blind=blind)  # 不用确认：没回主页最多再按一次，再走返回/H/Esc
             if pressed:
@@ -540,8 +597,20 @@ def _recover_to_home(task, attempts: int) -> bool:
             back_moved += 1
     if navigator.classify() == ScreenState.HOME:
         return True
+    if navigator_gave_up and state == ScreenState.SHOP:
+        # The shop's only ways out are its back and Esc, both just pressed
+        # (back, 补按, Esc) with nothing changed; H does nothing in a shop
+        # (Leo 2026-11-20 「在這個介面按H是沒有用的」).  Stop with the reason
+        # instead of pressing on (player v0.4.6: 41 minutes).
+        task._recovery_why = "商店页的返回、补按和 Esc 都没反应，画面一直没变，回不到主页"
+        task.log_warning(f"恢复主页：{task._recovery_why}。", notify=True)
+        _keep_failure_picture(task, navigator)
+        return False
     if channel_seen:
         task._recovery_why = "还在广场之类的场景里，画面上方的主页按钮没有出现，放开移动键、按 H 和 Esc 也没回到主页"
+        task.log_warning(f"恢复主页：{task._recovery_why}。", notify=True)
+    elif navigator_gave_up:
+        task._recovery_why = "返回、补按、H 和 Esc 都按了，画面一直停在同一页没变"
         task.log_warning(f"恢复主页：{task._recovery_why}。", notify=True)
     _keep_failure_picture(task, navigator)
     return False

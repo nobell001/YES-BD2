@@ -286,6 +286,12 @@ class MapAutomationTaskBase(BaseBD2Task):
             return True
         self.log_warning(returned.message)
         self._save_diagnostic(f"{self.diagnostic_prefix}_return_home_error")
+        from src.tasks.recovery import note_navigator_changed_nothing
+
+        # Its presses changed nothing here: the generic way home goes on
+        # with H and Esc instead of the same presses (player v0.4.6
+        # 2026-11-20, 41 minutes on the 出售 page).
+        note_navigator_changed_nothing(self, navigator)
         return self._recover_home_after_trade()
 
     def _note_phase_problem(self, how: str, note: str) -> None:

@@ -497,6 +497,65 @@ def _window_at_words(point) -> str:
         return f"别的窗口（看不出是什么：{exc!r}）"
 
 
+def _game_hung(handles) -> bool | None:
+    """True when Windows marks a game window 「没有响应」 (it has not taken
+    its messages for 5 s); None when that cannot be asked."""
+    try:
+        import ctypes
+
+        is_hung = ctypes.windll.user32.IsHungAppWindow
+        return any(bool(is_hung(int(handle))) for handle in handles)
+    except Exception:
+        return None
+
+
+def _game_input_facts(task, relative_point=None) -> list[str]:
+    """What Windows says about the game taking input, in player words."""
+    try:
+        import win32gui  # noqa: F401  (Windows only)
+    except Exception:
+        return []
+    facts: list[str] = []
+    try:
+        handles = task._game_window_handles()
+    except Exception:
+        handles = set()
+    if not handles:
+        return ["找不到游戏窗口"]
+    hung = _game_hung(handles)
+    if hung is True:
+        facts.append("游戏窗口「没有响应」（游戏卡住了，不是工具没按）")
+    elif hung is False:
+        facts.append("游戏有响应")
+    try:
+        in_front = task._game_in_foreground()
+    except Exception:
+        in_front = None
+    if in_front is True:
+        facts.append("游戏在最前面")
+    elif in_front is False:
+        facts.append(f"游戏不在最前面（{_what_is_in_front()}）")
+    if relative_point is not None:
+        try:
+            interaction = getattr(task.executor, "interaction", None)
+            capture = getattr(interaction, "capture", None)
+            x = round(float(relative_point[0]) * int(task.width))
+            y = round(float(relative_point[1]) * int(task.height))
+            point = capture.get_abs_cords(x, y)
+        except Exception:
+            point = None
+        if point is not None:
+            try:
+                on_game = task._point_on_game(point)
+            except Exception:
+                on_game = None
+            if on_game is True:
+                facts.append(f"按的位置（屏幕 {point[0]},{point[1]}）上面就是游戏")
+            elif on_game is False:
+                facts.append(f"按的位置（屏幕 {point[0]},{point[1]}）是{_window_at_words(point)}")
+    return facts
+
+
 def _input_desktop_open() -> bool:
     """False while the PC is locked (or on the sign-in / UAC screen): no
     program gets the front then and no key reaches any game.  The same check
@@ -1745,6 +1804,30 @@ class BaseBD2Task(BaseTask):
         handles = {getattr(window, "hwnd", None), getattr(window, "top_hwnd", None)}
         handles.update(info[0] for info in (getattr(window, "hwnds", None) or []) if info)
         return {handle for handle in handles if handle}
+
+    def say_why_presses_did_nothing(
+        self, label: str, relative_point: tuple[float, float] | None = None
+    ) -> str:
+        """Log, once per run and cause, what Windows says about the game when
+        presses and Esc all left the screen as it was: is the game answering
+        (Windows' 「没有响应」), is it in front, and is the pressed spot on a
+        screen and not under another window.  A player's 问题摘要 then says
+        why on its own (player v0.4.6 2026-11-20: 41 minutes on the 跑商 出售
+        page, the back press, 补按 and Esc ignored, no reason in the report).
+        Returns the line ("" when nothing could be asked, e.g. not Windows)."""
+
+        facts = _game_input_facts(self, relative_point)
+        if not facts:
+            return ""
+        line = f"{label}、补按和 Esc 都没反应，Windows 那边看到：{'；'.join(facts)}。"
+        logged = getattr(self, "_presses_did_nothing_logged", None)
+        if logged is None:
+            logged = set()
+            self._presses_did_nothing_logged = logged
+        if line not in logged:
+            logged.add(line)
+            self.log_warning(line)
+        return line
 
     def _game_in_foreground(self) -> bool:
         import win32gui

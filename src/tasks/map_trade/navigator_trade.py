@@ -3,8 +3,11 @@ from __future__ import annotations
 import re
 from time import monotonic
 
+from ok.task.exceptions import FinishedException, TaskDisabledException
+
 from src.tasks.BaseBD2Task import CARTRIDGE_RECENT_ENTRY_POINT
 from src.tasks.map_trade.models import (
+    MAP_TRADE_REFERENCE,
     MERCHANT_CARD_ID,
     MapPageMode,
     NavigationResult,
@@ -96,7 +99,9 @@ from src.utils.fantasia_square import (
 from src.utils.field_followers import dismiss_once_per_run
 from src.utils.press_confirm import wait_for
 from src.utils.press_next import Next, per_frame, press_next
-from src.utils.wait_limits import STUCK_SECONDS, HeldFor, ProgressWait, StillTimer, scene_at_press
+from src.utils.frozen_screen import FrozenScreen
+from src.utils.screen_unchanged import screen_changed, small_screen
+from src.utils.wait_limits import STUCK_SECONDS, HeldFor, is_loading_dark, ProgressWait, StillTimer, scene_at_press
 
 # After closing a shop with no discount-close dialog, how long the merchant
 # menu (or the field) is looked for.
@@ -1131,14 +1136,47 @@ class TradeNavigationMixin:
         """Go home from whatever trade screen is left, in up to three passes."""
 
         result = NavigationResult(False, ScreenState.UNKNOWN, "未尝试返回主页")
+        self.return_home_changed_nothing = False
         for attempt in range(1, RETURN_HOME_PASSES + 1):
+            before = self._screen_now()
             result = self._return_home_pass()
             if result.success:
                 return result
+            after = self._screen_now()
+            if (
+                result.state not in {ScreenState.LOADING, ScreenState.UNKNOWN}
+                and not (after is not None and is_loading_dark(after[..., None]))
+                and not screen_changed(before, after)
+            ):
+                # A pass presses the back, once more, then Esc: when none of
+                # them changed the screen, the next pass is the same three
+                # presses on the same screen (player v0.4.6 2026-11-20: the
+                # 出售 page, 3 passes x 3 presses, 21 times = 41 minutes).
+                # Stop here; the generic way home tries H and Esc instead.
+                self.return_home_changed_nothing = True
+                self.task.log_warning(
+                    f"跑商：第{attempt}次返回主页未完成（{result.message}），"
+                    "这一轮按的键画面都没变，不再重复同样的按法。"
+                )
+                return NavigationResult(
+                    False,
+                    result.state,
+                    f"{result.message}（按了都没反应，画面没变）",
+                    map_page_mode=result.map_page_mode,
+                )
             if attempt < RETURN_HOME_PASSES:
                 self.task.log_info(f"跑商：第{attempt}次返回主页未完成（{result.message}），再试。")
                 self.task.sleep(1.0)
         return result
+
+    def _screen_now(self):
+        """A small grey copy of the screen now (None when not captured)."""
+        try:
+            return small_screen(self.vision.capture())
+        except (TaskDisabledException, FinishedException, FrozenScreen):
+            raise
+        except Exception:
+            return None
 
     def _discount_close_dialog_shown(self) -> bool:
         shown, _ = self._ocr_keywords_in_frame(
@@ -1311,6 +1349,20 @@ class TradeNavigationMixin:
                 return False  # closed, but not where it should lead: no more presses
             if done:
                 return True
+        if self.classify_trade() == ScreenState.SHOP:
+            # Every press and Esc left the shop page: say what Windows saw
+            # (game in front, answering, the back pill's spot on screen and
+            # not covered), so a report alone tells why (player v0.4.6
+            # 2026-11-20, 41 minutes on the 出售 page with no reason given).
+            say_why = getattr(self.task, "say_why_presses_did_nothing", None)
+            if callable(say_why):
+                say_why(
+                    "跑商：商店的返回",
+                    (
+                        DISCOUNT_SHOP_CLOSE_CONTROL_REFERENCE_POINT[0] / MAP_TRADE_REFERENCE.width,
+                        DISCOUNT_SHOP_CLOSE_CONTROL_REFERENCE_POINT[1] / MAP_TRADE_REFERENCE.height,
+                    ),
+                )
         return False
 
     def _shop_close_answered(self) -> bool:

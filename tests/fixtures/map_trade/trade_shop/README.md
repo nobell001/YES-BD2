@@ -41,3 +41,12 @@ own downscaled copy (1488x836); the gold total and status at the top right
 are blacked out.  The shop's back pill stayed pressed-and-ignored on this
 page for 13 s; tests/test_page_lookalikes.py checks that classify_trade reads
 it as SHOP, the screen 跑商 presses its back once more, then Esc, on.
+
+`sell_page_back_dead_player_1080_v046.jpg` is the game picture from a
+player's v0.4.6 问题摘要 (2026-11-20, 简中, 1920x1080 windowed at 125%, no
+桌面分身): the 出售 page of 泰瑞丝's shop, 剧情游戏卡1 picked.  It is the
+summary's own downscaled copy (1488x836); the gold total and status at the
+top right are blacked out.  The shop's back pill, 补按 and Esc changed nothing
+on this page for 41 minutes; tests/test_page_lookalikes.py checks that
+classify_trade reads it as SHOP, and tests/test_trade_shop_back_dead_loop.py
+that the same presses are no longer repeated on it.
