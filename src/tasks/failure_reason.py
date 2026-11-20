@@ -54,12 +54,17 @@ def started_only(text: str, name: str = "") -> bool:
 
 
 def has_reason(status: str, name: str = "") -> bool:
-    """「打开邮箱失败：等了15秒…」 has one; 「打开邮箱失败。」 does not."""
+    """「打开邮箱失败：等了15秒…」 has one; 「打开邮箱失败。」 does not.
+    「跑图部分流程未完成：疑似未开齐地图传送阵…」 has one too (the map tasks'
+    failed line, which carries its reason since 2026-11-20)."""
     text = _strip_name(status, name).rstrip(_PUNCTUATION)
-    if "失败" not in text:
-        return False
-    after = text.rsplit("失败", 1)[1].strip(_PUNCTUATION)
-    return bool(re.search(r"[一-鿿A-Za-z0-9]", after))
+    for word in ("失败", "部分流程未完成"):
+        if word not in text:
+            continue
+        after = text.rsplit(word, 1)[1].strip(_PUNCTUATION)
+        if re.search(r"[一-鿿A-Za-z0-9]", after):
+            return True
+    return False
 
 
 def _cause_line(task, since: float, status: str) -> str:

@@ -51,6 +51,9 @@ TRADE_VISION_THRESHOLD_KEY = "跑商识图阈值"
 TRADE_OCR_THRESHOLD_KEY = "跑商 OCR 阈值"
 MAP_VISION_THRESHOLD_KEY = "跑图识图阈值"
 MAP_OCR_THRESHOLD_KEY = "跑图 OCR 阈值"
+# How much of a failed phase's reason the 状态 line carries; the 问题摘要
+# keeps the whole of it.
+STATUS_WHY_CHARS = 120
 
 def _config_path(name: str) -> Path:
     return Path(get_relative_path(Config.config_folder, f"{name}.json"))
@@ -168,6 +171,8 @@ class MapAutomationTaskBase(BaseBD2Task):
         held: list[str] = []
         # Home was not reached after a failed phase: nothing more is tried.
         stranded = False
+        # Why the first failed phase failed, for the 状态 line.
+        first_why = ""
         self.info_set("状态", f"{self.task_log_name}启动。")
         try:
             for index, (name, config_key, action) in enumerate(phases):
@@ -203,6 +208,8 @@ class MapAutomationTaskBase(BaseBD2Task):
                     else:
                         (completed if success else failed).append(name)
                     if not success:
+                        if message and not first_why:
+                            first_why = message if len(phases) == 1 else f"{name}：{message}"
                         self._note_phase_problem("fail", f"{name}：{message}" if message else name)
                         self._save_diagnostic(f"{self.diagnostic_prefix}_{name}_failed")
                 except (TaskDisabledException, FinishedException):
@@ -216,11 +223,14 @@ class MapAutomationTaskBase(BaseBD2Task):
                     if getattr(self, "_frozen_watch", None) is not None:
                         self._frozen_watch = FrozenWatch()
                     failed.append(name)
+                    first_why = first_why or f"{name}：{why}"
                     self._note_phase_problem("fail", f"{name}：{why}")
                     self.log_warning(f"{name}：{why}。")
                     self._save_diagnostic(f"{self.diagnostic_prefix}_{name}_frozen")
                 except Exception as exc:
                     failed.append(name)
+                    # No code text on the 状态 line; the 问题摘要 keeps it.
+                    first_why = first_why or f"{name}出了程序错误（详情见问题摘要）"
                     self._note_phase_problem("error", f"{name}：{exc}")
                     self.log_error(f"{self.task_log_name}子流程失败：{name}。", exc)
                     self._save_diagnostic(f"{self.diagnostic_prefix}_{name}_error")
@@ -246,7 +256,20 @@ class MapAutomationTaskBase(BaseBD2Task):
         self.info_set("失败", "、".join(failed) or "-")
         self.info_set("跳过", "、".join(skipped) or "-")
         if failed:
-            self.info_set("状态", f"{self.task_log_name}部分流程未完成。")
+            # With the reason: 「跑图部分流程未完成。」 alone was all a player
+            # saw (Leo 2026-11-20 「傳送門沒開 要說」); the run log row and a
+            # batch's summary show this line.
+            if not first_why and "返回章节主页" in failed:
+                first_why = "做完后回不到章节主页"
+            why = " ".join(first_why.split()).rstrip("。.；;")
+            if len(why) > STATUS_WHY_CHARS:
+                why = why[: STATUS_WHY_CHARS - 1] + "…"
+            self.info_set(
+                "状态",
+                f"{self.task_log_name}部分流程未完成：{why}。"
+                if why
+                else f"{self.task_log_name}部分流程未完成。",
+            )
             return False
         if held:
             # Not 「所有已开启流程完成」: something the player turned on was not

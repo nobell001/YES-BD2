@@ -222,6 +222,22 @@ AUTO_MOVE_BANNER_WORDS = ("移动中", "完成自动移动", "中止自动移动
 AUTO_MOVE_DIALOG_TITLE = "自动移动"
 AUTO_MOVE_CANCEL_TEXT = "取消"
 NOT_BY_CIRCLE_MESSAGE = "人不在可用的传送阵上（右下 F 键的手势没变绿）"
+# A target's teleport page shows no usable circle (grey, no gold ring): the
+# circle is not yet opened in the player's game.  Opening it is the player's
+# part (Leo 2026-11-15 「沒開是用戶的問題 改成說:疑似未開齊地圖傳送陣 … 提示用戶
+# 就好了」); these words lead the card's skip reason, the 问题摘要 and the
+# run's 状态 (Leo 2026-11-20 「傳送門沒開 要說」: a player saw only 「跑图部分
+# 流程未完成」).
+CIRCLES_NOT_OPEN = "疑似未开齐地图传送阵"
+
+
+def circles_not_open_message(title: str) -> str:
+    return (
+        f"{CIRCLES_NOT_OPEN}：{title}的传送页上没有可用的传送阵，"
+        "请先在游戏里走到那张图开启传送阵"
+    )
+
+
 # ≡-menu entries also found by a part of the name when one character is
 # misread (「狩猎扬」), on a box no longer than the name.
 NAV_ENTRY_NAMES = {"狩猎场": ("狩猎场", "狩猎", "猎场")}
@@ -3373,13 +3389,12 @@ class SandboxNavigationMixin:
             # the character is: on this map already is an arrival.
             return self._after_teleport_that_never_started(card, target, context, pressed=False)
         if teleport is None:
+            # The other page kind (生成魔法阵) with no usable circle either:
+            # the same words for the player as the direct page's.
             return NavigationResult(
                 False,
                 ScreenState.AREA_MAP,
-                (
-                    f"{target.title}未识别到传送阵地图传送阵，"
-                    "无法安全传送"
-                ),
+                circles_not_open_message(target.title),
             )
         self._status(
             "传送阵地图传送阵点击中心",
@@ -3440,7 +3455,7 @@ class SandboxNavigationMixin:
         what = (
             f"点了两次{target.title}的传送阵都没有开始传送"
             if pressed
-            else f"{target.title}的传送页上未识别到传送阵"
+            else f"{target.title}的传送页上没有可用的传送阵"
         )
         closed = self._close_confirmed_map_page(
             {context.map_page_mode}, timeout=SANDBOX_MAP_CLOSE_TIMEOUT
@@ -3458,6 +3473,17 @@ class SandboxNavigationMixin:
             self.task.log_info(f"跑图：{what}，区域地图确认人已经在{target.title}。")
             return NavigationResult(
                 True, ScreenState.SANDBOX, f"{card.card_id}/{target.key}/{target.title}"
+            )
+        if not pressed:
+            # Player v0.3.16 1080p 2026-11-15: every battle map's page showed
+            # grey circles without the gold ring (not yet activated in the
+            # player's game), so every card was skipped with 「未识别到传送
+            # 阵」.  Opening the circles is the player's part (Leo 2026-11-15
+            # 「沒開是用戶的問題 … 提示用戶就好了」): say so.
+            return NavigationResult(
+                False,
+                ScreenState.SANDBOX,
+                circles_not_open_message(target.title),
             )
         where = getattr(self, "_last_position_header", None) or "没读到"
         return NavigationResult(

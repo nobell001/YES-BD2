@@ -1222,7 +1222,7 @@ class NavigatorTest(unittest.TestCase):
         navigator.current_collection_target = lambda _card: card.targets[0].key
         result = navigator._click_collection_destination(card, card.targets[1], missing)
         self.assertFalse(result.success)
-        self.assertIn("未识别到", result.message)
+        self.assertIn("疑似未开齐地图传送阵", result.message)
         self.assertEqual(1, len(closed))
 
         selected = []

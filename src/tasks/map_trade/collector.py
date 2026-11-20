@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import deque
 from copy import deepcopy
 from dataclasses import replace
@@ -32,6 +33,7 @@ from src.tasks.map_trade.models import (
     CollectionResult,
 )
 from src.tasks.map_trade.navigator import Navigator
+from src.tasks.map_trade.navigator_sandbox import CIRCLES_NOT_OPEN
 from src.tasks.map_trade.progress import ProgressStore
 from src.tasks.map_trade.skill_group_keeper import SkillGroupKeeper, stopping
 from src.tasks.map_trade.skill_layout import SkillLayoutWrong
@@ -894,9 +896,19 @@ class Collector(SkillExecutionMixin):
                 problem = problem.replace("技能操作失败", "技能可能已按上但没能确认")
             notes.append(f"{card.label}{problem}，其余地图照跑，没完成的下次运行再补")
         missing = [card for card in cards if card.card_id not in self._skill_skips]
+        reasons = getattr(self, "_skip_reasons", {})
+        # Circles not yet opened in the player's game lead the note, so the
+        # 状态 line, the 问题摘要 and a batch row (cut short) all start with
+        # it (Leo 2026-11-20 「傳送門沒開 要說」: a player saw only 「跑图部分流程
+        # 未完成」 and found the cause himself).
+        not_open = [
+            card for card in missing if CIRCLES_NOT_OPEN in str(reasons.get(card.card_id, ""))
+        ]
+        if not_open:
+            notes.insert(0, _circles_not_open_note(not_open, reasons))
+            missing = [card for card in missing if card not in not_open]
         if missing:
             names = _card_names(missing)
-            reasons = getattr(self, "_skip_reasons", {})
             # Cards that stopped for the same reason share one entry, so a
             # long run of skips keeps every reason inside the report's line
             # (player 2026-10-19: nine chapters skipped, the reasons of
@@ -922,7 +934,8 @@ class Collector(SkillExecutionMixin):
         info_set = getattr(self.task, "info_set", None)
         if callable(info_set):
             skipped = _card_names(cards)
-            info_set("当前阶段", f"地图采集：{skipped}跳过，没有完成")
+            lead = f"{CIRCLES_NOT_OPEN}，" if not_open else ""
+            info_set("当前阶段", f"地图采集：{lead}{skipped}跳过，没有完成")
         # Only presses that surely did not happen fail the run; one that
         # most likely took (icon greyed) is reported, not failed.
         failed = any(card.card_id not in unconfirmed for card in cards)
@@ -994,6 +1007,22 @@ class Collector(SkillExecutionMixin):
             self.task.info_set(key, value)
         except AttributeError:
             pass
+
+
+_NOT_OPEN_MAP = re.compile(re.escape(CIRCLES_NOT_OPEN) + r"：(.+?)的传送页上")
+
+
+def _circles_not_open_note(cards, reasons: dict) -> str:
+    """「疑似未开齐地图传送阵：第1章（卢戈森林深处）、第3章（…）的传送页上没有可用
+    的传送阵…」: each card with the map whose circle is not open."""
+    places = []
+    for card in cards:
+        found = _NOT_OPEN_MAP.search(str(reasons.get(card.card_id, "")))
+        places.append(f"{card.label}（{found.group(1)}）" if found else card.label)
+    return (
+        f"{CIRCLES_NOT_OPEN}：{'、'.join(places)}的传送页上没有可用的传送阵，"
+        "请先在游戏里走到那张图开启传送阵；这些卡带这次跳过，没有完成"
+    )
 
 
 def _card_names(cards) -> str:

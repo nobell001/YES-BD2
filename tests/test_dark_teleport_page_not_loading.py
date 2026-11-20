@@ -233,7 +233,7 @@ class TeleportThatNeverStartedTest(unittest.TestCase):
                 self.assertEqual(1, len(closed))
                 self.assertEqual([], navigator.clicks)
                 if not arrived:
-                    self.assertIn("未识别到传送阵", result.message)
+                    self.assertIn("疑似未开齐地图传送阵", result.message)
 
     def _after(self, here):
         card = CARD_BY_ID["Q_sp19"]
