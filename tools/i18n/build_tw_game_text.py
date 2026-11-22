@@ -16,9 +16,12 @@ Sources, 繁中 -> 简中:
 Only pairs whose simplified 繁中 differs from the 简中 word are kept.
 Run: python tools/i18n/build_tw_game_text.py  (needs opencc and node).
 Offline (souseha unreachable, e.g. a cloud session): add --offline to keep the
-names already in the table and only refresh the guard words for the tool's
-own keywords (run it after adding a keyword; tests/test_tw_table_guards.py
-fails until then).
+names already in the table, add the characters, costumes and skills of
+characters.json it does not have yet, and refresh the guard words for the
+tool's own keywords (run it after adding a keyword).  The daily 角色名单更新
+job runs it after each refresh (2026-11-22: 贝那卡's new costume 折桂之姿 is
+勝利應援 on the 繁中 client; the table never got it and the job failed every
+run from 11-19).
 """
 
 from __future__ import annotations
@@ -181,7 +184,7 @@ def main() -> int:
     ui_keys = frozenset(t2s.convert(key) for key in ui)
     if "--offline" in sys.argv[1:]:
         current = json.loads(OUT.read_text(encoding="utf-8")).get("names") or {}
-        names = add_guards(current, ui_keys)
+        names = add_guards({**table(character_pairs(), ui_keys), **current}, ui_keys)
     else:
         names = table(term_pairs() + character_pairs() + souseha_pairs(), ui_keys)
     OUT.parent.mkdir(parents=True, exist_ok=True)

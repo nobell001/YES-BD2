@@ -38,6 +38,13 @@ class Costume:
     questions: tuple[tuple[tuple[tuple[str, ...], int], ...], ...]
     # Per question: its prompt's normalized texts (简体 and 繁體 forms).
     prompts: tuple[tuple[str, ...], ...] = ()
+    # Every name the two clients give the costume / character, normalized.
+    # The 繁中 client often names a costume differently (贝那卡 折桂之姿 =
+    # 勝利應援, 2026-11-19): a new costume reaches the bank before the word
+    # table (assets/game_text/zh_tw.json) knows its 繁中 name, so the 繁中
+    # name itself has to match too.
+    costume_names: tuple[str, ...] = ()
+    character_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -49,6 +56,16 @@ class Pick:
 
 def _texts(value: dict) -> tuple[str, ...]:
     return tuple(dict.fromkeys(t for t in (normalize(v) for v in value.values()) if t))
+
+
+def _names(entry: dict, kind: str) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            name
+            for name in (normalize(entry.get(f"{kind}_zh_cn")), normalize(entry.get(f"{kind}_zh_tw")))
+            if name
+        )
+    )
 
 
 @lru_cache(maxsize=4)
@@ -76,6 +93,8 @@ def _load(path: str) -> tuple[Costume, ...]:
                     _texts(question.get("prompt") or {})
                     for question in entry.get("questions") or []
                 ),
+                costume_names=_names(entry, "costume"),
+                character_names=_names(entry, "character"),
             )
         )
     return tuple(costumes)
@@ -96,12 +115,17 @@ def find_costume(costume_name: str, character_name: str = "", path: Path = BANK_
         return None
     best, best_ratio = None, 0.0
     for costume in bank(path):
-        ratio = SequenceMatcher(None, wanted, costume.costume).ratio()
-        if who and costume.character:
-            ratio = (ratio * 2 + SequenceMatcher(None, who, costume.character).ratio()) / 3
+        ratio = _best_ratio(wanted, costume.costume_names or (costume.costume,))
+        characters = costume.character_names or (costume.character,)
+        if who and any(characters):
+            ratio = (ratio * 2 + _best_ratio(who, characters)) / 3
         if ratio > best_ratio:
             best, best_ratio = costume, ratio
     return best if best_ratio >= 0.75 else None
+
+
+def _best_ratio(read: str, names: tuple[str, ...]) -> float:
+    return max((SequenceMatcher(None, read, name).ratio() for name in names if name), default=0.0)
 
 
 def short_answers(costume: Costume | None) -> frozenset:
@@ -143,26 +167,29 @@ def pick_answer(choices: list[str], costume: Costume | None, screen_text: str = 
     the values swapped (暗黑圣女 6 and 7: 「有。」/「没有。」); then the
     question whose prompt the screen shows (``screen_text``) wins.  The read
     choices are matched to that question's answers; the best-valued one is
-    pressed.  Nothing matching well enough: the first choice, as at LV20."""
+    pressed.  Nothing matching well enough: the first choice, as at LV20.
+
+    A costume the bank does not have (``costume`` None) gets the first choice
+    too (Leo 2026-11-22: 「題庫沒抓到的話 應該要固定選第一個」); before, any
+    costume's answers were tried and a look-alike answer of another costume
+    could pick the second one."""
     read = [normalize(choice) for choice in choices]
     if len(read) < 2:
         return Pick(0, False, "没读到两个选项")
-    pools = [costume] if costume is not None else []
     if costume is None:
-        pools = list(bank())  # unknown costume name: any costume's answers
+        return Pick(0, False, "题库里没有这件服装，选第一个")
     screen = normalize(screen_text)
     best = None  # (score, prompt on screen, slot, exp, answers)
-    for entry in pools:
-        for number, answers in enumerate(entry.questions):
-            prompts = entry.prompts[number] if number < len(entry.prompts) else ()
-            shown = _prompt_on_screen(prompts, screen)
-            for slot, text in enumerate(read):
-                for texts, exp in answers:
-                    score = _similar(text, texts)
-                    if score >= ANSWER_MIN_RATIO and (
-                        best is None or (score, shown) > (best[0], best[1])
-                    ):
-                        best = (score, shown, slot, exp, answers)
+    for number, answers in enumerate(costume.questions):
+        prompts = costume.prompts[number] if number < len(costume.prompts) else ()
+        shown = _prompt_on_screen(prompts, screen)
+        for slot, text in enumerate(read):
+            for texts, exp in answers:
+                score = _similar(text, texts)
+                if score >= ANSWER_MIN_RATIO and (
+                    best is None or (score, shown) > (best[0], best[1])
+                ):
+                    best = (score, shown, slot, exp, answers)
     if best is None:
         return Pick(0, False, "题库里没有这题，选第一个")
     _score, _shown, slot, exp, answers = best

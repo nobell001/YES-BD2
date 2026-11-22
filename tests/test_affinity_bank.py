@@ -77,9 +77,52 @@ class BankTest(unittest.TestCase):
         pick = answers.pick_answer(["完全不同的话", "另外一句话"], rou)
         self.assertEqual((pick.index, pick.known), (0, False))
 
-    def test_costume_not_in_the_bank_searches_every_costume(self):
-        pick = answers.pick_answer(["想去山洞那边。", "想去草地那边。"], None)
-        self.assertEqual((pick.index, pick.known), (1, True))
+    def test_costume_not_in_the_bank_takes_the_first(self):
+        # Leo 2026-11-22: 題庫沒抓到的話 應該要固定選第一個. 鲁's answers, but
+        # the costume on screen is not in the bank: no guessing from them.
+        for choices in (["想去山洞那边。", "想去草地那边。"], ["想去山洞那邊。", "想去草地那邊。"]):
+            pick = answers.pick_answer(choices, None)
+            self.assertEqual((pick.index, pick.known), (0, False))
+            self.assertIn("第一个", pick.why)
+
+    def test_new_costume_found_by_either_client_name(self):
+        """A costume the 繁中 client names differently, before the word table
+        knows the name (贝那卡 折桂之姿 = 勝利應援, 2026-11-19)."""
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from src.utils import game_text
+
+        entry = {
+            "id": "Venaka_3",
+            "character_zh_cn": "贝那卡",
+            "character_zh_tw": "貝那卡",
+            "costume_zh_cn": "折桂之姿",
+            "costume_zh_tw": "勝利應援",
+            "questions": [
+                {
+                    "id": 1,
+                    "prompt": {"cn": "店长喜欢赢吗？", "tw": "店長喜歡贏嗎？"},
+                    "answers": [
+                        {"exp": 80, "text": {"cn": "还好。", "tw": "還好。"}},
+                        {"exp": 100, "text": {"cn": "当然！", "tw": "當然！"}},
+                    ],
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "counseling.json"
+            path.write_text(json.dumps({"costumes": [entry]}, ensure_ascii=False), encoding="utf-8")
+            simplified = answers.find_costume("折桂之姿", "贝那卡", path)
+            traditional = answers.find_costume(
+                game_text.to_tool_text("勝利應援", True), game_text.to_tool_text("貝那卡", True), path
+            )
+            self.assertEqual("Venaka_3", simplified.id)
+            self.assertEqual("Venaka_3", traditional.id)
+            for costume, choices in ((simplified, ["还好。", "当然！"]), (traditional, ["還好。", "當然！"])):
+                pick = answers.pick_answer(choices, costume)
+                self.assertEqual((pick.index, pick.known), (1, True))
 
 
 if __name__ == "__main__":

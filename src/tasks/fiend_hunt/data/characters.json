@@ -1,6 +1,6 @@
 {
  "source": "https://browndust2-db.souseha.com",
- "fetched": "2026-11-05",
+ "fetched": "2026-11-22",
  "note": "names, skills and SP; portraits in costumes/; refresh with tools/fetch_souseha_characters.py",
  "characters": [
   {
@@ -2236,7 +2236,11 @@
      "sp": [
       5
      ],
-     "burst_sp": []
+     "burst_sp": [
+      2,
+      1,
+      1
+     ]
     },
     {
      "id": "Loen_2",
@@ -2425,6 +2429,30 @@
       3
      ],
      "burst_sp": []
+    },
+    {
+     "id": "Venaka_3",
+     "name_zh_tw": "勝利應援",
+     "name_zh_cn": "折桂之姿",
+     "name_en": "Cheers to Victory",
+     "name_ja": "勝利の主役",
+     "name_ko": "승리의 주역",
+     "skill_zh_tw": "永不停歇的應援",
+     "skill_zh_cn": "永不停歇的应援",
+     "skill_en": "Nonstop Cheer",
+     "skill_ja": "途切れぬ応援",
+     "skill_ko": "멈추지 않는 응원",
+     "sp": [
+      5,
+      4,
+      3
+     ],
+     "burst_sp": [
+      1,
+      1,
+      1
+     ],
+     "added": "2026-11-22"
     }
    ]
   },
@@ -3533,7 +3561,11 @@
       7,
       6
      ],
-     "burst_sp": []
+     "burst_sp": [
+      1,
+      1,
+      1
+     ]
     }
    ]
   },
@@ -3960,7 +3992,7 @@
     {
      "id": "Valze_1",
      "name_zh_tw": "背叛之夜",
-     "name_zh_cn": "背叛之夜",
+     "name_zh_cn": "叛夜",
      "name_en": "Night of Betrayal",
      "name_ja": "叛逆の夜",
      "name_ko": "배반의 밤",
