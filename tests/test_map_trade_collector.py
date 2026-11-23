@@ -1441,8 +1441,11 @@ class CollectorSkillTest(unittest.TestCase):
         events = []
         collector.task.sleep = lambda seconds: events.append(seconds)
         click = collector.vision.click_client
+        # The wait before a press is the interval minus the time the looks in
+        # between really took, so the spacing is that real time plus the
+        # sleeps (a slow Windows runner took 0.5 s for them: v0.4.13 Build).
         collector.vision.click_client = lambda *args, **kwargs: (
-            events.append("click"),
+            events.append(("click", monotonic())),
             click(*args, **kwargs),
         )
 
@@ -1453,11 +1456,12 @@ class CollectorSkillTest(unittest.TestCase):
         )
 
         self.assertEqual(1.2, PIPELINE_CLICK_INTERVAL)
-        presses = [index for index, event in enumerate(events) if event == "click"]
+        presses = [index for index, event in enumerate(events) if isinstance(event, tuple)]
         self.assertEqual(3, len(presses))
         for previous, current in zip(presses, presses[1:]):
-            waits = [value for value in events[previous + 1:current] if value != "click"]
-            self.assertGreater(sum(waits), 1.1)
+            waits = [value for value in events[previous + 1:current] if not isinstance(value, tuple)]
+            real = events[current][1] - events[previous][1]
+            self.assertGreater(sum(waits) + real, 1.1)
 
     def test_suppression_count_roi_uses_manual_fixed_region(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)

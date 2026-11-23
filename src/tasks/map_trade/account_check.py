@@ -33,7 +33,7 @@ FLAG_FILE = Path("configs") / "account_mismatch.json"
 MESSAGE = "跑图记录和游戏画面对不上，可能换了账号：已停下，没有按任何技能"
 
 
-def _untouched(result) -> bool | None:
+def untouched(result) -> bool | None:
     """True: both badges clearly open; False: something done; None: unsure."""
     completion = getattr(result, "completion", None)
     if completion is None or not completion.complete_region:
@@ -64,8 +64,9 @@ def card_ids_to_check(state, allowed) -> list[str]:
         if allowed is not None and card.filter_key not in allowed:
             continue
         if card.card_id in getattr(state, "badge_days", {}):
-            # Taken as done from its badges alone: the tool did not walk it,
-            # and the collector reads its badges again on a later day.
+            # Taken as done from its badges alone: the tool did not walk it.
+            # The collector reads its badges again on a later day and does
+            # this check there (``Collector._badge_card_from_other_account``).
             continue
         if state.card_verified(card.card_id):
             picked.append(card.card_id)
@@ -81,7 +82,7 @@ def records_from_other_account(navigator, state, allowed=None) -> bool:
         return False
     for card_id in card_ids:
         for _read in range(READS_PER_CARD):
-            seen = _untouched(navigator.inspect_collection_card_completion(card_id))
+            seen = untouched(navigator.inspect_collection_card_completion(card_id))
             if seen is not True:
                 return False
     return True

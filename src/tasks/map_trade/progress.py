@@ -1382,6 +1382,14 @@ class ProgressStore:
         day = state.badge_days.get(card_id)
         return day is not None and day != state.daily_key and state.card_complete(card_id)
 
+    def badge_read_after_first_day(self, card_id: str) -> bool:
+        """The card's done badges were read after the week's first game day.
+        Only Monday morning can still show last week's badges; in one
+        account a card read done later in the week never opens again."""
+        state = self._require_state()
+        day = state.badge_days.get(card_id)
+        return day is not None and day != state.weekly_key
+
     @property
     def badge_reads_to_redo(self) -> list[str]:
         state = self._require_state()

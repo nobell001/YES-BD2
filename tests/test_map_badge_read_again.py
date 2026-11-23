@@ -9,6 +9,7 @@ that game day; the next day its badges are read once more: still done, it
 stays done for the week; open, it is run.  Cards the tool walked itself are
 never read again (Leo 2026-10-21)."""
 
+import os
 import tempfile
 import unittest
 from datetime import datetime
@@ -18,18 +19,34 @@ from unittest.mock import patch
 
 from src.tasks.map_trade import account_check
 from src.tasks.map_trade.card_status import (
+    CardActionDetection,
+    CardActionState,
     CollectionCardSelectionOutcome,
     CollectionCardSelectionResult,
+    StoryCardCompletion,
 )
 from src.tasks.map_trade.collector import Collector
 from src.tasks.map_trade.models import CARD_BY_ID, NavigationResult, ScreenState
 from src.tasks.map_trade.progress import UTC_PLUS_8, ProgressStore
+from src.utils import accounts
 
 MONDAY = datetime(2026, 11, 23, 9, 39, tzinfo=UTC_PLUS_8)  # the second report
 TUESDAY = datetime(2026, 11, 24, 9, 0, tzinfo=UTC_PLUS_8)
 CARDS = (CARD_BY_ID["Q_sp1"], CARD_BY_ID["Q_sp2"])
 DONE = CollectionCardSelectionOutcome.VISUALLY_COMPLETE
 OPEN = CollectionCardSelectionOutcome.ENTERED
+
+
+def _badges(outcome):
+    """What reading the card's badges without entering returns."""
+    state = CardActionState.PENDING if outcome is OPEN else CardActionState.COMPLETED
+    action = CardActionDetection(state)
+    completion = StoryCardCompletion(action, action, (0, 0, 1, 1), True)
+    return CollectionCardSelectionResult(
+        CollectionCardSelectionOutcome.FAILED if outcome is OPEN else DONE,
+        NavigationResult(True, ScreenState.CARD_MENU),
+        completion,
+    )
 
 
 class WalkStarted(Exception):
@@ -39,6 +56,7 @@ class WalkStarted(Exception):
 def _run(path: Path, now: datetime, badges: dict[str, CollectionCardSelectionOutcome]):
     progress = ProgressStore(path, lambda: now)
     selected = []
+    inspected = []
     warnings = []
 
     def select(card_id, *, enter_visually_complete):
@@ -52,7 +70,9 @@ def _run(path: Path, now: datetime, badges: dict[str, CollectionCardSelectionOut
     navigator = SimpleNamespace(
         select_collection_card=select,
         current_collection_target=walk,
-        inspect_collection_card_completion=lambda _card_id: None,
+        inspect_collection_card_completion=lambda card_id: (
+            inspected.append(card_id) or _badges(badges[card_id])
+        ),
     )
     task = SimpleNamespace(
         config={"卡带单步重试次数": 1},
@@ -72,7 +92,12 @@ def _run(path: Path, now: datetime, badges: dict[str, CollectionCardSelectionOut
         except WalkStarted as started:
             result, walked = None, str(started)
     return SimpleNamespace(
-        result=result, walked=walked, selected=selected, warnings=warnings, progress=progress
+        result=result,
+        walked=walked,
+        selected=selected,
+        inspected=inspected,
+        warnings=warnings,
+        progress=progress,
     )
 
 
@@ -81,6 +106,12 @@ class BadgeReadAgainTest(unittest.TestCase):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.path = Path(folder.name) / "map_trade_progress.json"
+        # The 换账号 flag file is written under the working folder.
+        old = os.getcwd()
+        os.chdir(folder.name)
+        self.addCleanup(os.chdir, old)
+        accounts.reset_cache()
+        self.addCleanup(accounts.reset_cache)
 
     def test_monday_read_is_only_for_that_day(self):
         # Monday 09:39: the game still shows last week's done badges.
@@ -99,6 +130,7 @@ class BadgeReadAgainTest(unittest.TestCase):
         # Tuesday: the game has reset.  The card is read again and run.
         tuesday = _run(self.path, TUESDAY, {"Q_sp1": OPEN, "Q_sp2": DONE})
         self.assertEqual("Q_sp1", tuesday.walked)
+        self.assertFalse(account_check.pending_flag())
         self.assertEqual(["Q_sp1"], tuesday.selected)
         state = ProgressStore(self.path, lambda: TUESDAY).load()
         self.assertEqual(set(), state.completed_targets("Q_sp1"))
@@ -135,6 +167,34 @@ class BadgeReadAgainTest(unittest.TestCase):
         state = ProgressStore(self.path, lambda: TUESDAY).load()
         with patch("src.tasks.map_trade.account_check.COLLECTABLE_CARDS", CARDS):
             self.assertEqual([], account_check.card_ids_to_check(state, None))
+
+    def test_read_later_in_the_week_then_open_is_another_account(self):
+        # Read done on Wednesday: the game had reset long before, so the
+        # same account can never show the card open again this week.
+        wednesday = datetime(2026, 11, 25, 9, tzinfo=UTC_PLUS_8)
+        _run(self.path, wednesday, {"Q_sp1": DONE, "Q_sp2": DONE})
+        thursday = _run(
+            self.path, datetime(2026, 11, 26, 9, tzinfo=UTC_PLUS_8), {"Q_sp1": OPEN, "Q_sp2": OPEN}
+        )
+        self.assertFalse(thursday.result.success)
+        self.assertEqual(account_check.MESSAGE, thursday.result.message)
+        self.assertTrue(account_check.pending_flag())
+        self.assertIsNone(thursday.walked)
+        self.assertEqual([], thursday.selected)  # nothing entered, nothing pressed
+        self.assertEqual(["Q_sp1"] * account_check.READS_PER_CARD, thursday.inspected)
+        # The records are kept for the player's answer on 首页.
+        state = ProgressStore(self.path, lambda: wednesday).load()
+        self.assertTrue(state.card_verified("Q_sp1"))
+
+    def test_read_later_in_the_week_still_done_stays_done(self):
+        wednesday = datetime(2026, 11, 25, 9, tzinfo=UTC_PLUS_8)
+        _run(self.path, wednesday, {"Q_sp1": DONE, "Q_sp2": DONE})
+        thursday = _run(
+            self.path, datetime(2026, 11, 26, 9, tzinfo=UTC_PLUS_8), {"Q_sp1": DONE, "Q_sp2": DONE}
+        )
+        self.assertTrue(thursday.result.success)
+        self.assertFalse(account_check.pending_flag())
+        self.assertEqual({}, thursday.progress.state.badge_days)
 
     def test_restart_week_forgets_badge_days(self):
         _run(self.path, MONDAY, {"Q_sp1": DONE, "Q_sp2": DONE})

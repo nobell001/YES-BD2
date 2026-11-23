@@ -198,6 +198,10 @@ class Collector(SkillExecutionMixin):
             look_again = self.progress.badge_read_to_redo(card.card_id)
             if look_again:
                 completed = set()
+                if self._badge_card_from_other_account(card):
+                    account_check.raise_flag(state.weekly_key)
+                    self.task.log_warning(f"地图采集：{account_check.MESSAGE}")
+                    return CollectionResult(False, message=account_check.MESSAGE)
             if len(completed) >= len(card.targets):
                 # Three maps done this week = the card is done; its badges are
                 # not read (Leo 2026-10-21 「假設我第五章 安全區 戰鬥1 戰鬥2 都
@@ -622,6 +626,24 @@ class Collector(SkillExecutionMixin):
                 + self._badge_only_note()
             ),
         )
+
+    def _badge_card_from_other_account(self, card) -> bool:
+        """A card read done from its badges after the week's first day now
+        shows both badges open: one account's card never opens again within
+        the week, so the records are another account's (GitHub issue #4; a
+        review of #619: with every recorded card read from badges, the
+        account check had nothing left to compare).  Read before entering,
+        no skill pressed.  A Monday read opening later is the game's late
+        reset (players 2026-11-16 / 11-23) and is collected as usual."""
+        if not self.progress.badge_read_after_first_day(card.card_id):
+            return False
+        for _read in range(account_check.READS_PER_CARD):
+            seen = account_check.untouched(
+                self.navigator.inspect_collection_card_completion(card.card_id)
+            )
+            if seen is not True:
+                return False
+        return True
 
     def _badge_only_note(self) -> str:
         """Cards taken as done from their badges alone this run, said so the
