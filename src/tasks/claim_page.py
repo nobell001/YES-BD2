@@ -121,6 +121,41 @@ def claim_button_dimmed(frame, box) -> bool:
 # A left-list card to visit carries a red ◆「!」 badge at its top-right
 # corner (活动 and 通行证 pages): 17-18 px squares measured at 1080p.
 BADGE_MIN_AREA, BADGE_MAX_AREA = 80, 400
+# Red alone is not a badge (Leo's 4K 繁中 11-23: the red curtains on the
+# 登入活动 card art read as two badges, clicked four times).  A badge is a
+# red diamond about as wide as tall (16-18 x 16-18 px at 1080p; the curtains
+# were 12 x 16 and 11 x 33) with a light 「!」 down its middle: 4.9-8.9% of
+# the box on every real badge measured (6 活动 4K 10-03, 5 通行证 1080p),
+# 0.0-0.3% on the curtains.  Both are judged against the badge's own red, so
+# a darker or washed-out screen keeps them (tests: dark, gamma, HDR).
+BADGE_MIN_SQUARENESS = 0.75
+BADGE_MIN_MARK_SHARE = 0.02
+BADGE_MARK_COLUMN = (0.3, 0.7)
+# The 「!」: well under the red's saturation, about as bright as the red.
+BADGE_MARK_MAX_SATURATION = 0.6
+BADGE_MARK_MIN_VALUE = 0.85
+
+
+def badge_has_mark(hsv, red, box) -> bool:
+    """True when the red patch at ``box`` (x, y, w, h in ``hsv``) is a ◆「!」
+    badge: about square, with a light 「!」 in its middle column."""
+    x, y, w, h = box
+    if min(w, h) / max(w, h) < BADGE_MIN_SQUARENESS:
+        return False
+    patch = hsv[y : y + h, x : x + w]
+    is_red = red[y : y + h, x : x + w].astype(bool)
+    if not is_red.any():
+        return False
+    red_saturation = float(np.median(patch[..., 1][is_red]))
+    red_value = float(np.median(patch[..., 2][is_red]))
+    mark = (
+        ~is_red
+        & (patch[..., 1] <= red_saturation * BADGE_MARK_MAX_SATURATION)
+        & (patch[..., 2] >= red_value * BADGE_MARK_MIN_VALUE)
+    )
+    left, right = BADGE_MARK_COLUMN
+    column = mark[:, int(w * left) : int(w * right) + 1]
+    return column.sum() / float(w * h) >= BADGE_MIN_MARK_SHARE
 
 
 def find_red_badges(frame, strip: tuple[int, int, int, int]) -> list[int]:
@@ -136,10 +171,13 @@ def find_red_badges(frame, strip: tuple[int, int, int, int]) -> list[int]:
     count, _labels, stats, _centroids = cv2.connectedComponentsWithStats(red, 8)
     found = []
     for index in range(1, count):
-        _cx, cy, _cw, ch, area = stats[index]
+        cx, cy, cw, ch, area = stats[index]
         area_ref = area / scale / scale
-        if BADGE_MIN_AREA <= area_ref <= BADGE_MAX_AREA:
-            found.append(round(y + (cy + ch / 2) / scale))
+        if not BADGE_MIN_AREA <= area_ref <= BADGE_MAX_AREA:
+            continue
+        if not badge_has_mark(hsv, red, (cx, cy, cw, ch)):
+            continue  # red card art, not a ◆「!」 (see BADGE_MIN_MARK_SHARE)
+        found.append(round(y + (cy + ch / 2) / scale))
     return sorted(found)
 
 

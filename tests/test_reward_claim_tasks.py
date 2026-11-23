@@ -15,6 +15,7 @@ from src.tasks.RewardClaimTasks import (
     PASS_TAB_BADGE_STRIP,
     PassRewardTask,
 )
+from tests.badge_drawing import draw_badge
 
 PASS_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "pass" / "pass_page_badges_fhd.png"
 CHARACTER_PASS = Path(__file__).resolve().parent / "fixtures" / "pass"
@@ -27,9 +28,9 @@ def box(name, y=0):
 def badged_frame(badge_ys):
     """A 1080p frame with a red ◆! badge at each reference y."""
     frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-    x = PASS_BADGE_STRIP[0] + 20
+    x = PASS_BADGE_STRIP[0] + 28
     for y in badge_ys:
-        frame[y - 8 : y + 8, x : x + 17] = (0, 0, 230)
+        draw_badge(frame, x, y)
     return frame
 
 
@@ -240,9 +241,7 @@ class PassFallbackTest(unittest.TestCase):
         task._pass_misses = {}
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         for y in tab_badges:
-            frame[y - 8 : y + 8, PASS_TAB_BADGE_STRIP[0] + 10 : PASS_TAB_BADGE_STRIP[0] + 27] = (
-                0, 0, 230,
-            )
+            draw_badge(frame, PASS_TAB_BADGE_STRIP[0] + 18, y)
         task.capture_frame = lambda: frame
         task._click_reference = lambda x, y, **_k: task.clicks.append((x, y))
         queues = {key: list(value) for key, value in outcomes.items()}

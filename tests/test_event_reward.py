@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -17,6 +18,7 @@ from src.tasks.EventRewardTask import (
     parse_token_count,
     red_share,
 )
+from tests.badge_drawing import draw_badge
 
 
 def _frame(width=1920, height=1080, color=(40, 40, 40)):
@@ -25,23 +27,69 @@ def _frame(width=1920, height=1080, color=(40, 40, 40)):
     return frame
 
 
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "event_reward"
+
+
 class FindBadgesTest(unittest.TestCase):
-    def test_red_square_in_the_strip_is_a_badge(self):
+    def test_badge_in_the_strip_is_found(self):
         frame = _frame()
-        x = BADGE_STRIP[0] + 8
-        frame[400:418, x : x + 18] = (0, 0, 230)  # BGR red, 18 px like the live badge
+        draw_badge(frame, BADGE_STRIP[0] + 17, 409)
         self.assertEqual(find_badges(frame), [409])
 
     def test_scales_with_the_frame(self):
-        frame = _frame(3840, 2160)
-        x = (BADGE_STRIP[0] + 8) * 2
-        frame[800:836, x : x + 36] = (0, 0, 230)
-        self.assertEqual(find_badges(frame), [409])
+        for width, height in ((2560, 1440), (3840, 2160)):
+            with self.subTest(width=width):
+                scale = width / 1920
+                frame = _frame(width, height)
+                draw_badge(frame, round((BADGE_STRIP[0] + 17) * scale), round(409 * scale), scale)
+                self.assertEqual(find_badges(frame), [409])
 
     def test_large_red_art_is_not_a_badge(self):
         frame = _frame()
         frame[300:500, BADGE_STRIP[0] : BADGE_STRIP[0] + 30] = (0, 0, 230)
         self.assertEqual(find_badges(frame), [])
+
+    def test_badge_sized_red_without_the_mark_is_not_a_badge(self):
+        # Red card art the size of a badge, but no light 「!」 in it.
+        frame = _frame()
+        x = BADGE_STRIP[0] + 8
+        frame[400:418, x : x + 18] = (0, 0, 230)
+        self.assertEqual(find_badges(frame), [])
+
+    def test_tall_red_stripe_is_not_a_badge(self):
+        frame = _frame()
+        x = BADGE_STRIP[0] + 10
+        frame[400:433, x : x + 11] = (0, 0, 230)
+        frame[410:420, x + 4 : x + 7] = (200, 225, 255)
+        self.assertEqual(find_badges(frame), [])
+
+    def test_red_curtain_on_the_login_card_is_not_a_badge(self):
+        # Leo's 4K PC 11-23 (2560x1440, 繁中, 5TH ANNIVERSARY EVE 登入活動):
+        # the curtains read as badges at y 638 and 674 and the card was
+        # clicked four times.  Only the card list is kept.
+        frame = cv2.imread(str(FIXTURES / "login_card_red_curtain_tw_2k.png"))
+        self.assertIsNotNone(frame)
+        self.assertEqual(find_badges(frame), [])
+
+    def test_real_badge_is_found_on_every_look(self):
+        # 联动合作活动 badge, 4K 简中 10-03 (as 1080p): dimmed, gamma and
+        # HDR looks keep it (the ◆「!」 is judged against its own red).
+        frame = cv2.imread(str(FIXTURES / "collab_card_badge_cn_4k_as_1080.png"))
+        self.assertIsNotNone(frame)
+        looks = {
+            "same": lambda image: image,
+            "darker": lambda image: image * 0.75,
+            "gamma": lambda image: 255 * (image / 255) ** 1.5,
+            "hdr": lambda image: image * 0.85 + 15,
+        }
+        for name, look in looks.items():
+            with self.subTest(look=name):
+                seen = look(frame.astype(np.float32)).clip(0, 255).astype(np.uint8)
+                self.assertEqual(find_badges(seen), [344])
+        for width, height in ((2560, 1440), (3840, 2160)):
+            with self.subTest(width=width):
+                big = cv2.resize(frame, (width, height), interpolation=cv2.INTER_CUBIC)
+                self.assertEqual(find_badges(big), [344])
 
 
 class ButtonLitTest(unittest.TestCase):
