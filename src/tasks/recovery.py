@@ -115,12 +115,13 @@ def _handle_dialog(task, vision: Vision) -> str:
     channel_dialog = _channel_dialog(boxes)
     if press is None:
         return "channel" if channel_dialog and _close_channel_dialog(task) else "none"
-    if press.key == known_popups.ESC_LABEL:
-        tap_escape = getattr(task, "tap_escape", None)
-        if not callable(tap_escape):
+    if press.key == known_popups.NOTICE_BLANK_KEY:
+        # The blank spot beside it first, Esc in turn while it stays (Leo
+        # 2026-11-23 「你可以不要一直esc嗎」「交叉來回也可以」).
+        close_notice_list = getattr(task, "close_notice_list", None)
+        if not callable(close_notice_list):
             return "none"
-        task.log_info("恢复主页：公告列表挡住了主页，按 Esc 关闭。")
-        return "dismissed" if tap_escape(after_sleep=1.0) else "none"
+        return "dismissed" if close_notice_list("恢复主页") else "none"
     center = task._ocr_box_center(press.box)
     if center is None:
         return "none"

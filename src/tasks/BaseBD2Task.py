@@ -86,6 +86,15 @@ FLEE_REPRESS_SECONDS = 3.0
 # long, when the page is still there on a frame taken after it.
 DISMISS_REPRESS_SECONDS = 3.0
 DISMISS_SAME_SPOT = 0.04  # share of the window width/height
+# A popup press (its own button) that did not close it: the next look taps
+# the blank spot beside the popup instead.  Player reports 2026-11-23
+# (v0.4.12): 自动登录 sat on 「清理公告」 for good, pressing Esc for the notice
+# list on every look and never the blank spot beside it.
+POPUP_PRESS_UNANSWERED_SECONDS = 30.0
+# The notice list is closed by the blank spot beside it (Leo 2026-11-23 「你可
+# 以不要一直esc嗎」「應該也要有點旁邊的操作吧」「你可以都點」「交叉來回也可以」):
+# a tap first; still open, one Esc, then a tap again, back and forth.
+NOTICE_LIST_TAPS_BEFORE_ESC = 1
 # Windows may refuse to raise the game while the user works elsewhere.
 FOREGROUND_ATTEMPTS = 3
 FOREGROUND_WAY_WORDS = {
@@ -1393,9 +1402,8 @@ class BaseBD2Task(BaseTask):
             known_popups.CANCEL_TEXT,
         ):
             press = None
-        if press is not None and press.key == known_popups.ESC_LABEL:
-            self.log_info(f"{label}：画面被公告列表挡住，按 Esc 关闭后再看。")
-            return bool(self.tap_escape(after_sleep=1.0))
+        if press is not None and press.key == known_popups.NOTICE_BLANK_KEY:
+            return self.close_notice_list(label)
         center = self._ocr_box_center(press.box) if press is not None else None
         if center is None:
             return False
@@ -1404,6 +1412,51 @@ class BaseBD2Task(BaseTask):
             return False  # 刚按过：调用方接着重看页面
         self.log_info(f"{label}：画面被弹窗挡住，点击「{press.label}」关闭后再看。")
         return True
+
+    def close_notice_list(self, label: str = "") -> bool:
+        """The game's 公告 list is on screen (known_popups.is_notice_list): tap
+        the blank spot beside it, the way every login notice closes.  Still
+        open after NOTICE_LIST_TAPS_BEFORE_ESC taps: one Esc, then taps again
+        (back and forth).  True when something was pressed."""
+        now = time.monotonic()
+        taps = [
+            at
+            for at in getattr(self, "_notice_list_taps", ())
+            if now - at < POPUP_PRESS_UNANSWERED_SECONDS
+        ]
+        if len(taps) >= NOTICE_LIST_TAPS_BEFORE_ESC:
+            self._notice_list_taps = []
+            self.log_info(
+                f"{label}：点了公告旁边空白处公告列表还在，这次按一次 Esc。"
+            )
+            return bool(self.tap_escape(after_sleep=1.0))
+        x, y = HOME_ANNOUNCEMENT_CLEAR_RELATIVE_POINT
+        self.log_info(f"{label}：画面被公告列表挡住，点公告旁边空白处关闭后再看。")
+        self._sleep_after_recognition()
+        self.operate_click(x, y, after_sleep=1.0)  # 不用确认：公告旁边空白处，调用方接着重看
+        self._notice_list_taps = taps + [time.monotonic()]
+        return True
+
+    def close_popup_or_tap_blank(self, label: str, tap_blank: Callable[[], None]) -> str:
+        """A popup over 主页: its own harmless press (close_known_popup), else
+        ``tap_blank`` (the blank spot beside every popup).  "popup" or "blank".
+
+        A popup press that did not close it is never made twice in a row: the
+        next call taps the blank spot instead, then the popup press gets its
+        turn again.  Player reports 2026-11-23 (v0.4.12): 自动登录 stayed on
+        「清理公告」, the popup's own press repeated without end and the blank
+        spot beside it was never tapped."""
+        now = time.monotonic()
+        pressed_at = getattr(self, "_popup_pressed_at", None)
+        unanswered = pressed_at is not None and now - pressed_at < POPUP_PRESS_UNANSWERED_SECONDS
+        self._popup_pressed_at = None
+        if not unanswered and self.close_known_popup(label):
+            self._popup_pressed_at = time.monotonic()
+            return "popup"
+        if unanswered:
+            self.log_info(f"{label}：上一下按了弹窗自己的关法，弹窗还挡着，这次改点旁边空白处。")
+        tap_blank()
+        return "blank"
 
     # Only 每周跑图 runs away from a battle (Leo 2026-10-23 「撞怪逃跑這個機制
     # 只能在跑圖的時候」「其他都不要亂用」): elsewhere a battle is the task's

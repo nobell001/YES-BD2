@@ -19,7 +19,9 @@ does it once for every task; this module is that one place (Leo 2026-10-12,
   settings panel no task ever opens (战场角色设置), which only a stray press
   opens and whose 取消 changes nothing;
 - a tap on the info line of an overlay that has no button (赛季奖励);
-- Esc for the game's 公告 list, whose ✕ has no text;
+- a tap on the blank spot beside the game's 公告 list, whose ✕ has no text
+  (Leo 2026-11-23 「公告基本都長一樣的 你可以不要一直esc嗎」「應該也要有點旁邊
+  的操作吧」「交叉來回也可以」); a tap first, Esc in turn while it stays;
 - a tap on the dark backdrop left of a paid pass's 签到 panel (no ✕, no
   关闭; the only button on it is 购买, never pressed);
 - 「离开」 on a field battle's result (VICTORY / DEFEAT), where Esc does
@@ -75,11 +77,16 @@ TAP_ANYWHERE_LINES = ("奖励已发放至背包", "奖励已通过邮件发放")
 TAP_ANYWHERE_TITLES = ("赛季奖励",)
 # The game's notice list (公告事项) that opens by itself on 主页 after a
 # maintenance: rows tagged 公告/更新/活动… each with a date, closed only by
-# its ✕ icon, which has no text; Esc closes it (live 2K 2026-10-22).
+# its ✕ icon, which has no text; Esc closes it (live 2K 2026-10-22).  The
+# press is the blank spot beside it, like every login notice (Leo 2026-11-23:
+# Esc on every look kept players on 「清理公告」 for good); Esc only takes turns
+# with the tap while it stays (BaseBD2Task.close_notice_list).
 NOTICE_LIST_TAGS = ("公告", "更新", "活动", "维护", "公告事项", "重要")
 NOTICE_LIST_DATE = re.compile(r"20\d\d年\d{1,2}月\d{1,2}日")
 NOTICE_LIST_MIN_ROWS = 2
 ESC_LABEL = "Esc"
+NOTICE_BLANK_KEY = "notice_blank"
+NOTICE_BLANK_LABEL = "公告旁边空白处"
 # A paid pass's daily 签到 panel over 主页 at the first login of the day
 # (「午夜装扮之选通行证」, live 4K 2026-10-22): three day cards, 「签到成功」,
 # 「购买后可获得额外奖励！」 and a 「购买 JP¥1,140」 button, but no ✕ or 关闭.
@@ -203,7 +210,8 @@ class _Spot:
 class PopupPress:
     label: str
     box: object
-    # A key instead of a click (the notice list's ✕ has no text to find).
+    # Not an OCR box: NOTICE_BLANK_KEY = the blank spot beside the notice
+    # list (its ✕ has no text to find), tapped by close_notice_list.
     key: str = ""
     # 取消 on a panel no task opens (STRAY_PANEL_TITLES): allowed mid-task.
     stray: bool = False
@@ -330,5 +338,5 @@ def pick(boxes, *, allow_cancel: bool = False) -> PopupPress | None:
     if box is not None:
         return PopupPress(field_battle.LEAVE_TEXTS[0], box)
     if is_notice_list(boxes):
-        return PopupPress(ESC_LABEL, None, key=ESC_LABEL)
+        return PopupPress(NOTICE_BLANK_LABEL, None, key=NOTICE_BLANK_KEY)
     return None

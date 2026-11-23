@@ -424,10 +424,13 @@ class ClaimPageMixin(TaskVisionMixin):
         the home check still passes (4K clone 10-21: a pass promo, then the
         Bilibili banner, three entry clicks lost).  Leo 「彈窗不是點掉就好了嗎」:
         its own close button, else the blank spot left of every popup."""
-        if self.close_known_popup(label):
-            return
         blank = HOME_ANNOUNCEMENT_CLEAR_REFERENCE_POINT
-        self._click_reference(*blank, after_sleep=1.0)  # 不用确认：主页空白处，接着重点入口
+        # A popup press that did not close it is followed by the blank spot
+        # (BaseBD2Task.close_popup_or_tap_blank).
+        self.close_popup_or_tap_blank(
+            label,
+            lambda: self._click_reference(*blank, after_sleep=1.0),  # 不用确认：主页空白处，接着重点入口
+        )
 
     def _switch_tab(
         self,

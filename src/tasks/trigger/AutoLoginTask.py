@@ -1340,23 +1340,33 @@ class AutoLoginTask(BaseBD2Task):
             # total wait budget must still end the clearing.
             self._login_clicked_at = now
         self._clear_clicks = getattr(self, "_clear_clicks", 0) + 1
-        # A dialog with its own button (镜中之战 恭喜晋级 … 确认, live 4K
-        # 2026-10-14) ignores the clear spot: 29 clicks until Leo closed it.
-        if self.close_known_popup("自动登录"):
-            self._last_clear_click_at = monotonic()
-            return
+        # Every few rounds, before any press: already inside the game but not
+        # on 主页 goes home the recovery way (a popup press that kept
+        # answering used to keep this from ever being tried).
         if self._clear_clicks % CLEAR_CLICKS_BEFORE_RECOVERY == 0 and self._finish_by_recovery():
             return
         self._set_stage("清理公告")
-        clear_x = self._percent_config("公告清理点击 X 百分比")
-        clear_y = self._percent_config("公告清理点击 Y 百分比")
-        self._set_action(f"主页三项信号未齐全，点击公告清理位置，ratio={ratio:.3f}。")
-        self.log_info(
-            "自动登录：主页三项信号未齐全，点击公告清理位置，"
-            f"ratio={ratio:.3f}, x={clear_x:.2%}, y={clear_y:.2%}"
-        )
-        self._sleep_after_recognition()
-        self.operate_click(clear_x, clear_y, after_sleep=0.2)
+
+        def tap_clear_spot() -> None:
+            clear_x = self._percent_config("公告清理点击 X 百分比")
+            clear_y = self._percent_config("公告清理点击 Y 百分比")
+            self._set_action(f"主页三项信号未齐全，点击公告清理位置，ratio={ratio:.3f}。")
+            self.log_info(
+                "自动登录：主页三项信号未齐全，点击公告清理位置，"
+                f"ratio={ratio:.3f}, x={clear_x:.2%}, y={clear_y:.2%}"
+            )
+            self._sleep_after_recognition()
+            self.operate_click(clear_x, clear_y, after_sleep=0.2)
+
+        # A dialog with its own button (镜中之战 恭喜晋级 … 确认, live 4K
+        # 2026-10-14) ignores the clear spot: 29 clicks until Leo closed it.
+        # The other way round too: a popup press that does not close it is
+        # followed by the clear spot (player reports 2026-11-23, v0.4.12:
+        # 「清理公告」 forever, the spot beside the notice never clicked).
+        if self.close_popup_or_tap_blank("自动登录", tap_clear_spot) == "popup":
+            self._set_action("画面被弹窗挡住，已按弹窗自己的关法，下一次没关掉就点旁边空白处。")
+            self._last_clear_click_at = monotonic()
+            return
         self._last_clear_click_at = now
 
     def _finish_by_recovery(self) -> bool:

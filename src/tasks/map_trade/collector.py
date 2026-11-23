@@ -179,6 +179,7 @@ class Collector(SkillExecutionMixin):
         )
         allowed = chapter_filter(self.task.config.get("跑图章节", ""))
         self._badges_unfinished: set[str] = set()
+        self._badge_only: list[str] = []
         for card in self._cards_with_one_retry():
             if allowed is not None and card.filter_key not in allowed:
                 continue
@@ -191,6 +192,12 @@ class Collector(SkillExecutionMixin):
 
             state = self.progress.state
             completed = state.completed_targets(card.card_id)
+            # Done only by its badges, read on an earlier game day: read them
+            # once more (players 2026-11-16 / 11-23: a Monday-morning read of
+            # last week's badges kept every card skipped all week).
+            look_again = self.progress.badge_read_to_redo(card.card_id)
+            if look_again:
+                completed = set()
             if len(completed) >= len(card.targets):
                 # Three maps done this week = the card is done; its badges are
                 # not read (Leo 2026-10-21 「假設我第五章 安全區 戰鬥1 戰鬥2 都
@@ -239,12 +246,28 @@ class Collector(SkillExecutionMixin):
             if selected.outcome == CollectionCardSelectionOutcome.ENTERED:
                 self._last_field_card_id = card.card_id
             if selected.outcome == CollectionCardSelectionOutcome.VISUALLY_COMPLETE:
+                if look_again:
+                    self._status(
+                        "卡带完成度",
+                        f"{card.card_id}隔天再看图示仍是完成，记为本周完成",
+                    )
+                    self.progress.keep_badge_card(card.card_id)
+                    continue
                 self._status(
                     "卡带完成度",
-                    f"{card.card_id}进入前确认吸取与压制均已完成，记为本周完成",
+                    f"{card.card_id}进入前图示显示吸取与压制均已完成，先记为完成，"
+                    "之后的游戏日会再看一次图示",
                 )
-                self.progress.mark_card_complete_from_badge(card.card_id)
+                self.progress.mark_card_complete_from_badge(card.card_id, look_again=True)
+                self._badge_only.append(card.card_id)
                 continue
+            if look_again:
+                # The badges no longer say done: the earlier read was last
+                # week's picture.  Forget it and collect the card now.
+                self.task.log_warning(
+                    f"地图采集：{card.label}之前看图示记成完成，今天图示显示还没完成，现在跑。"
+                )
+                self.progress.reset_card(card.card_id)
 
             # Route (user 2026-09-28): on the last map (e.g. chapter 6's 第5层)
             # go backwards (第5层 -> walk 第6层 -> 第1层); anywhere else start
@@ -596,7 +619,19 @@ class Collector(SkillExecutionMixin):
                 )
                 + (f"；第{skipped}章等待专用流程" if skipped else "")
                 + (f"；末图有{pending}条动作次数待后续明亮帧对账" if pending else "")
+                + self._badge_only_note()
             ),
+        )
+
+    def _badge_only_note(self) -> str:
+        """Cards taken as done from their badges alone this run, said so the
+        player knows they are looked at again (players 2026-11-16 / 11-23)."""
+        cards = getattr(self, "_badge_only", [])
+        if not cards:
+            return ""
+        return (
+            f"；{len(cards)}张卡带游戏图示显示本周已完成，没有进去跑，"
+            "之后的游戏日会再看一次图示，还没完成就会跑"
         )
 
     def _used_up_today(self) -> str:

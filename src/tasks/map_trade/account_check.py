@@ -63,6 +63,10 @@ def card_ids_to_check(state, allowed) -> list[str]:
             continue  # no 压制 badge to read; not clear enough
         if allowed is not None and card.filter_key not in allowed:
             continue
+        if card.card_id in getattr(state, "badge_days", {}):
+            # Taken as done from its badges alone: the tool did not walk it,
+            # and the collector reads its badges again on a later day.
+            continue
         if state.card_verified(card.card_id):
             picked.append(card.card_id)
         if len(picked) >= CARDS_TO_CHECK:

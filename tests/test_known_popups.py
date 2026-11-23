@@ -239,7 +239,7 @@ class NoButtonPopupsTest(unittest.TestCase):
         boxes = _boxes("奖励已发放至背包", "确认")
         self.assertEqual("确认", known_popups.pick(boxes).label)
 
-    def test_notice_list_closes_with_esc(self):
+    def test_notice_list_closes_by_the_blank_spot_beside_it(self):
         boxes = _boxes(
             "公告",
             "10月22日(四)定期维护及更新完成公告",
@@ -252,7 +252,8 @@ class NoButtonPopupsTest(unittest.TestCase):
         )
         self.assertTrue(known_popups.is_notice_list(boxes))
         press = known_popups.pick(boxes)
-        self.assertEqual(known_popups.ESC_LABEL, press.key)
+        # Leo 2026-11-23 「你可以不要一直esc嗎」: the blank spot beside it.
+        self.assertEqual(known_popups.NOTICE_BLANK_KEY, press.key)
 
     def test_one_dated_line_is_not_a_notice_list(self):
         self.assertFalse(known_popups.is_notice_list(_boxes("公告", "2026年10月22日")))
@@ -300,14 +301,14 @@ class NoButtonPopupsTest(unittest.TestCase):
         self.assertIsNone(known_popups.pass_signin_spot(_boxes("购买后可获得额外奖励")))
         self.assertIsNone(known_popups.pick(_boxes("通行证", "签到", "购买")))
 
-    def test_way_home_presses_esc_for_the_notice_list(self):
+    def test_way_home_taps_beside_the_notice_list(self):
         names = ("公告", "2026年10月22日", "更新", "2026年10月20日")
-        escapes = []
+        closed = []
         task = SimpleNamespace(
             capture_frame=lambda: np.zeros((1080, 1920, 3), np.uint8),
             log_info=lambda *a, **k: None,
-            tap_escape=lambda after_sleep=0: escapes.append(after_sleep) or True,
+            close_notice_list=lambda label="": closed.append(label) or True,
         )
         vision = SimpleNamespace(ocr_boxes=lambda frame, name: _boxes(*names))
         self.assertEqual("dismissed", recovery._handle_dialog(task, vision))
-        self.assertEqual(1, len(escapes))
+        self.assertEqual(["恢复主页"], closed)

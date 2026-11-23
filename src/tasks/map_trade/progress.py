@@ -75,6 +75,13 @@ class ProgressState:
     daily_suppressions: int = 0
     depleted_today: bool = False
     verified_cards: list[str] = field(default_factory=list)
+    # Cards written down as done only because their badges looked done
+    # before entering, with the game day it was read (players 2026-11-16
+    # and 11-23: on Monday morning the game still showed last week's done
+    # badges, and one read kept every card skipped the whole week, even
+    # after 「重新开始」).  Such a card's badges are read once more on a later
+    # game day; still done then, it stays done for the week.
+    badge_days: dict[str, str] = field(default_factory=dict)
     favorite_week: str = ""
     favorite_cards: list[str] = field(default_factory=list)
     cooking_week: str = ""
@@ -124,6 +131,8 @@ class ProgressState:
             for card in COLLECTABLE_CARDS
             if card.number not in UNSUPPORTED_COLLECTION_CARD_NUMBERS
         )
+        if any(day != self.daily_key for day in self.badge_days.values()):
+            return False  # a card read done on an earlier day is read again
         return all(self.card_verified(card.card_id) for card in supported)
 
     @property
@@ -214,6 +223,7 @@ class ProgressStore:
                 raw.get("verified_cards", []),
                 cards,
             ),
+            badge_days=self._sanitize_badge_days(raw.get("badge_days", {}), cards),
             favorite_week=str(raw.get("favorite_week", "")),
             favorite_cards=self._sanitize_favorite_cards(raw.get("favorite_cards", [])),
             cooking_week=cooking_week,
@@ -294,6 +304,16 @@ class ProgressStore:
         if cooking_week == weekly_key:
             return list(DEFAULT_RECIPES)
         return []
+
+    @staticmethod
+    def _sanitize_badge_days(raw_days, cards: dict[str, list[str]]) -> dict[str, str]:
+        if not isinstance(raw_days, dict):
+            return {}
+        return {
+            str(card): str(day)
+            for card, day in raw_days.items()
+            if str(card) in VALID_CARD_IDS and str(card) in cards and isinstance(day, str)
+        }
 
     @staticmethod
     def _sanitize_verified_cards(raw_cards, cards: dict[str, list[str]]) -> list[str]:
@@ -479,6 +499,11 @@ class ProgressStore:
             "verified_cards": sorted(
                 set(self.state.verified_cards) & VALID_CARD_IDS
             ),
+            "badge_days": {
+                card: day
+                for card, day in sorted(self.state.badge_days.items())
+                if card in VALID_CARD_IDS
+            },
             "favorite_week": self.state.favorite_week,
             "favorite_cards": sorted(self.state.completed_favorite_cards),
             "cooking_week": self.state.cooking_week,
@@ -1319,7 +1344,7 @@ class ProgressStore:
             and not bool(record.get("covered", False))
         )
 
-    def mark_card_complete_from_badge(self, card_id: str) -> bool:
+    def mark_card_complete_from_badge(self, card_id: str, look_again: bool = False) -> bool:
         """Record a card the game's own 吸取/压制 badges show finished.
 
         It may have been finished by hand or by an interrupted run (live
@@ -1330,6 +1355,12 @@ class ProgressStore:
             raise ValueError(f"invalid collection card: {card_id}")
         state = self._require_state()
         state.cards[card_id] = sorted(VALID_TARGET_KEYS[card_id])
+        if look_again:
+            # Read before entering, the tool walked none of it: one read
+            # must not decide the whole week (see ``badge_days``).
+            state.badge_days[card_id] = state.daily_key
+        else:
+            state.badge_days.pop(card_id, None)
         for record in state.action_records.values():
             if record.get("card_id") == card_id and record.get("pending"):
                 record["state"] = CollectionActionState.SETTLED.value
@@ -1344,12 +1375,31 @@ class ProgressStore:
         self.save()
         return newly
 
+    def badge_read_to_redo(self, card_id: str) -> bool:
+        """The card is done only by a badge read on an earlier game day: read
+        its badges once more today before believing it for the week."""
+        state = self._require_state()
+        day = state.badge_days.get(card_id)
+        return day is not None and day != state.daily_key and state.card_complete(card_id)
+
+    @property
+    def badge_reads_to_redo(self) -> list[str]:
+        state = self._require_state()
+        return [card_id for card_id in state.badge_days if self.badge_read_to_redo(card_id)]
+
+    def keep_badge_card(self, card_id: str) -> None:
+        """Read again on a later day and still done: done for the week."""
+        state = self._require_state()
+        if state.badge_days.pop(card_id, None) is not None:
+            self.save()
+
     def mark_card_verified(self, card_id: str) -> bool:
         if card_id not in VALID_CARD_IDS:
             raise ValueError(f"invalid collection card: {card_id}")
         state = self._require_state()
         if not state.card_complete(card_id):
             raise RuntimeError("collection card targets are incomplete")
+        state.badge_days.pop(card_id, None)
         # The game's own completion badge settles this card's actions that
         # could not be reconciled by count (e.g. a 压制 icon already grey on
         # arrival, live 2026-09-28): left pending they blocked every later
@@ -1411,6 +1461,7 @@ class ProgressStore:
             ]
         if card_id in state.verified_cards:
             state.verified_cards.remove(card_id)
+        state.badge_days.pop(card_id, None)
         self.save()
 
     def restart_collection_week(self) -> Path | None:
@@ -1432,6 +1483,7 @@ class ProgressStore:
                 self._settle_card_actions(card_id)
         state.cards = {}
         state.verified_cards = []
+        state.badge_days = {}
         self.save()
         return backup
 
@@ -1449,6 +1501,7 @@ class ProgressStore:
         self._archive_daily_actions()
         state.cards = {}
         state.verified_cards = []
+        state.badge_days = {}
         state.daily_submaps = 0
         state.daily_summons = 0
         state.daily_suppressions = 0
