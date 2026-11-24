@@ -218,6 +218,10 @@ class SellFlowMixin:
     _last_sale_reason = ""
     _last_sale_name_seen = False
     _last_sale_ocr_output = False
+    # The sell list was re-opened (another cartridge and back) on this visit.
+    _sale_cartridge_reopened = False
+    # That re-open could not come back to the item's cartridge.
+    _sale_cartridge_lost = False
     _last_sale_page_empty = False
     _sale_entries_override: list[CalendarEntry] | None = None
     _last_sale_toast_id: int | None = None
@@ -694,11 +698,21 @@ class SellFlowMixin:
                     selected_shop = ""
                     continue
                 selected_shop = entry.shop
+                # A new cartridge visit: its list may be re-opened once.
+                self._sale_cartridge_reopened = False
             if entry.asset and entry.item in CONTRACT_TIERS:
                 entry = self._planned_contract(entry)
                 if entry is None:
                     continue  # nothing of this tier to sell (the plan said why)
-            if self._sell_entry_with_retry(entry):
+            sold_ok = self._sell_entry_with_retry(entry)
+            if getattr(self, "_sale_cartridge_lost", False):
+                # The re-open could not come back to this cartridge: the next
+                # item picks its own cartridge again instead of selling from
+                # whatever is selected now.
+                self._sale_cartridge_lost = False
+                selected_shop = ""
+                self._sell_cartridge_page = None
+            if sold_ok:
                 if self._sale_day_key() and not self._sale_is_a_test():
                     self._sold_record().add(self._sale_day_key(), entry.item)
             else:
@@ -791,6 +805,70 @@ class SellFlowMixin:
     def _sell_selected_entry(self, entry: CalendarEntry) -> bool:
         return self._sell_selected_entry_here(entry)
 
+    def _reopen_sale_cartridge(self, entry: CalendarEntry) -> bool:
+        """Select a neighbouring cartridge and this one again; True when done.
+
+        The first time a cartridge's sell list opens, the game sometimes shows
+        only the 食物 section, without 料理食材 and the rest, and the pull
+        down does not bring them (player via Leo 2026-11-24: the item was
+        taken as not owned and skipped; clicking another cartridge and back
+        showed the full list).  The tool does the same, once per cartridge
+        visit, before it calls an item missing.  Harmless presses only: a
+        cartridge click sells nothing.
+        """
+
+        if getattr(self, "_sale_cartridge_reopened", False):
+            return False
+        self._sale_cartridge_reopened = True
+        try:
+            target = shop_purchase_reference(entry.shop).shop_id
+        except KeyError:
+            return False
+        frame = self.vision.capture()
+        confirmed = self._confirmed_shop_cartridge_detections(frame)
+        if target not in confirmed:
+            self._status("重开卡带", f"{entry.item}：画面上没认到本卡带，不切换")
+            return False
+        target_y = confirmed[target].best.result.center[1]
+        others = sorted(
+            (shop_id for shop_id in confirmed if shop_id != target),
+            key=lambda shop_id: abs(confirmed[shop_id].best.result.center[1] - target_y),
+        )
+        if not others:
+            self._status("重开卡带", f"{entry.item}：画面上没有别的卡带可切换")
+            return False
+        other = others[0]
+        self.task.log_info(
+            f"卖：{entry.item}在出售清单里没找到，清单可能只显示了食物；"
+            "先点别的卡带再点回来，重新找一遍。"
+        )
+        self._status("重开卡带", f"{entry.item}：切到{other}再切回{target}")
+        self._recent_shop_scan = (monotonic(), frame, confirmed)
+        if not self._select_purchase_cartridge(other):
+            # Still on this cartridge (the click did nothing): nothing to redo.
+            self._status("重开卡带", f"{entry.item}：别的卡带没点上，照旧判断")
+            return False
+        if self._select_purchase_cartridge(target):
+            return True
+        # Away from the item's cartridge: find it again from the list top.
+        self._sell_cartridge_page = None
+        if self.select_shop_tab(entry.shop):
+            return True
+        self._sale_cartridge_lost = True
+        self._last_sale_unavailable = True
+        self._last_sale_reason = "切换卡带重新载入清单后没切回本卡带"
+        self.task.log_warning(
+            f"卖：{entry.item}切到别的卡带后没切回「{self._cartridge_label(entry)}」，跳过它。"
+        )
+        return False
+
+    @staticmethod
+    def _cartridge_label(entry: CalendarEntry) -> str:
+        try:
+            return shop_purchase_reference(entry.shop).label
+        except KeyError:
+            return str(entry.shop)
+
     def _start_sale_search(self, entry: CalendarEntry) -> int:
         """Put the list where this item's search starts; returns the direction.
 
@@ -817,6 +895,8 @@ class SellFlowMixin:
         # Cards whose dialog showed another item; skipped until a sale reflows the list.
         wrong_cards: list[tuple[int, int]] = []
         self._sale_drag_refused = False
+        self._sale_cartridge_lost = False
+        reopened_here = False
         from_bottom = self._start_sale_search(entry) > 0
         while True:
             if self._sale_drag_refused:
@@ -878,6 +958,18 @@ class SellFlowMixin:
                         f"已出售{sold_count}组，继续下一项。"
                     )
                     return True
+                if (
+                    not self._last_sale_unavailable
+                    and not getattr(self, "_last_sale_name_seen", False)
+                    and self._reopen_sale_cartridge(entry)
+                ):
+                    # 有备案：清单可能只载入了「食物」，切别的卡带再切回来后重找一遍
+                    from_bottom = self._start_sale_search(entry) > 0
+                    wrong_cards.clear()
+                    reopened_here = True
+                    continue
+                if getattr(self, "_sale_cartridge_lost", False):
+                    return False  # skipped with the reason the re-open gave
                 if not self._last_sale_unavailable:
                     self.task.log_warning(
                         f"卖：{entry.item}商品名与左侧120%局部定位失败："
@@ -889,6 +981,8 @@ class SellFlowMixin:
                     self._last_sale_reason = (
                         f"{UNCONFIRMED_MARKER_REASON}：{self._last_sale_reason or '未知原因'}"
                     )
+                    if reopened_here:
+                        self._last_sale_reason += "（已切别的卡带再切回来重找过）"
                 return False
 
             candidates, frame = located

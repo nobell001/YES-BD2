@@ -19,6 +19,7 @@ This tool is a modified version of ok-bd2 by GodRaymond233
 | Noto Sans TC / Noto Sans SC (variable fonts, unmodified) | `assets/fonts/` | SIL Open Font License 1.1, see `assets/fonts/OFL.txt` | https://github.com/google/fonts |
 | Lucide icons | `assets/ui/icons/` | ISC, see `assets/ui/icons/LICENSE` | https://github.com/lucide-icons/lucide |
 | ChildStream (clone-desktop viewer, adapted) | `tools/clone_desktop/` | MIT, see `tools/clone_desktop/LICENSE-childstream.txt` | https://github.com/mattxslv/childstream |
+| Lucian UX/UI Prompt #438 「Loading to done button」 (motion ported to Qt) | `src/ui/shell/progress_button.py` | MIT License (c) 2026 Seokwoooo, notice at the top of the file | https://lucianlabs.dev/uxui-prompt/#438 |
 | Item icons | `assets/ui/items/` | Game art hosted by BD2DB; rights stay with the game's publisher, see `assets/ui/items/SOURCE.md` | https://browndust2-db.souseha.com/ |
 
 ## Data Sources

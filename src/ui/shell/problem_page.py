@@ -18,9 +18,9 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 from src.tasks import problem_report
 from src.ui.shell import data, problem_image, theme
 from src.ui.shell.page import Page
+from src.ui.shell.progress_button import ProgressButton
 from src.ui.shell.widgets import (
     SHADOW_MARGINS,
-    Button,
     Card,
     IconLabel,
     StateIcon,
@@ -136,11 +136,19 @@ class ReportActions(QWidget):
         self.preview = Preview(preview_height)
         self.preview.clicked.connect(self._show_picture)
         layout.addWidget(self.preview)
-        self.copy_image = Button("复制图片", "primary", "image", "lg", on_click=self._copy_image)
+        # The three buttons turn into a spinner while they work (the upload
+        # can take a while), then show a check (Leo 2026-11-24).
+        self.copy_image = ProgressButton(
+            "复制图片", "primary", "image", "lg", on_click=self._copy_image
+        )
         layout.addWidget(self.copy_image)
         row = hbox(None, (0, 0, 0, 0), 10)
-        self.save_image = Button("保存图片", "secondary", "download", on_click=self._save_image)
-        self.copy_text = Button("复制文字", "secondary", "file-text", on_click=self._copy_text)
+        self.save_image = ProgressButton(
+            "保存图片", "secondary", "download", on_click=self._save_image
+        )
+        self.copy_text = ProgressButton(
+            "复制文字", "secondary", "file-text", on_click=self._copy_text
+        )
         row.addWidget(self.save_image, 1)
         row.addWidget(self.copy_text, 1)
         layout.addLayout(row)
@@ -159,6 +167,8 @@ class ReportActions(QWidget):
         if not same:
             self._image = None
             self._pending = None
+            for button in (self.copy_image, self.save_image, self.copy_text):
+                button.reset()
             self.preview.set_image(self.image() if record else QImage())
             self._reset_note()
         self._enable()
@@ -188,19 +198,23 @@ class ReportActions(QWidget):
 
     # ------------------------------------------------------------ upload
 
-    def _with_code(self, action) -> None:
-        """Upload the record once, then ``action(why)`` ("" = it has a code)."""
+    def _with_code(self, action) -> bool:
+        """Upload the record once, then ``action(why)`` ("" = it has a code).
+
+        False when ``action`` will not run (no record, another upload busy).
+        """
         if self._record is None:
-            return
+            return False
         from src.utils import report_upload
 
         if not report_upload.enabled():
             action("")  # no upload station yet: the button just does its job
-            return
+            return True
         if self._record.get("upload_code") or self._uploading:
             if not self._uploading:
                 action("")
-            return
+                return True
+            return False
 
         record = dict(self._record)
         shot = report_upload.jpeg(self.image())
@@ -218,12 +232,15 @@ class ReportActions(QWidget):
             self.uploaded.emit(str(record.get("path") or ""), code, why)
 
         threading.Thread(target=run, name="ReportUpload", daemon=True).start()
+        return True
 
     def _upload_done(self, path: str, code: str, why: str) -> None:
         self._uploading = False
         action, self._pending = self._pending, None
         self._enable()
         if self._record is None or str(self._record.get("path") or "") != path:
+            for button in (self.copy_image, self.save_image, self.copy_text):
+                button.finish(False)
             return  # another record is shown now
         if code:
             self._record["upload_code"] = code
@@ -238,6 +255,19 @@ class ReportActions(QWidget):
 
     # ------------------------------------------------------------ buttons
 
+    def _press(self, button: ProgressButton, act) -> None:
+        """Spin ``button`` until ``act(why)`` has run; it returns False on failure."""
+        if button.working():
+            return
+        button.start()
+
+        def run(why: str) -> None:
+            ok = act(why)
+            button.finish(ok is not False)
+
+        if not self._with_code(run):
+            button.reset()
+
     def _copy_image(self) -> None:
         def act(why: str) -> None:
             from PySide6.QtGui import QGuiApplication
@@ -247,14 +277,14 @@ class ReportActions(QWidget):
             self.copy_image.set_icon_name("check")
             self._done(self._said("图片已复制，到留言区或聊天框按 Ctrl+V 贴上", why))
 
-        self._with_code(act)
+        self._press(self.copy_image, act)
 
     def _copy_text(self) -> None:
         def act(why: str) -> None:
             problem_image.copy_text(self._record)
             self._done(self._said("文字已复制，到留言区或聊天框按 Ctrl+V 贴上", why))
 
-        self._with_code(act)
+        self._press(self.copy_text, act)
 
     def _save_image(self) -> None:
         def act(why: str) -> None:
@@ -268,8 +298,9 @@ class ReportActions(QWidget):
                 self._done(self._said(tf("已保存到桌面：{name}", name=path.name), why))
             else:
                 self._done("没能保存到桌面")
+            return saved
 
-        self._with_code(act)
+        self._press(self.save_image, act)
 
     def _show_picture(self) -> None:
         if self._record is None:

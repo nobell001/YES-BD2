@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QLineEdit, QWidget
 
 from src.ui.shell import theme
 from src.ui.shell.floating import Floating, Panel
+from src.ui.shell.progress_button import ProgressButton
 from src.ui.shell.run_confirm import HeroIcon
 from src.ui.shell.widgets import Button, Text, hbox, set_prop, t, vbox
 from src.utils import run_notify
@@ -112,7 +113,8 @@ class RunNotifyDialog(Floating):
         buttons = hbox(None, (0, 6, 0, 0), 8)
         buttons.addStretch(1)
         buttons.addWidget(Button("取消", "secondary", on_click=self.reject))
-        self.test_button = Button("发测试", "secondary", "send", on_click=self._test)
+        # Spins while the test goes out, then a check (Leo 2026-11-24).
+        self.test_button = ProgressButton("发测试", "secondary", "send", on_click=self._test)
         buttons.addWidget(self.test_button)
         self.done_button = Button("完成", "primary", on_click=self._done)
         buttons.addWidget(self.done_button)
@@ -153,6 +155,7 @@ class RunNotifyDialog(Floating):
         self._sending = True
         self.test_button.setEnabled(False)
         self._say(SENDING)
+        self.test_button.start()
         threading.Thread(
             target=lambda: self.tested.emit(run_notify.send_test(key)),
             name="RunNotifyTest",
@@ -162,6 +165,7 @@ class RunNotifyDialog(Floating):
     def _show_test(self, error: str) -> None:
         self._sending = False
         self.test_button.setEnabled(run_notify.valid(self.key()))
+        self.test_button.finish(not error)
         if error:
             self._say(f"✗ {t(error)}", "bad")
         else:

@@ -1162,6 +1162,8 @@ class SellFlowTest(unittest.TestCase):
             return None
 
         trader._wait_sale_item_candidates = fail_wait
+        # No other cartridge to switch to (tests/test_sell_list_reopen.py covers it).
+        trader._reopen_sale_cartridge = lambda _entry: False
 
         # Nothing was clicked: the item is skipped (unavailable) so later
         # items are still sold, instead of stopping the day.

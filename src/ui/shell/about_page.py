@@ -20,6 +20,7 @@ from qfluentwidgets import ScrollArea
 
 from src.ui.shell import update_notes
 from src.ui.shell.page import Page, pill, set_pill
+from src.ui.shell.progress_button import ProgressButton
 from src.ui.shell.widgets import (
     Button,
     Card,
@@ -289,7 +290,11 @@ class AboutPage(Page):
         self.status_text.hide()
         state.addWidget(self.status_text, 1, Qt.AlignVCenter)
         state.addStretch(1)
-        self.check_button = Button("检查更新", "primary", "refresh-cw", on_click=self.check_for_updates)
+        # Shrinks into a spinner while checking, then a check (Leo 2026-11-24).
+        self.check_button = ProgressButton(
+            "检查更新", "primary", "refresh-cw", on_click=self.check_for_updates
+        )
+        self._checking = False
         state.addWidget(self.check_button, 0, Qt.AlignVCenter)
         right.addLayout(state)
         self.error_text = Text("", "bad", wrap=True)
@@ -329,6 +334,10 @@ class AboutPage(Page):
         right.addWidget(strip)
         self._hook_update_card(card)
         try:
+            card.check_started.connect(self._check_started)
+        except Exception as exc:
+            logger.warning(f"about page: no check-started signal ({exc})")
+        try:
             card.update_available_changed.connect(self._update_available)
         except Exception as exc:
             logger.warning(f"about page: no update signal ({exc})")
@@ -362,6 +371,11 @@ class AboutPage(Page):
         card = self.update_card
         tr = getattr(card, "tr", lambda text: text)
         message = str(message or "")
+        if self._checking and message != tr("Checking for updates…"):
+            # The first word after 「正在检查」 is the result: a check when the
+            # list came back (newest or not), plain button again on an error.
+            self._checking = False
+            self.check_button.finish(not error)
         if error:
             self.status_text.hide()
             self.status_icon.hide()
@@ -393,7 +407,9 @@ class AboutPage(Page):
         if card is None:
             return
         busy = bool(getattr(card, "_busy", False))
-        self.check_button.setEnabled(not busy)
+        # While its own check runs the button spins (and ignores clicks)
+        # instead of turning grey.
+        self.check_button.setEnabled(not busy or self.check_button.working())
         combo = getattr(card, "version_combo", None)
         listed = isinstance(combo, QWidget) and not combo.isHidden()
         self.switch_label.setVisible(listed)
@@ -415,7 +431,13 @@ class AboutPage(Page):
         if self._sidebar is not None and "about" in getattr(self._sidebar, "items", {}):
             self._sidebar.items["about"].set_badge(t("新") if available else "")
 
+    def _check_started(self) -> None:
+        self._checking = True
+        self.check_button.start()
+
     def check_for_updates(self) -> None:
+        if self.check_button.working():
+            return
         if self.update_card is not None:
             self.update_card.check_for_updates()
 
