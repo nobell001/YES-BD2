@@ -47,7 +47,7 @@ class RestaurantStoneTask(_ClaimTaskBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "领取常客圣石"
-        self.description = "经营管理 → 前往格鲁菲餐厅 → 点「常客」一次领取常客带来的圣石。"
+        self.description = "前往「经营管理 → 格鲁菲餐厅」，点击「常客」一键领取常客带来的圣石。"
         self.icon = FluentIcon.SHOPPING_CART
 
     def run_claim(self) -> bool:

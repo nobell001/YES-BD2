@@ -287,8 +287,8 @@ class MainStoryTask(_ClaimTaskBase):
         super().__init__(*args, **kwargs)
         self.name = LABEL
         self.description = (
-            "在剧情里打开：自动跳过对话、按 E 寻路、优先快速进行任务、按自动进行；"
-            "战斗由你自己打，打完自动继续。按键盘鼠标不会停，按停止才停。"
+            "自动推进主线剧情：自动跳过对话、按 E 寻路、优先选择快速进行并开启自动进行；"
+            "遇到战斗时由你手动操作，打完后会自动继续。点击键盘或鼠标不会中断，需手动点击停止。"
         )
         self.icon = FluentIcon.PLAY
         self.group_name = "剧情"

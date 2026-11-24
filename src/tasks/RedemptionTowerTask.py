@@ -338,8 +338,8 @@ class RedemptionTowerTask(CartridgeFieldTask):
         super().__init__(*args, **kwargs)
         self.name = "救赎之塔"
         self.description = (
-            "主页卡带 → 恶魔城 → 往上走到祭坛 → 救赎之塔 → 快速战斗（不选关）→ MAX"
-            " → 战斗 → 回主页。走法跟镜中之战的「舞台移动方式」一样。"
+            "前往「主页卡带 → 恶魔城」，向上移动到祭坛进入救赎之塔，使用快速战斗（MAX）后返回主页。"
+            "移动方式与镜中之战的「舞台移动方式」一致。"
         )
         self.icon = FluentIcon.FLAG
         self.default_config.update({DRY_RUN_KEY: False, FALLBACK_TEST_KEY: False})

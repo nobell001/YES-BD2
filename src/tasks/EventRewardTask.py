@@ -316,8 +316,8 @@ class EventRewardTask(_ClaimTaskBase):
         super().__init__(*args, **kwargs)
         self.name = "领取活动奖励"
         self.description = (
-            "打开活动页，依序进入有红点的活动，哪里亮了按哪里（即刻刷新优先）。"
-            "有付费字样的页面不碰。"
+            "打开活动页面，依次进入带红点提示的活动领取奖励（优先处理即时刷新类活动）。"
+            "遇到包含付费内容的页面会自动跳过。"
         )
         self.icon = FluentIcon.SHOPPING_CART
 

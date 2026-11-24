@@ -296,7 +296,7 @@ class StoryPage(Page):
         column.addWidget(self.switch)
         self.start_clone = Button("在桌面分身跑", "secondary", "monitor", on_click=self.start_in_clone)
         self.start_clone.setToolTip(
-            t("纯后台执行：游戏在独立的分身窗口里跑，缩小也照跑；你照常用电脑，鼠标键盘不会被抢")
+            t("纯后台运行：游戏会在独立的分身桌面中运行，最小化也不受影响，你可以正常使用电脑，不会被抢占鼠标和键盘")
         )
         self.start_clone.setVisible(clone_flow.available())
         column.addWidget(self.start_clone)
@@ -385,7 +385,7 @@ class StoryPage(Page):
             self.now.set_text(t("现在：") + t(status) if status else t("推剧情中"))
         else:
             set_pill(self.state, t("关闭"))
-            self.now.set_text(t("先进到剧情的场地或对话里，再按开启"))
+            self.now.set_text(t("请先进入剧情地图或对话界面，再点击开启"))
         self._set_switch(on)
         self.resume.setVisible(paused)
         self.bar_card.refresh()

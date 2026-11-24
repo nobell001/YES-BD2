@@ -844,8 +844,8 @@ class DoomBookTask(CartridgeFieldTask):
         super().__init__(*args, **kwargs)
         self.name = "末日之书"
         self.description = (
-            "主页卡带 → 末日之书 → 走到红色交叉剑标记 → 去战斗 → 跳过 → 离开 → 回主页"
-            "（每周任务：参与末日之书）。战斗不消耗资源。走法跟镜中之战的「舞台移动方式」一样。"
+            "前往「主页卡带 → 末日之书」，移动到红色交叉剑标记处进入战斗，跳过并离开后返回主页"
+            "（每周任务：参与末日之书）。不消耗任何资源，移动方式与镜中之战的「舞台移动方式」一致。"
         )
         self.icon = FluentIcon.FLAG
 

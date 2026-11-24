@@ -205,7 +205,7 @@ class MapPage(Page):
         super().__init__(
             "shellMap",
             "跑图",
-            tf("每周{weekday} {time} 重新开始 · 每张卡带一周跑一次", **data.weekly_reset_parts()),
+            tf("每周{weekday} {time} 重置进度 · 每张卡带每周运行一次", **data.weekly_reset_parts()),
         )
         self.status = self.add_action(pill(""))
         self.start_button = self.add_action(
@@ -231,7 +231,7 @@ class MapPage(Page):
             "", "chip", "rotate-ccw", size="sm", on_click=self._restart_week
         )
         self.restart_week.setToolTip(
-            t("重新开始") + " · " + t("清掉这周的卡带记录，下次跑图会从第一张卡带重新看。")
+            t("重新开始") + " · " + t("清空本周卡带进度记录，下次跑图将从第一张卡带重新开始。")
         )
         week_head.addWidget(self.restart_week)
         column.addLayout(week_head)
@@ -256,7 +256,7 @@ class MapPage(Page):
         # click opens a small window to change it.
         self.interval_button = Button("", "chip", "clock", size="sm", on_click=self._pick_interval)
         self.interval_button.setToolTip(t("技能间隔") + " · " + t(
-            "吸收、召集、压制之间隔几秒再按下一个。电脑或网络较慢、技能常常没按上时调大。"
+            "释放吸收、召集、压制技能之间的等待时间。如果电脑或网络较卡导致技能偶尔漏按，可适当调大。"
         ))
         head.addSpacing(4)
         head.addWidget(self.interval_button)

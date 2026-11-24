@@ -343,8 +343,8 @@ class DailyRefineTask(_ClaimTaskBase):
         super().__init__(*args, **kwargs)
         self.name = "每日精炼一次"
         self.description = (
-            "背包装备中挑一件精炼值低于24的装备精炼一次（活动任务：装备精炼）。"
-            "只点「精炼」，绝不点「连续精炼」。"
+            "从背包装备中挑选一件精炼值低于 24 的装备进行 1 次精炼（用于活动任务）。"
+            "仅点击「精炼」，不会触发「连续精炼」。"
         )
         self.icon = FluentIcon.SYNC
 

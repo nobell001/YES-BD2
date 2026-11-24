@@ -62,7 +62,7 @@ class BargainLoopTask(MapAutomationTaskBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "循环砍价"
-        self.description = "到第一章商人处：砍价 → 关闭商店，重复设定的次数，不买东西。"
+        self.description = "前往第一章商人处反复砍价并关闭商店（不购买商品），用于练习或完成相关任务。"
         self.icon = FluentIcon.SHOPPING_CART
         self.group_name = "日常/周常"
         self.group_icon = FluentIcon.CALENDAR
@@ -77,7 +77,7 @@ class BargainLoopTask(MapAutomationTaskBase):
         )
         self.config_description.update(
             {
-                LOOP_COUNT_KEY: "找商人 → 砍价 → 关闭商店 算一次；砍价技能要升星时提前停下。",
+                LOOP_COUNT_KEY: "完成一次「打开商店 → 砍价 → 关闭」记为 1 次；当砍价技能即将升星时会自动提前停止。",
             }
         )
         self.config_type.update(

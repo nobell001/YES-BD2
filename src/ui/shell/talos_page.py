@@ -137,7 +137,7 @@ class TalosPage(Page):
         self.start_clone = Button("在桌面分身跑", "secondary", "monitor", on_click=self.start_in_clone)
         self.start_clone.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.start_clone.setToolTip(
-            t("纯后台执行：游戏在独立的分身窗口里跑，缩小也照跑；你照常用电脑，鼠标键盘不会被抢")
+            t("纯后台运行：游戏会在独立的分身桌面中运行，最小化也不受影响，你可以正常使用电脑，不会被抢占鼠标和键盘")
         )
         self.start_clone.setVisible(clone_flow.available())
         column.addWidget(self.start_clone)
@@ -236,21 +236,21 @@ class TalosPage(Page):
                 tile.set_state("todo")
         done = len(progress.cleared)
         total = len(self.tiles)
-        self.set_sub(tf("本期 {n} 关，照内建的轴自动打；打过的跳过，打完去任务领奖", n=total))
+        self.set_sub(tf("本期共 {n} 关，按内置攻略自动挑战；已通关的会自动跳过，完成后前往任务页领奖", n=total))
         if progress.known or done:
-            set_pill(self.count, tf("已打完 {n}/{total}", n=done, total=total), "ok" if done == total else None)
+            set_pill(self.count, tf("已通关 {n}/{total}", n=done, total=total), "ok" if done == total else None)
         else:
-            set_pill(self.count, t("开始后先看游戏里打过哪些"))
+            set_pill(self.count, t("开始后会自动识别当前通关进度"))
         self.start_button.setEnabled(not busy and bool(picked))
         self.start_clone.setVisible(clone_flow.available() and not busy)
         self.start_clone.setEnabled(
             task is not None and bool(picked) and actions.can_start() and not clone_flow.busy_in_clone()
         )
         if remote is not None:
-            self.start_button.setText(t("正在桌面分身里打"))
+            self.start_button.setText(t("正在桌面分身中挑战"))
         elif busy:
-            self.start_button.setText(t("正在打"))
+            self.start_button.setText(t("挑战中"))
         elif not picked:
-            self.start_button.setText(t("勾选要打的关"))
+            self.start_button.setText(t("请先勾选关卡"))
         else:
-            self.start_button.setText(tf("开始打（{n} 关）", n=len(picked)))
+            self.start_button.setText(tf("开始挑战（{n} 关）", n=len(picked)))

@@ -82,7 +82,7 @@ class QuickHuntTask(
         self.group_name = "日常/周常"
         self.group_icon = FluentIcon.CALENDAR
         self.name = "快速狩猎"
-        self.description = "从首页进入快速狩猎，调度米饭并补充数量最少的属性圣石。"
+        self.description = "从主页进入快速狩猎，按设置使用免费米饭，并用火把刷取数量最少的属性圣石。"
         self.icon = FluentIcon.GAME
 
         self.default_config.pop("执行快速狩猎", None)
@@ -109,8 +109,8 @@ class QuickHuntTask(
         )
         self.config_description.update(
             {
-                "主页压暗阈值": "主页左列灰度 p99 低于该值视为被公告压暗（0-255）。",
-                "主页确认等待秒数": "点击主页按钮后确认已返回主页的最长等待时间。",
+                "主页压暗阈值": "主页左侧亮度低于该值时，视为被公告弹窗遮挡（0–255）。",
+                "主页确认等待秒数": "点击主页按钮后，确认已返回主页的最长等待时间（秒）。",
             }
         )
         self.config_type.update(

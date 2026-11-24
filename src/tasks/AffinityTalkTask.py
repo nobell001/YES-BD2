@@ -138,8 +138,8 @@ class AffinityTalkTask(_ClaimTaskBase):
         super().__init__(*args, **kwargs)
         self.name = "亲密度谈心"
         self.description = (
-            "主页 → 亲密度。LV20 的服装谈到 15/15，谈满后不再打开；"
-            "未满 LV20 的每天谈 3 次，按题库选答案。"
+            "前往「主页 → 亲密度」：满级（LV20）服装会自动谈满 15 次后不再打开；"
+            "未满级服装每天谈心 3 次，并按题库自动选择最佳回答。"
         )
         self.icon = FluentIcon.HEART
         # Hidden: the first live look (Leo 2026-10-21 「你自己錄 自己測」): one

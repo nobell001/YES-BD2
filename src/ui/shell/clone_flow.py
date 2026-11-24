@@ -88,7 +88,7 @@ def launch_failure_text(result: str) -> str:
         # Windows' own text for 516 talks about remote access and a PC that is
         # off, which told the player nothing (B站 report 2026-10-14).
         return tf(
-            "连不上桌面分身（Windows 代码 {code}），不是密码的问题。请依序试：重开工具再按一次 → 重新开机再试 → 还不行请把 {folder} 里的 viewer.log 传给我们",
+            "无法连接桌面分身（Windows 错误码 {code}），这并非密码错误。请依次尝试：重启工具后再试 → 重启电脑后再试 → 若仍失败，请将 {folder} 中的 viewer.log 发送给我们。",
             code=str(code),
             folder=str(clone_desktop.DATA_DIR),
         )
@@ -96,10 +96,10 @@ def launch_failure_text(result: str) -> str:
     # The viewer's words; "the tool did not open" sent players looking in
     # the wrong place when the sign-in itself failed (Leo 2026-10-14).
     if reason == "沒有登入分身":
-        return t("没能登录桌面分身，请看左边「桌面分身」页的「登录失败」")
+        return t("未能登录桌面分身，请查看左侧「桌面分身」页面中的「登录失败」说明")
     if reason == "沒有輸入密碼":
-        return t("没有输入密码，桌面分身没有打开")
-    return tf("分身里没能自动打开工具（{reason}），请在分身里自己打开", reason=reason)
+        return t("未输入密码，已取消打开桌面分身")
+    return tf("分身桌面中未能自动启动工具（{reason}），请在分身窗口内手动打开", reason=reason)
 
 
 _launch: _Launch | None = None
@@ -132,39 +132,39 @@ def ask_and_start(window, task, run_mode: str | None = None, stages: list[int] |
     if task is None or data.busy():
         return False
     # Leo (2026-10-03 14:35): short bullet points.
-    intro = "• 纯后台执行：游戏在独立的分身窗口里跑，缩小也照跑\n• 照常用电脑，鼠标键盘不会被抢"
+    intro = "• 纯后台运行：游戏会在独立的分身桌面中运行，最小化也不受影响\n• 你可以正常使用电脑，鼠标和键盘不会被抢占"
     hello = clone_desktop.hello_only()
     service = clone_desktop.remote_desktop_service()
     if clone_desktop.viewer_removed():
         steps = tf(
-            "分身程序不见了，可能被防毒软件（例如 360、火绒）删掉了：\n"
-            "• 在防毒软件把这个文件夹设为信任：{folder}\n"
-            "• 再按「第一次设定」重新建立",
+            "分身程序丢失，可能被杀毒软件（如 360、火绒等）误删：\n"
+            "• 请在杀毒软件中将此文件夹添加到信任区：{folder}\n"
+            "• 然后点击「第一次设定」重新生成",
             folder=str(clone_desktop.DATA_DIR),
         )
         yes = "第一次设定"
     elif not clone_desktop.ready():
         steps = t((
-            "第一次要先设定：\n"
-            "• 会跳出 Windows 确认，请按「是」\n"
-            "• 设定好后再按一次这个按钮"
+            "首次使用需要初始化设置：\n"
+            "• 弹出 Windows 权限确认时请点击「是」\n"
+            "• 设置完成后，再次点击此按钮即可"
         ))
         yes = "第一次设定"
     elif service == "missing":
         # Nothing to fix from here: the service itself is gone (B站 2026-10-14).
         steps = t((
-            "这台电脑不能用桌面分身：\n"
-            "• 分身要靠 Windows 的「远程桌面服务」，这台电脑没有这个服务\n"
-            "• 常见于精简版 Windows，或用过系统优化／精简工具\n"
-            "• 请改用一般模式"
+            "当前电脑暂不支持桌面分身：\n"
+            "• 该功能依赖 Windows「远程桌面服务」，但当前系统中缺少此服务\n"
+            "• 常见于精简版系统或使用过系统优化工具精简了组件\n"
+            "• 请改用普通模式运行"
         ))
         yes = "知道了"
     elif service == "disabled":
         steps = t((
-            "要先打开一个 Windows 服务：\n"
-            "• 分身要靠「远程桌面服务」开第二个桌面，这台电脑把它停用了\n"
-            "• 按「帮我打开」，Windows 确认请按「是」\n"
-            "• 只是让服务能启动，别的电脑还是连不进来"
+            "需要先开启 Windows 远程桌面服务：\n"
+            "• 桌面分身需要该服务来创建独立桌面，但当前已被禁用\n"
+            "• 点击「帮我打开」，在弹出的 Windows 确认框中点「是」\n"
+            "• 仅用于本地启动分身，不会允许其他电脑远程连接"
         ))
         yes = "帮我打开"
     elif hello:
@@ -172,18 +172,18 @@ def ask_and_start(window, task, run_mode: str | None = None, stages: list[int] |
         # face, fingerprint and PIN are all unavailable (2026-10-12).  Leo
         # chose a button that turns it off for them.
         steps = t((
-            "要先关掉一个 Windows 设定：\n"
-            "• 分身要用帐户密码登录，这台电脑现在只允许 Windows Hello\n"
-            "• 按「帮我关掉」，Windows 确认请按「是」\n"
-            "• 第一次进分身要打帐户密码（不是 PIN），之后会记住"
+            "需要先调整一项 Windows 登录设置：\n"
+            "• 桌面分身需要使用账户密码登录，当前系统限制仅允许 Windows Hello\n"
+            "• 点击「帮我关掉」，在弹出的 Windows 确认框中点「是」\n"
+            "• 首次进入分身需输入账户密码（非 PIN 码），勾选记住凭据后下次自动登录"
         ))
         yes = "帮我关掉"
     else:
         steps = t((
-            "按「前往」后：\n"
-            "• Windows 确认请按「是」\n"
-            "• 第一次要打账户密码（不是 PIN），之后会记住\n"
-            "• 游戏和日常自动开始，进度在这里看"
+            "点击「前往」后：\n"
+            "• 弹出 Windows 确认框时请点击「是」\n"
+            "• 首次进入需输入账户密码（非 PIN 码），之后会自动记住\n"
+            "• 游戏与日常将自动开始，运行进度可在此界面查看"
         ))
         yes = "前往"
     # Translated in parts: the catalogs hold each part, not the joined text.

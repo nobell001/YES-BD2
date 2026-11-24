@@ -898,7 +898,7 @@ class BaseBD2Task(BaseTask):
         )
         self.config_description.update(
             {
-                RECOGNITION_SETTLE_KEY: "认出按钮后，点下去之前等多久（秒）。",
+                RECOGNITION_SETTLE_KEY: "识别到按钮后，等待多少秒再执行点击。",
             }
         )
 

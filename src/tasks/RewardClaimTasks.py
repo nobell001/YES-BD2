@@ -114,7 +114,7 @@ class MailRewardTask(_ClaimTaskBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "领取邮件"
-        self.description = "打开邮箱，一键领取普通邮箱（可选商品邮箱）的全部邮件。"
+        self.description = "打开邮箱，一键领取普通邮箱（可选包含商品邮箱）中的全部邮件。"
         self.icon = FluentIcon.MAIL
         self.default_config["领取商品邮箱"] = True
         self.config_description["领取商品邮箱"] = (
@@ -181,7 +181,7 @@ class PassRewardTask(_ClaimTaskBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "领取通行证"
-        self.description = "依次打开左侧有红点的通行证，每张点一次全部获得（绝不点购买）。"
+        self.description = "依次打开左侧带红点提示的通行证并点击全部获得（绝不会触发购买）。"
         self.icon = FluentIcon.TAG
 
     def run_claim(self) -> bool:

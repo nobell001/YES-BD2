@@ -310,10 +310,7 @@ class CraftGearTask(NGearCraftMixin, EnhanceDialogMixin, DailyRefineTask):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "每周制作装备"
-        self.description = (
-            "背包 → 装备制作 → 第一件 N 装备，开启自动分解、强化到 +5 后按「强化」："
-            "制作、强化、分解一次完成（每周任务：制作装备）。只做 N 装备。"
-        )
+        self.description = "前往「背包 → 装备制作」，选择第一件 N 装备并开启自动分解、强化至 +5，一次性完成制作、强化与分解（用于每周任务，仅制作 N 装备）。"
         self.icon = FluentIcon.DEVELOPER_TOOLS
         self.default_config.update(
             {
@@ -323,8 +320,8 @@ class CraftGearTask(NGearCraftMixin, EnhanceDialogMixin, DailyRefineTask):
         )
         self.config_description.update(
             {
-                "强化目标等级": "制作后强化到的等级，达到后游戏自动分解。",
-                "制作数量": "制作几件 N 装备（1~10）。",
+                "强化目标等级": "制作后自动强化的目标等级，达到后将自动分解。",
+                "制作数量": "每次制作 N 装备的数量（1–10 件）。",
             }
         )
         # The settings box refuses numbers the task would reject anyway.

@@ -685,7 +685,7 @@ class ReturnHomeTask(BaseBD2Task):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "回到主页"
-        self.description = "关闭弹窗、按返回或从地图回城，把游戏带回主页。卡住时可手动执行。"
+        self.description = "自动关闭弹窗、点击返回或退出当前地图，将游戏恢复到主页（卡住时可手动运行）。"
         self.icon = FluentIcon.HOME
         self.group_name = "日常/周常"
         self.group_icon = FluentIcon.CALENDAR

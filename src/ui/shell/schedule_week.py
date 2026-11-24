@@ -845,16 +845,16 @@ class ScheduleDialog(Floating):
         head.addWidget(HeroIcon("clock", 44))
         titles = vbox(None, (0, 0, 0, 0), 2)
         titles.addWidget(Text("定时启动", "h2"))
-        about = t("时间到自动打开游戏，跑今天还没做的。点空格或右上角 ＋ 新增，点色块修改")
+        about = t("到达设定时间后自动启动游戏，只运行今日未完成的项目。点击空白格或右上角「+」新增，点击色块可修改")
         if len(self.known) > 1:
             # The spacing rule rides on this line: beside four long account
             # names it was squeezed into a column one or two words wide, and
             # a line of its own cost the hours their room (2026-11-09).
-            about += " · " + t("同一个账号隔 1 小时，不同账号隔半小时")
+            about += " · " + t("同账号至少间隔 1 小时，不同账号至少间隔半小时")
         titles.addWidget(Text(about, "sub", wrap=True))
         head.addLayout(titles, 1)
         self.master = Toggle(self.working.enabled)
-        self.master.setToolTip(t("关掉就完全取消，Windows 里也不留"))
+        self.master.setToolTip(t("关闭后将完全取消定时任务，不会在 Windows 中保留记录"))
         self.master.toggled.connect(self._master_changed)
         head.addWidget(self.master, 0, Qt.AlignVCenter)
         column.addLayout(head)
@@ -884,14 +884,14 @@ class ScheduleDialog(Floating):
         self.problem.hide()
         body.addWidget(self.problem)
         body.addWidget(Separator())
-        self.wake = CheckBox("电脑睡着时叫醒它", self.working.wake)
+        self.wake = CheckBox("电脑睡眠时自动唤醒", self.working.wake)
         # Leo 2026-10-22 「要備註關機時不能使用」: on the box itself, so the
         # calendar keeps the room.
-        self.wake.setToolTip(t("睡眠中会被叫醒；完全关机的电脑叫不醒"))
-        self.close_game = CheckBox("做完关闭游戏", self.working.close_game)
-        self.shutdown = CheckBox("做完关机", self.working.shutdown)
-        self.shutdown.setToolTip(t("定时启动跑的那次，全部做完且没有失败时才会做"))
-        self.close_game.setToolTip(t("定时启动跑的那次做完才会做，什么时候关照一键日常的设定"))
+        self.wake.setToolTip(t("支持从睡眠状态唤醒电脑；若电脑已完全关机则无法唤醒"))
+        self.close_game = CheckBox("完成后关闭游戏", self.working.close_game)
+        self.shutdown = CheckBox("完成后关机", self.working.shutdown)
+        self.shutdown.setToolTip(t("仅当定时任务全部成功完成且无失败项目时才会关机"))
+        self.close_game.setToolTip(t("定时任务完成后关闭游戏，具体时机沿用一键日常的设置"))
         # 什么时候关 right here too (Leo 2026-11-06 「排程自動日常的時候能不能
         # 也設定失敗的時候也關」): the same setting as 一键日常's window and
         # 任务设定, shown only while 做完关闭游戏 is ticked.
@@ -905,7 +905,7 @@ class ScheduleDialog(Floating):
         from src.ui.shell import clone_flow
 
         self.in_clone = CheckBox("在桌面分身跑", self.working.in_clone)
-        self.in_clone.setToolTip(t("定时启动时在桌面分身跑；不勾就在桌面跑"))
+        self.in_clone.setToolTip(t("定时启动时在桌面分身中运行；取消勾选则在主桌面运行"))
         self.in_clone.setVisible(clone_flow.available())
         options = hbox(None, (0, 2, 0, 0), OPTION_GAP)
         options.addWidget(self.in_clone)

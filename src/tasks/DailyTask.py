@@ -253,7 +253,7 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "公会、小屋、酒馆"
-        self.description = "执行公会签到、小屋签到和酒馆一键收菜。"
+        self.description = "自动完成公会签到、我的小屋签到以及酒馆一键收菜。"
         self.icon = FluentIcon.CAR
         self.group_name = "日常/周常"
         self.group_icon = FluentIcon.CALENDAR
@@ -281,9 +281,9 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
         )
         self.config_description.update(
             {
-                '执行公会签到': "从主页进入公会，领取每日签到奖励。",
-                '执行小屋签到': "从主页进入小屋，确认到达后返回主页。",
-                '执行一键收菜': "打开经营管理弹窗并执行一键获得。",
+                '执行公会签到': "从主页进入公会并领取每日签到奖励。",
+                '执行小屋签到': "从主页进入我的小屋，确认进入后返回主页。",
+                '执行一键收菜': "打开经营管理弹窗并点击一键获得奖励。",
             }
         )
 

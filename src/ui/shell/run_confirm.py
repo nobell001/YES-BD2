@@ -331,7 +331,7 @@ class RunConfirm(Floating):
                     (CLOSE_CLONE_KEEP, *CLOSE_CLONE_HOW_OPTIONS), current, accent=True
                 )
                 self.close_clone.setToolTip(
-                    t("关闭游戏：分身和游戏一起关。在桌面重开：关掉分身后在你的桌面打开游戏。")
+                    t("「关闭游戏」会直接退出分身和游戏；「在桌面重开」会在关闭分身后，在你的主桌面重新打开游戏。")
                 )
                 buttons.addWidget(self.close_clone, 0, Qt.AlignVCenter)
             # A player asked to close even after a failure (Leo 2026-11-02

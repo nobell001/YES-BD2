@@ -134,8 +134,8 @@ class TalosTask(_ClaimTaskBase):
         super().__init__(*args, **kwargs)
         self.name = LABEL
         self.description = (
-            f"主页 → 塔洛斯战术教材 → 没打过的关卡照内建的轴自动打（第 1~{stages.STAGE_COUNT} 关）"
-            " → 任务全部获得。出错的关会退出、再打一次，还不行就跳过打下一关。"
+            f"前往「主页 → 塔洛斯战术教材」，按内置攻略自动挑战未通关的关卡（第 1–{stages.STAGE_COUNT} 关）"
+            "并领取全部任务奖励。若某关出错会重打一次，仍失败则跳过继续下一关。"
         )
         self.icon = FluentIcon.GAME
         self.group_name = "活动"

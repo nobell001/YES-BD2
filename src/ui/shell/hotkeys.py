@@ -119,12 +119,12 @@ def hint(current: dict[str, str] | None = None) -> str:
     current = current or keys()
     pause, stop = current[PAUSE], current[STOP]
     if pause != NONE and stop != NONE:
-        return tf("按 {pause} 暂停、{stop} 停止，可在设置里改", pause=pause, stop=stop)
+        return tf("按 {pause} 暂停、{stop} 停止（可在设置中修改）", pause=pause, stop=stop)
     if pause != NONE:
-        return tf("按 {pause} 暂停，可在设置里改", pause=pause)
+        return tf("按 {pause} 暂停（可在设置中修改）", pause=pause)
     if stop != NONE:
-        return tf("按 {stop} 停止，可在设置里改", stop=stop)
-    return tf("快捷键已关闭，可在设置里改")
+        return tf("按 {stop} 停止（可在设置中修改）", stop=stop)
+    return tf("快捷键已关闭（可在设置中开启）")
 
 
 _changed: list[Callable[[], None]] = []
