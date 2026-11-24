@@ -566,10 +566,10 @@ class TaskPickDialog(Floating):
         head = hbox(None, (0, 0, 0, 0), 12)
         head.addWidget(HeroIcon("list-checks", 40), 0, Qt.AlignTop)
         titles = vbox(None, (0, 0, 0, 0), 2)
-        titles.addWidget(Text("这个时段要跑什么", "h2"))
+        titles.addWidget(Text("本时段执行任务", "h2"))
         when = f"{slot.hour:02d}:{slot.minute:02d}"
         titles.addWidget(
-            Text(tf("{time} 到了只跑勾的任务，今天做完的不会再跑", time=when), "sub", wrap=True)
+            Text(tf("{time} 到达后仅运行已勾选的任务，今日已完成的不会重复执行", time=when), "sub", wrap=True)
         )
         head.addLayout(titles, 1)
         column.addLayout(head)
@@ -587,7 +587,7 @@ class TaskPickDialog(Floating):
             pills.setVerticalSpacing(8)
             for account in [None, *self._known]:
                 pill = _AccountPill(account, on_click=self._account_changed)
-                pill.setToolTip(t("时间到先切到这个账号再跑"))
+                pill.setToolTip(t("到达时间后先切换到此账号再开始运行"))
                 pills.addWidget(pill)
                 self.pills.append(pill)
             column.addWidget(holder)

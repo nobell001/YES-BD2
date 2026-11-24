@@ -69,7 +69,7 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "白嫖抽抽乐"
-        self.description = "领取服装和装备的所有免费抽抽乐。"
+        self.description = "自动领取所有服装与装备卡池的每日免费抽抽乐。"
         self.icon = FluentIcon.GAME
         self.group_name = "日常/周常"
         self.group_icon = FluentIcon.CALENDAR

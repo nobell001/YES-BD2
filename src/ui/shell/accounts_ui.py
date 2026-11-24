@@ -389,9 +389,9 @@ class _ManageRow(QWidget):
             self.delete.hide()
         elif account.id == accounts.current_id():
             self.delete.setEnabled(False)
-            self.delete.setToolTip(t("正在用的账号不能删除，先切到别的账号"))
+            self.delete.setToolTip(t("当前正在使用的账号无法删除，请先切换到其他账号"))
         else:
-            self.delete.setToolTip(t("删除这个账号和它的记录"))
+            self.delete.setToolTip(t("删除该账号及其所有本地记录"))
         self._armed = False
         row.addWidget(self.delete)
 

@@ -385,14 +385,14 @@ class PlaceSwitch(Segmented):
             button = self.button(option)
             button.setIcon(_cartridge_icon(PLACE_PICTURES[option], self.ICON, 2.0))
             button.setIconSize(self.ICON)
-        attach_hint(self, t("在哪里买卖；选的地方进不去时，自动改去另一处"))
+        attach_hint(self, t("选择买卖地点；若所选地点无法进入，会自动前往另一处"))
 
 
 class TradePage(Page):
     interval = 2000
 
     def __init__(self):
-        super().__init__("shellTrade", "跑商", "每天一次：买 → 做料理 → 卖")
+        super().__init__("shellTrade", "跑商", "每日自动执行：购买 → 制作料理 → 出售")
         self._hints: list[tuple[QWidget, IconLabel, str]] = []
         self.status = self.add_action(pill(""))
         self.place = self.add_action(PlaceSwitch())
@@ -702,10 +702,10 @@ class TradePage(Page):
         elif amount is None:
             self.contract_block.set_state("还没填，不会卖", alarm=True)
         elif amount == 0:
-            self.contract_block.set_state("填 0 会全卖", alarm=True)
+            self.contract_block.set_state("填 0 将全部出售", alarm=True)
         else:
             self.contract_block.set_state(
-                tf("每月 {day} 号卖，留着能招募", day=keep.CONTRACT_SALE_DAY)
+                tf("每月 {day} 号出售，按保留数量留存", day=keep.CONTRACT_SALE_DAY)
             )
 
         on = bool(config.get(keep.SELL_SLIMES_KEY, False))
@@ -717,12 +717,12 @@ class TradePage(Page):
         if not on:
             self.slime_block.set_state("不卖")
         elif all(amount is None for amount in amounts):
-            self.slime_block.set_state("还没填，不会卖", alarm=True)
+            self.slime_block.set_state("未填写保留数量，暂不出售", alarm=True)
         elif any(amount == 0 for amount in amounts):
-            self.slime_block.set_state("填 0 会全卖", alarm=True)
+            self.slime_block.set_state("填 0 将全部出售", alarm=True)
         else:
             self.slime_block.set_state(
-                tf("每月 {day} 号卖，各留这么多", day=keep.SLIME_SALE_DAY)
+                tf("每月 {day} 号出售，按各色数量留存", day=keep.SLIME_SALE_DAY)
             )
         # The warning stays on its box (the window may have been resized) and
         # leaves with it.

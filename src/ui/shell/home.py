@@ -79,27 +79,27 @@ from src.utils import clone_desktop
 
 ENDED_TEXT = {
     run_report.ENDED_DONE: "全部完成",
-    run_report.ENDED_FAILED: "有项目失败",
-    run_report.ENDED_ABORTED: "中途停了",
-    run_report.ENDED_STOPPED: "手动停止",
-    run_report.ENDED_ERROR: "出错停了",
-    run_report.ENDED_SETUP: "没有开始跑",
+    run_report.ENDED_FAILED: "部分项目失败",
+    run_report.ENDED_ABORTED: "中途停止",
+    run_report.ENDED_STOPPED: "已手动停止",
+    run_report.ENDED_ERROR: "运行出错",
+    run_report.ENDED_SETUP: "未能启动",
 }
 SUMMARY_TITLE = {
-    run_report.ENDED_DONE: "跑完了",
-    run_report.ENDED_FAILED: "跑完了，有项目失败",
-    run_report.ENDED_ABORTED: "中途停了",
-    run_report.ENDED_STOPPED: "手动停止了",
-    run_report.ENDED_ERROR: "出错停了",
-    run_report.ENDED_SETUP: "没有开始跑",
+    run_report.ENDED_DONE: "已完成",
+    run_report.ENDED_FAILED: "已结束，部分项目失败",
+    run_report.ENDED_ABORTED: "已中途停止",
+    run_report.ENDED_STOPPED: "已手动停止",
+    run_report.ENDED_ERROR: "运行出错",
+    run_report.ENDED_SETUP: "未能启动",
 }
 
 
 DISPATCH_STATE_TEXT = {
-    "dismissed": "派遣：已领",
-    "still_visible": "派遣：按了「!」没消失，可能没领到",
-    "key_pressed_blind": "派遣：没看到「!」，照样按了一次 F",
-    "absent": "派遣：没看到「!」",
+    "dismissed": "派遣：已领取",
+    "still_visible": "派遣：点击「!」后提示未消失，可能未领取成功",
+    "key_pressed_blind": "派遣：未检测到「!」，已尝试按 F 领取",
+    "absent": "派遣：未检测到可领取提示「!」",
 }
 
 
@@ -192,7 +192,7 @@ class ScheduleCard(ClickableCard):
         head.addWidget(tile)
         head.addWidget(Text("定时启动", "sub"), 1)
         self.toggle = Toggle(False, small=True)
-        self.toggle.setToolTip(t("关掉就完全取消，Windows 里也不留"))
+        self.toggle.setToolTip(t("关闭后将完全取消定时任务，不会在 Windows 中保留记录"))
         self.toggle.toggled.connect(self._switched)
         head.addWidget(self.toggle)
         layout.addLayout(head)
@@ -218,11 +218,11 @@ class ScheduleCard(ClickableCard):
         elif not clock:
             self.value.set_text("—")
             self.unit.set_text("")
-            self.foot.set_text("没有开着的时段，点这里设定")
+            self.foot.set_text("暂无已启用的时段，点击设置")
         else:
             self.value.set_text(clock)
             self.unit.set_text(day)
-            self.foot.set_text(tf("{n} 个时段，点这里设定", n=count))
+            self.foot.set_text(tf("{n} 个定时时段，点击配置", n=count))
         role = "warn" if schedule_ui.problem and settings.enabled else "muted"
         if self.foot.property("role") != role:
             set_prop(self.foot, "role", role)
@@ -305,7 +305,7 @@ class BoardTile(ClickableCard):
         top.addStretch(1)
         self.include = CheckBox("", child.included)
         self.include.setFixedSize(26, 26)
-        self.include.setToolTip(t("勾选：一键完成日常会跑这项"))
+        self.include.setToolTip(t("勾选后，一键完成日常将包含此项"))
         if on_include is not None:
             self.include.toggled.connect(lambda on, key=child.key: on_include(key, on))
         top.addWidget(self.include, 0, Qt.AlignTop)
@@ -653,7 +653,7 @@ class GameSizeCard(Card):
         if size is None:
             self.status.set_text("游戏开着时，选好大小按「调整」")
             return
-        self.status.set_text(tf("现在 {size}，选好大小按「调整」", size=self._format(size)))
+        self.status.set_text(tf("当前分辨率 {size}，选择目标大小后点击「调整」", size=self._format(size)))
         if not self._user_picked and size in self._sizes:
             index = self._sizes.index(size)
             if self.combo.currentIndex() != index:
@@ -758,7 +758,7 @@ class HomePage(Page):
             on_click=self._start_in_clone,
         )
         self.start_clone.setToolTip(
-            t("纯后台执行：游戏在独立的分身窗口里跑，缩小也照跑；你照常用电脑，鼠标键盘不会被抢")
+            t("纯后台运行：游戏会在独立的分身桌面中运行，最小化也不受影响，你可以正常使用电脑，不会被抢占鼠标和键盘")
         )
         self.start_clone.setVisible(clone_flow.available())
         # Shown while 「打开就自动跑日常」 counts down (Leo 2026-10-09).
@@ -773,7 +773,7 @@ class HomePage(Page):
         # Leo 2026-10-09: the player chooses here whether opening the tool runs it.
         self.autorun_box = CheckBox("打开就自动跑日常", autorun.enabled())
         self.autorun_box.setToolTip(
-            t("打开启动器或工具后自动开始一键日常，只跑今天还没做的；游戏没开会自己打开并登录")
+            t("启动工具后自动开始执行今日未完成的日常；如果游戏尚未打开，会自动启动并登录")
         )
         self.autorun_box.toggled.connect(autorun.set_enabled)
         # 玩家 2026-11-16, Leo 「開啟程式就跑 和定時跑 都可以選擇是要在桌面
@@ -782,7 +782,7 @@ class HomePage(Page):
         # 不然就文字變淡」: it is there all the time, usable (and its words
         # dark) only while the box above is ticked.  定时启动 has its own box.
         self.autorun_clone = CheckBox("在桌面分身跑", autorun.in_clone_chosen())
-        self.autorun_clone.setToolTip(t("打开工具自动跑时在桌面分身跑；不勾就在桌面跑"))
+        self.autorun_clone.setToolTip(t("自动启动时在桌面分身中运行；取消勾选则在主桌面运行"))
         self.autorun_clone.toggled.connect(autorun.set_in_clone)
         self._show_autorun_clone(autorun.enabled())
         self.autorun_box.toggled.connect(self._show_autorun_clone)
@@ -855,18 +855,18 @@ class HomePage(Page):
         self.ring.set_progress(len(done), len(included))
         busy = data.busy()
         if not included:
-            self.hero_title.set_text("一键日常里没有项目")
-            self.hero_sub.set_text("到「任务设定」把要跑的项目加进一键日常")
+            self.hero_title.set_text("一键日常暂无已选项目")
+            self.hero_sub.set_text("请前往「任务设定」勾选需要自动运行的项目")
         elif remaining:
             self.hero_title.set_text(tf("还剩 {n} 项", n=len(remaining)))
             estimate = data.estimate_seconds(child.name for child in remaining)
             self.hero_sub.set_text(
-                tf("预计 {time}（照上次的用时估算）", time=fmt_minutes(estimate))
+                tf("预计耗时 {time}（参考上次用时）", time=fmt_minutes(estimate))
                 if estimate
-                else "第一次跑，跑完就知道要多久"
+                else "首次运行，完成后将自动记录耗时"
             )
         else:
-            self.hero_title.set_text("今天的日常都做完了")
+            self.hero_title.set_text("今日日常已全部完成")
             self.hero_sub.set_text(tf("下次刷新 {next}", next=data.next_refresh_text()))
         stopped = (
             run_report.stopped_row(run_report.load(data.DAILY_BATCH)) if remaining else None
@@ -875,11 +875,11 @@ class HomePage(Page):
         self.start_all.set_kind("secondary" if stopped else "primary")
         if stopped is not None:
             name = stopped_name(stopped)
-            self.hero_sub.set_text(tf("上次在「{name}」手动停止，做完的不会再跑", name=name))
+            self.hero_sub.set_text(tf("上次在「{name}」手动停止，已完成的项目不会重复执行", name=name))
             self.resume.set_label(tf("从「{name}」继续", name=name))
         if clone_flow.busy_in_clone():
             # The tool on the 桌面分身 is running; this one shows its progress.
-            self.hero_sub.set_text("工具正在桌面分身里跑，这里会跟着更新")
+            self.hero_sub.set_text("工具正在桌面分身中运行，进度会实时同步到此处")
             busy = True
         self.start_all.setEnabled(not busy and batch is not None)
         self.resume.setEnabled(not busy and batch is not None)
@@ -892,8 +892,8 @@ class HomePage(Page):
         left = autorun.seconds_left()
         self.cancel_autorun.setVisible(left is not None)
         if left is not None:
-            self.hero_title.set_text("马上自动开始一键日常")
-            self.hero_sub.set_text(tf("{n} 秒后开始，不想跑就按「取消自动开始」", n=left))
+            self.hero_title.set_text("即将自动开始一键日常")
+            self.hero_sub.set_text(tf("{n} 秒后自动开始，如需取消请点击「取消自动开始」", n=left))
 
         stamp, cached_for, progress = self._map_cache
         account_id = accounts.current_id()
@@ -956,7 +956,7 @@ class HomePage(Page):
         self.week_head.setVisible(has_week)
         self.week_box.setVisible(has_week)
         self.week_note.set_text(
-            tf("跑过会自动取消勾选，每周{weekday} {time} 自动勾回来", **data.weekly_reset_parts())
+            tf("完成后会自动取消勾选，并在每周{weekday} {time} 自动重新勾选", **data.weekly_reset_parts())
         )
         map_first = data.map_first()
         has_map = MAP_CHILD_KEY in self._tiles
@@ -1478,7 +1478,7 @@ class HomePage(Page):
         if stopped is not None:
             name = stopped_name(stopped)
             self.resume_summary_button.set_label(tf("从「{name}」继续", name=name))
-            self.set_sub(tf("按继续会从「{name}」接着跑，做完的不会再跑", name=name))
+            self.set_sub(tf("点击继续将从「{name}」接着执行，已完成的项目不会重复运行", name=name))
         setup = ended == run_report.ENDED_SETUP
         # Also a finished run's word, e.g. why the PC was not shut down.
         if setup or (stopped is None and report.get("notice")):

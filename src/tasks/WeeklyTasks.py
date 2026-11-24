@@ -45,7 +45,7 @@ class ArcadeBrowseTask(_ClaimTaskBase):
         super().__init__(*args, **kwargs)
         self.name = "浏览街机菜单"
         self.description = (
-            "打开主页的街机游戏菜单再返回（每周任务：浏览街机游戏菜单）。不玩小游戏。"
+            "打开主页的街机游戏菜单后返回，用于完成每周浏览任务（不会游玩小游戏）。"
         )
         self.icon = FluentIcon.GAME
 
@@ -65,14 +65,14 @@ class HomePopularityTask(_ClaimTaskBase):
         super().__init__(*args, **kwargs)
         self.name = "小屋增加人气"
         self.description = (
-            "我的小屋 → 参观 → 随机，给其他玩家的小屋点赞（每周任务：增加人气 3 次）。"
+            "前往「我的小屋 → 参观 → 随机」，为其他玩家的小屋点赞（每周任务：增加人气 3 次）。"
         )
         self.icon = FluentIcon.HEART
         self.default_config.update({"点赞次数": 3, "最多翻看小屋数": 8})
         self.config_description.update(
             {
                 "点赞次数": "需要成功点赞的小屋数量。",
-                "最多翻看小屋数": "点赞未生效（如已点过）时换下一间，最多翻看这么多间后停止。",
+                "最多翻看小屋数": "若当前小屋已点过赞则自动切换下一间，最多翻看该数量后停止。",
             }
         )
 

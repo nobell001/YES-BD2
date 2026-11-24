@@ -449,7 +449,7 @@ class SettingsPage(Page):
 
         box = MessageBox(
             t("还原桌面分身"),
-            t("要把桌面分身的设定改回去吗？分身里的游戏和工具会被关掉。"),
+            t("确定要还原桌面分身设置吗？分身中正在运行的游戏与工具将会关闭。"),
             self.window(),
         )
         box.yesButton.setText(t("还原"))
@@ -483,11 +483,11 @@ class SettingsPage(Page):
         from qfluentwidgets import MessageBox
 
         if data.busy():
-            self.language_row.set_sub("正在跑，跑完后重新打开工具就会换成新语言")
+            self.language_row.set_sub("任务运行中，完成后重启工具即可应用新语言")
             return
-        box = MessageBox(t("换语言"), t("要现在重新打开工具吗？"), self.window())
-        box.yesButton.setText(t("现在重开"))
-        box.cancelButton.setText(t("等一下"))
+        box = MessageBox(t("切换语言"), t("需要重启工具以应用新语言，是否立即重启？"), self.window())
+        box.yesButton.setText(t("立即重启"))
+        box.cancelButton.setText(t("稍后手动"))
         shell_buttons(box)
         if box.exec():
             from src.ui.shell.relaunch import relaunch
