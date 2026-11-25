@@ -125,6 +125,8 @@ def summary_switch_text(label: str) -> str:
 
 
 class ClickableCard(Card):
+    edge_fades = True
+
     def __init__(self, parent=None, tone: str | None = None, on_click: Callable | None = None):
         super().__init__(parent, tone)
         self._on_click = on_click

@@ -36,6 +36,7 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
     QPixmap,
+    QTransform,
 )
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -111,6 +112,9 @@ class Card(QFrame):
     QGraphicsDropShadowEffect would re-render every child on each update).
     """
 
+    # True when edge_colour() changes over time (a hover or flash fade).
+    edge_fades = False
+
     def __init__(self, parent=None, tone: str | None = None):
         super().__init__(parent)
         self.setProperty("card", True)
@@ -124,31 +128,96 @@ class Card(QFrame):
 
     def paintEvent(self, _event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        left, top, right, bottom = SHADOW_MARGINS
-        body = QRectF(self.rect()).adjusted(left, top, -right, -bottom)
-        corner = float(theme.radius())
-        painter.setPen(Qt.NoPen)
-        # Soft and low: many faint layers, each a little wider and further
-        # down, so the edge fades out instead of drawing a grey outline.
-        strength = float(theme.shape("shadow"))
-        layers = 8
-        for step in range(layers, 0, -1):
-            fade = 1 - (step - 1) / layers
-            painter.setBrush(theme.color("shadow", strength * 0.25 * fade))
-            grow = step * 0.6
-            painter.drawRoundedRect(
-                body.adjusted(-grow, -grow * 0.3 + 1, grow, grow * 1.1 + 1),
-                corner + grow,
-                corner + grow,
-            )
-        painter.setPen(QPen(self.edge_colour(), 1))
-        painter.setBrush(theme.color("card"))
-        painter.drawRoundedRect(body.adjusted(0.5, 0.5, -0.5, -0.5), corner, corner)
+        edge = self.edge_colour()
+        # Cards whose edge fades (hover, flash) keep the resting picture and
+        # draw the tinted line over it, so a fade does not fill the cache.
+        rest = Card.edge_colour(self) if self.edge_fades else edge
+        # The shadow and body come from a picture drawn once per size and
+        # colour: each repaint (every frame while a page scrolls) used to
+        # blend 8 see-through card-sized layers, about 70 % of a scroll frame
+        # on 首页 (2026-11-25 profile).
+        painter.drawPixmap(QPointF(0, 0), card_picture(self.size(), self.devicePixelRatioF(), rest))
+        if edge != rest:
+            # A hover or flash tint on the edge line goes over the picture.
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setPen(QPen(edge, 1))
+            painter.setBrush(Qt.NoBrush)
+            corner = float(theme.radius())
+            body = card_body(QRectF(self.rect())).adjusted(0.5, 0.5, -0.5, -0.5)
+            painter.drawRoundedRect(body, corner, corner)
 
     def edge_colour(self) -> QColor:
         line = "done_line" if self.property("tone") == "done" else "card_line"
         return theme.color(line)
+
+
+def card_body(whole: QRectF) -> QRectF:
+    left, top, right, bottom = SHADOW_MARGINS
+    return whole.adjusted(left, top, -right, -bottom)
+
+
+def paint_card(painter: QPainter, whole: QRectF, edge: QColor) -> None:
+    """A card's soft shadow and body inside ``whole`` (see :class:`Card`)."""
+    painter.setRenderHint(QPainter.Antialiasing)
+    body = card_body(whole)
+    corner = float(theme.radius())
+    painter.setPen(Qt.NoPen)
+    # Soft and low: many faint layers, each a little wider and further
+    # down, so the edge fades out instead of drawing a grey outline.
+    strength = float(theme.shape("shadow"))
+    layers = 8
+    for step in range(layers, 0, -1):
+        fade = 1 - (step - 1) / layers
+        painter.setBrush(theme.color("shadow", strength * 0.25 * fade))
+        grow = step * 0.6
+        painter.drawRoundedRect(
+            body.adjusted(-grow, -grow * 0.3 + 1, grow, grow * 1.1 + 1),
+            corner + grow,
+            corner + grow,
+        )
+    painter.setPen(QPen(edge, 1))
+    painter.setBrush(theme.color("card"))
+    painter.drawRoundedRect(body.adjusted(0.5, 0.5, -0.5, -0.5), corner, corner)
+
+
+# Card pictures by size, screen scale and colours; cards of one size (the
+# daily tiles, rows of a list) share one.  Kept under a memory budget, the
+# least recently drawn ones go first.
+_CARDS: OrderedDict = OrderedDict()
+_CARDS_BUDGET = 64 * 1024 * 1024
+_cards_bytes = [0]
+
+
+def card_picture(size: QSize, ratio: float, edge: QColor) -> QPixmap:
+    key = (
+        size.width(),
+        size.height(),
+        ratio,
+        theme.radius(),
+        float(theme.shape("shadow")),
+        theme.color("shadow").rgba(),
+        theme.color("card").rgba(),
+        edge.rgba(),
+    )
+    hit = _CARDS.get(key)
+    if hit is not None:
+        _CARDS.move_to_end(key)
+        return hit
+    picture = QPixmap(
+        max(1, math.ceil(size.width() * ratio)), max(1, math.ceil(size.height() * ratio))
+    )
+    picture.setDevicePixelRatio(ratio)
+    picture.fill(Qt.transparent)
+    painter = QPainter(picture)
+    paint_card(painter, QRectF(0, 0, size.width(), size.height()), edge)
+    painter.end()
+    cost = picture.width() * picture.height() * 4
+    _CARDS[key] = picture
+    _cards_bytes[0] += cost
+    while _cards_bytes[0] > _CARDS_BUDGET and len(_CARDS) > 1:
+        _old_key, old = _CARDS.popitem(last=False)
+        _cards_bytes[0] -= old.width() * old.height() * 4
+    return picture
 
 
 def mix(a: QColor, b: QColor, amount: float) -> QColor:
@@ -1919,9 +1988,17 @@ def draw_fitted(painter: QPainter, rect: QRectF, pixmap: QPixmap, ratio: float) 
     scaled = fitted(pixmap, rect.width(), rect.height(), ratio)
     w = scaled.width() / ratio
     h = scaled.height() / ratio
-    painter.drawPixmap(
-        QPointF(rect.x() + (rect.width() - w) / 2, rect.y() + (rect.height() - h) / 2), scaled
-    )
+    at = QPointF(rect.x() + (rect.width() - w) / 2, rect.y() + (rect.height() - h) / 2)
+    smooth = painter.testRenderHint(QPainter.SmoothPixmapTransform)
+    if smooth and painter.transform().type() in (QTransform.TxNone, QTransform.TxTranslate):
+        # The picture already has one pixel per screen pixel, so it is
+        # copied as is: smoothing would re-filter every pixel each repaint
+        # (2.5x the cost, many pictures per frame while 跑图/跑商 scroll).
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
+        painter.drawPixmap(at, scaled)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        return
+    painter.drawPixmap(at, scaled)
 
 
 def _grey(image: QImage) -> QImage:
