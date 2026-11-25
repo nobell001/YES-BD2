@@ -793,13 +793,22 @@ class SellFlowMixin:
         """
 
         self._unconfirmed_sale = None
+        self._unconfirmed_clear_all = None
         if self._sell_selected_entry(entry):
             return True
         if self._last_sale_unavailable or getattr(self, "_sale_drag_refused", False):
             return False  # skipped, or the retry could not move the list either
-        if self._sale_dialog_shown() and not self._close_sale_dialog():
-            return False
-        self.task.log_info(f"卖：{entry.item}出错，已关闭弹窗，当场重试一次。")
+        if self._sale_dialog_shown():
+            if not self._close_sale_dialog():  # 有备案：✕按两次，再按 Esc
+                return False
+            self.task.log_info(f"卖：{entry.item}出错，已关闭弹窗，当场重试一次。")
+        elif getattr(self, "_unconfirmed_sale", None):
+            self.task.log_info(
+                f"卖：{entry.item}按了出售但没确认到成交，当场再找一次，"
+                "看它还在不在、还剩多少。"
+            )
+        else:
+            self.task.log_info(f"卖：{entry.item}出错，当场重试一次。")
         return self._sell_selected_entry(entry)
 
     def _sell_selected_entry(self, entry: CalendarEntry) -> bool:
@@ -958,11 +967,15 @@ class SellFlowMixin:
                         f"已出售{sold_count}组，继续下一项。"
                     )
                     return True
-                if (
-                    not self._last_sale_unavailable
-                    and not getattr(self, "_last_sale_name_seen", False)
-                    and self._reopen_sale_cartridge(entry)
+                if self._earlier_clear_all_went_through(entry):
+                    return True
+                if not getattr(self, "_last_sale_name_seen", False) and (
+                    self._reopen_sale_cartridge(entry)
                 ):
+                    # The list read without this name marks the item
+                    # unavailable (_locate_sale_items), so that flag must not
+                    # gate the re-open: it did, and the re-open of v0.4.16
+                    # never ran after a real read (found 2026-11-25).
                     # 有备案：清单可能只载入了「食物」，切别的卡带再切回来后重找一遍
                     from_bottom = self._start_sale_search(entry) > 0
                     wrong_cards.clear()
@@ -981,8 +994,8 @@ class SellFlowMixin:
                     self._last_sale_reason = (
                         f"{UNCONFIRMED_MARKER_REASON}：{self._last_sale_reason or '未知原因'}"
                     )
-                    if reopened_here:
-                        self._last_sale_reason += "（已切别的卡带再切回来重找过）"
+                if reopened_here:
+                    self._last_sale_reason += "（已切别的卡带再切回来重找过）"
                 return False
 
             candidates, frame = located
@@ -1249,6 +1262,13 @@ class SellFlowMixin:
             # The sale may still have gone through (a partial sale leaves the
             # card in place); the retry's dialog count settles it.
             self._unconfirmed_sale = (entry.item, owned, selected_quantity)
+            if self._last_sale_cleared and getattr(
+                self, "_sale_dialog_closed_after_press", False
+            ):
+                # Everything owned was chosen and the dialog went away after
+                # 出售: if it went through, the card is gone and the retry
+                # finds no dialog to read; the empty list settles it instead.
+                self._unconfirmed_clear_all = (entry.item, selected_quantity)
             return None
         confirmed = getattr(self, "_confirmed_sale_quantity", None)
         trade_detail.note_sale(
@@ -2025,7 +2045,8 @@ class SellFlowMixin:
 
         The card list can reflow after a sale.  Including all matching name
         boxes lets completion detection notice that a card disappeared even
-        when OCR temporarily misses one or more 120% markers.
+        when OCR temporarily misses one or more 120% markers.  Only boxes in
+        the item list count, as for the locator (SALE_ITEM_LIST_REGION).
         """
 
         names = (entry.item, *entry.aliases, *ITEM_ALIASES.get(entry.item, ()))
@@ -2033,6 +2054,13 @@ class SellFlowMixin:
         signature = []
         matching_boxes = []
         for box in self._sale_page_boxes(frame):
+            if not self._in_sale_item_list(box, frame.shape):
+                # The shop keeper's line above the list names the item too
+                # (「这里好像正在购入巧克力面包」) and OCR cuts it differently
+                # on every read; counted, two reads in a row never matched
+                # and a sale that went through was taken as failed (player
+                # v0.4.16 2026-11-25).  Only the cards say what was sold.
+                continue
             text = str(getattr(box, "name", ""))
             normalized = self._normal(text)
             if not self._sale_name_matches(normalized, normalized_names):
@@ -2099,6 +2127,7 @@ class SellFlowMixin:
         stock_hits = 0
         last_stock: int | None = None
         stock_candidate: int | None = None
+        self._sale_dialog_closed_after_press = False
         while True:
             frame = self.vision.capture()
             if not dialog_closed:
@@ -2114,6 +2143,7 @@ class SellFlowMixin:
                 dialog_closed = (
                     "拥有" not in normalized_dialog and "可购买" not in normalized_dialog
                 )
+                self._sale_dialog_closed_after_press = dialog_closed
             if dialog_closed:
                 full_text = self._sale_page_text(frame)
                 normalized_full = self._normal(full_text)
@@ -2189,6 +2219,37 @@ class SellFlowMixin:
             return False
         return not _with_one_extra_digit(owned, stock)
 
+    def _earlier_clear_all_went_through(self, entry: CalendarEntry) -> bool:
+        """An unconfirmed sale of everything owned, and now the item is gone.
+
+        Player v0.4.16 2026-11-25: 巧克力面包 400 of 400 sold, the tool missed
+        the result, and the retry searched the list up and down for a card
+        that no longer existed, then left the item as 「未出售」.  The dialog closed after 出售 and the whole list, read to its end,
+        has no card with the name: the earlier press sold it all.
+        """
+
+        pending = getattr(self, "_unconfirmed_clear_all", None)
+        if not pending or pending[0] != entry.item:
+            return False
+        if (
+            getattr(self, "_last_sale_name_seen", False)
+            or not getattr(self, "_last_sale_ocr_output", False)
+            or getattr(self, "_sale_drag_refused", False)
+        ):
+            return False  # the list was not read: absence proves nothing
+        self._unconfirmed_clear_all = None
+        self._unconfirmed_sale = None
+        _, selected = pending
+        self._last_sale_unavailable = False
+        self._last_sale_reason = ""
+        self._status("出售完成确认", f"{entry.item}:重试时清单里已没有这项")
+        self.task.log_info(
+            f"卖：{entry.item}重试时整个出售清单都找不到它了，"
+            f"上次按出售已全部卖出{f'（{selected}个）' if selected else ''}，记入报表，继续下一项。"
+        )
+        trade_detail.note_sale(self, entry.item, selected)
+        return True
+
     def _settle_unconfirmed_sale(self, entry: CalendarEntry, owned: int) -> None:
         """Count an earlier unconfirmed sale once the dialog shows fewer owned.
 
@@ -2200,6 +2261,7 @@ class SellFlowMixin:
         if not pending or pending[0] != entry.item:
             return
         self._unconfirmed_sale = None
+        self._unconfirmed_clear_all = None
         _, owned_before, selected = pending
         if owned_before is None or owned >= owned_before:
             self.task.log_info(

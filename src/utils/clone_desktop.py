@@ -630,6 +630,11 @@ def open_viewer(launch_tool: bool = True) -> bool:
             pass
     update_viewer()
     write_startup_list()
+    try:
+        open_paused[:] = pause_startup_programs()
+    except Exception:
+        # A helper: it never keeps the clone from opening.
+        open_paused[:] = []
     args = []
     account = None if saved_sign_in() else sign_in_account()
     if account:
@@ -651,6 +656,7 @@ def open_viewer(launch_tool: bool = True) -> bool:
         except OSError:
             # Missing, or an antivirus refused to start it.
             open_failure["why"] = "blocked"
+            restore_paused_startup()
             return False
         return True
     shell_execute = ctypes.windll.shell32.ShellExecuteW
@@ -662,11 +668,14 @@ def open_viewer(launch_tool: bool = True) -> bool:
         return True
     # 5 (access denied) is the user's 「否」; anything else kept it from starting.
     open_failure["why"] = "declined" if result == 5 else "blocked"
+    restore_paused_startup()
     return False
 
 
 # Why the last open_viewer() returned False: "declined" or "blocked".
 open_failure = {"why": ""}
+# The startup programs the last open_viewer() paused, for the log.
+open_paused: list[str] = []
 
 
 def launch_result() -> str | None:
@@ -1017,6 +1026,251 @@ def close_startup_programs() -> list[str]:
         except Exception:
             continue
     return closed
+
+
+# While the clone signs in, the startup programs are paused (Leo 2026-11-25).
+# Closing them once they show up in the clone is too late for some: Steam
+# allows one copy per PC, and the moment Windows started `steam.exe -silent`
+# in the clone, the Steam on the real desktop quit ("user initiated logoff").
+# 4K PC, 10-07 to 11-22: 28 of 28 clone sign-ins with Steam logged in on the
+# desktop, LogOff in the same second as (or 1-2 s before) the sweep closed
+# the clone's copy.  So the clone must never start them: Windows' own
+# 「開機自啟 停用」 switch (Task Manager > Startup apps, the StartupApproved
+# values) is set for each startup program the sweep would close, only for
+# the sign-in, and put back as it was afterwards.  The desktop the player
+# is on has signed in long ago, so it does not notice.
+STARTUP_PAUSE_FILE = DATA_DIR / "startup-paused.json"
+_APPROVED = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved"
+# Put back this long after the clone signed in: the sweep in the clone looks
+# for late starters for 5 minutes too (SoundSwitch started 125 s after
+# sign-in, live 2026-10-04).
+RESTORE_AFTER_SIGN_IN_SECONDS = 300
+# The viewer never opened (or closed): nothing to wait for.
+RESTORE_NO_VIEWER_SECONDS = 30
+# Sign-in can wait 10 minutes for a password; never longer than this in all.
+PAUSE_MAX_SECONDS = 600 + RESTORE_AFTER_SIGN_IN_SECONDS + 60
+
+
+def _shortcut_target(link: Path) -> str | None:
+    try:
+        import win32com.client
+
+        target = win32com.client.Dispatch("WScript.Shell").CreateShortcut(str(link))
+        return str(target.TargetPath) or None
+    except Exception:
+        return None
+
+
+def _startup_entries() -> list[tuple[str, str, str, str]]:
+    """(hive, StartupApproved subkey, value name, program) of each startup
+    program Windows runs at sign-in, the way Task Manager's Startup apps
+    lists them.  hive is "HKCU" or "HKLM"."""
+    entries: list[tuple[str, str, str, str]] = []
+    try:
+        import winreg
+    except ImportError:
+        return entries
+    runs = (
+        ("HKCU", r"Software\Microsoft\Windows\CurrentVersion\Run", "Run"),
+        ("HKLM", r"Software\Microsoft\Windows\CurrentVersion\Run", "Run"),
+        ("HKLM", r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run", "Run32"),
+    )
+    for hive, key_path, approved in runs:
+        root = winreg.HKEY_CURRENT_USER if hive == "HKCU" else winreg.HKEY_LOCAL_MACHINE
+        try:
+            with winreg.OpenKey(root, key_path) as key:
+                index = 0
+                while True:
+                    try:
+                        name, value, _kind = winreg.EnumValue(key, index)
+                    except Exception:
+                        break
+                    index += 1
+                    exe = _exe_of_command(str(value))
+                    if name and exe:
+                        entries.append((hive, approved, name, exe))
+        except Exception:
+            continue
+    folders = (
+        ("HKCU", Path(os.environ.get("APPDATA", "")) / r"Microsoft\Windows\Start Menu\Programs\Startup"),
+        ("HKLM", Path(os.environ.get("PROGRAMDATA", "")) / r"Microsoft\Windows\Start Menu\Programs\Startup"),
+    )
+    for hive, folder in folders:
+        for link in sorted(folder.glob("*.lnk")) if folder.is_dir() else ():
+            target = _shortcut_target(link)
+            if target:
+                entries.append((hive, "StartupFolder", link.name, target))
+    return entries
+
+
+def _approved_root(winreg, hive: str):
+    return winreg.HKEY_CURRENT_USER if hive == "HKCU" else winreg.HKEY_LOCAL_MACHINE
+
+
+def _read_approved(winreg, hive: str, approved: str, name: str) -> bytes | None:
+    """The StartupApproved value, None when there is none (= on)."""
+    try:
+        with winreg.OpenKey(_approved_root(winreg, hive), _APPROVED + "\\" + approved) as key:
+            value, _kind = winreg.QueryValueEx(key, name)
+    except OSError:
+        return None
+    return bytes(value) if isinstance(value, (bytes, bytearray)) else None
+
+
+def _write_approved(winreg, hive: str, approved: str, name: str, value: bytes | None) -> bool:
+    """Write (or with None remove) the value; False when Windows refused
+    (all-users entries need Administrator)."""
+    try:
+        with winreg.CreateKeyEx(
+            _approved_root(winreg, hive),
+            _APPROVED + "\\" + approved,
+            0,
+            winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE,
+        ) as key:
+            if value is None:
+                try:
+                    winreg.DeleteValue(key, name)
+                except FileNotFoundError:
+                    pass
+            else:
+                winreg.SetValueEx(key, name, 0, winreg.REG_BINARY, value)
+    except OSError:
+        return False
+    return True
+
+
+def startup_on(value: bytes | None) -> bool:
+    """Windows starts it: no value, or an even first byte (02/06 = on,
+    03/07 = turned off in Task Manager)."""
+    return not value or value[0] % 2 == 0
+
+
+def _paused_off_value() -> bytes:
+    # 03 = off, then when it was turned off (FILETIME), as Task Manager writes it.
+    filetime = int((time.time() + 11644473600) * 10_000_000)
+    return bytes([3, 0, 0, 0]) + filetime.to_bytes(8, "little")
+
+
+def _read_pause() -> dict | None:
+    try:
+        data = json.loads(STARTUP_PAUSE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and isinstance(data.get("entries"), list) else None
+
+
+def _save_pause(data: dict) -> None:
+    if not data.get("entries"):
+        try:
+            STARTUP_PAUSE_FILE.unlink()
+        except OSError:
+            pass
+        return
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    write_atomic(STARTUP_PAUSE_FILE, json.dumps(data, ensure_ascii=False).encode("utf-8"))
+
+
+def pause_startup_programs() -> list[str]:
+    """Before the clone signs in: turn off, for this sign-in only, each startup
+    program the sweep would close in the clone.  Names of the ones paused.
+
+    What is to be put back is written down before each change, so a tool
+    that closes halfway puts it back on its next start.  Ones the player
+    already turned off are left alone.
+    """
+    restore_paused_startup()
+    try:
+        import winreg
+    except ImportError:
+        return []
+    data = {"at": time.time(), "entries": []}
+    paused = []
+    for hive, approved, name, exe in _startup_entries():
+        if not _closable(os.path.normcase(exe)):
+            continue
+        old = _read_approved(winreg, hive, approved, name)
+        if not startup_on(old):
+            continue
+        new = _paused_off_value()
+        entry = {
+            "hive": hive,
+            "key": approved,
+            "name": name,
+            "old": None if old is None else old.hex(),
+            "new": new.hex(),
+        }
+        data["entries"].append(entry)
+        _save_pause(data)
+        if _write_approved(winreg, hive, approved, name, new):
+            paused.append(name)
+        else:
+            data["entries"].remove(entry)
+            _save_pause(data)
+    return paused
+
+
+def restore_paused_startup() -> list[str]:
+    """Put each paused startup program back as it was.  One the player changed
+    in the meantime (e.g. in Task Manager) is theirs and stays as they set it.
+    Names of the ones put back."""
+    data = _read_pause()
+    if data is None:
+        _save_pause({})
+        return []
+    try:
+        import winreg
+    except ImportError:
+        return []
+    restored, left = [], []
+    for entry in data["entries"]:
+        try:
+            hive, approved, name = entry["hive"], entry["key"], entry["name"]
+            new = bytes.fromhex(entry["new"])
+            old = None if entry.get("old") is None else bytes.fromhex(entry["old"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if _read_approved(winreg, hive, approved, name) != new:
+            continue
+        if _write_approved(winreg, hive, approved, name, old):
+            restored.append(name)
+        else:
+            left.append(entry)
+    data["entries"] = left
+    _save_pause(data)
+    return restored
+
+
+def startup_pause_done(now: float | None = None) -> bool:
+    """The paused startup programs can go back: 5 minutes after the clone
+    signed in (the viewer writes launch-result.txt then), when the viewer is
+    not open, or after the longest sign-in wait."""
+    data = _read_pause()
+    if data is None:
+        return STARTUP_PAUSE_FILE.exists()
+    now = time.time() if now is None else now
+    try:
+        paused_at = float(data.get("at") or 0)
+    except (TypeError, ValueError):
+        paused_at = 0.0
+    waited = now - paused_at
+    if waited >= PAUSE_MAX_SECONDS or waited < 0:
+        return True
+    try:
+        signed_in = LAUNCH_RESULT.stat().st_mtime
+    except OSError:
+        signed_in = None
+    if signed_in is not None and signed_in >= paused_at - 1:
+        if now - signed_in >= RESTORE_AFTER_SIGN_IN_SECONDS:
+            return True
+    return waited >= RESTORE_NO_VIEWER_SECONDS and not viewer_running()
+
+
+def restore_paused_startup_when_done() -> list[str]:
+    """Each few seconds, outside and in the clone: put the startup programs
+    back once the clone's sign-in is over (and after a tool that closed)."""
+    if not STARTUP_PAUSE_FILE.exists() or not startup_pause_done():
+        return []
+    return restore_paused_startup()
 
 
 PLAY_GAMES_SERVICE = os.path.normcase(r"Google\Play Games\current\service\Service.exe")

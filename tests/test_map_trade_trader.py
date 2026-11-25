@@ -1956,13 +1956,14 @@ class SellFlowTest(unittest.TestCase):
 
     def test_partial_sale_is_confirmed_by_the_card_stock_number(self):
         # Live 4K 2026-11-05: 353 甜椒 of 2640 sold, the card stayed in place
+        # (name where FHD cards sit: x=596, inside SALE_ITEM_LIST_REGION)
         # and no toast was read, so the sale was left out of the report.
-        name = SimpleNamespace(name="甜椒", x=435, y=149, width=40, height=20)
-        after = [name, SimpleNamespace(name="2287", x=378, y=198, width=45, height=21)]
+        name = SimpleNamespace(name="甜椒", x=596, y=149, width=40, height=20)
+        after = [name, SimpleNamespace(name="2287", x=539, y=198, width=45, height=21)]
         logs = []
         trader = self._partial_sale_trader([after, after], logs)
         entry = CalendarEntry("甜椒", "S3")
-        signature = (("甜椒", 435, 149, 40, 20),)
+        signature = (("甜椒", 596, 149, 40, 20),)
         self.assertTrue(
             trader._wait_sale_completion(
                 entry,
@@ -1981,15 +1982,15 @@ class SellFlowTest(unittest.TestCase):
     def test_partial_sale_counts_any_drop_within_what_was_chosen(self):
         # Leo 11-05: not only the exact sum; any lower stock the sale can
         # reach counts, and the report takes the real drop.
-        name = SimpleNamespace(name="甜椒", x=435, y=149, width=40, height=20)
-        after = [name, SimpleNamespace(name="2300", x=378, y=198, width=45, height=21)]
+        name = SimpleNamespace(name="甜椒", x=596, y=149, width=40, height=20)
+        after = [name, SimpleNamespace(name="2300", x=539, y=198, width=45, height=21)]
         logs = []
         trader = self._partial_sale_trader([after, after], logs)
         self.assertTrue(
             trader._wait_sale_completion(
                 CalendarEntry("甜椒", "S3"),
                 np.zeros((1080, 1920, 3), dtype=np.uint8),
-                (("甜椒", 435, 149, 40, 20),),
+                (("甜椒", 596, 149, 40, 20),),
                 timeout=5.0,
                 before_toast_id=5,
                 owned=2640,

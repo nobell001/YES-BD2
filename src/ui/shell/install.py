@@ -157,6 +157,7 @@ class Shell(QObject):
         from src.ui.shell import clone_flow
 
         clone_flow.run_pending_job_soon()
+        clone_flow.watch_paused_startup(window)
         from src.ui.shell import sound_watch
 
         # 设置「跑的时候游戏静音」 (Leo 2026-10-09).

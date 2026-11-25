@@ -22,8 +22,12 @@ def _detection(y: int):
     return SimpleNamespace(best=SimpleNamespace(result=SimpleNamespace(center=(300, y))))
 
 
-def _seller(scans, *, name_seen=False):
-    """A seller whose list reads answer from ``scans`` (None = not found)."""
+def _seller(scans, *, name_seen=False, as_read=False):
+    """A seller whose list reads answer from ``scans`` (None = not found).
+
+    ``as_read``: the flags as _locate_sale_items leaves them after a real
+    read of a list without the name (text read, item marked unavailable).
+    """
 
     trader = object.__new__(Trader)
     logs, warnings, events = [], [], []
@@ -42,6 +46,11 @@ def _seller(scans, *, name_seen=False):
         trader._last_sale_name_seen = name_seen if located is None else True
         trader._last_sale_reason = "未发现商品名" if located is None else ""
         trader._last_sale_page_empty = located is None
+        if as_read:
+            trader._last_sale_ocr_output = True
+            trader._last_sale_unavailable = located is None and not name_seen
+            if located is None:
+                trader._last_sale_reason = "全画面OCR未形成可用商品候选"
         return located
 
     trader._find_sale_item_candidates = find
@@ -69,6 +78,38 @@ class SellListReopenTest(unittest.TestCase):
         self.assertEqual(["番茄"], reopens)
         # Searched again from the start of the list after the re-open.
         self.assertEqual(["start", "start", "sold"], events)
+
+    def test_reopen_runs_after_a_real_list_read_without_the_name(self):
+        """v0.4.16 shipped the re-open behind 「not unavailable」, but a read
+        without the name is exactly what marks the item unavailable: after a
+        real read it never ran (found 2026-11-25)."""
+
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        candidate = SimpleNamespace(center=(620, 572))
+        trader, _logs, _warnings, events = _seller(
+            [None, ([candidate], frame)], as_read=True
+        )
+        reopens = []
+        trader._reopen_sale_cartridge = lambda entry: reopens.append(entry.item) or True
+
+        self.assertTrue(trader._sell_selected_entry(CalendarEntry("番茄", "S12:海边天使")))
+        self.assertEqual(["番茄"], reopens)
+        self.assertEqual(["start", "start", "sold"], events)
+
+    def test_real_read_still_missing_after_the_reopen_says_it_was_reopened(self):
+        trader, _logs, _warnings, _events = _seller([None, None], as_read=True)
+
+        def reopen(_entry):
+            if getattr(trader, "_sale_cartridge_reopened", False):
+                return False
+            trader._sale_cartridge_reopened = True
+            return True
+
+        trader._reopen_sale_cartridge = reopen
+
+        self.assertFalse(trader._sell_selected_entry(CalendarEntry("番茄", "S12:海边天使")))
+        self.assertTrue(trader._last_sale_unavailable)
+        self.assertIn("已切别的卡带再切回来重找过", trader._last_sale_reason)
 
     def test_item_still_missing_after_the_reopen_is_skipped_with_the_reason(self):
         trader, _logs, _warnings, events = _seller([None, None])

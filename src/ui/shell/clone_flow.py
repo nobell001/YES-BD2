@@ -408,7 +408,13 @@ def open_clone(
         _request_job(window, task, run_mode, auto, stages)
     else:
         clone_desktop.clear_job()
-    if not clone_desktop.open_viewer():
+    opened = clone_desktop.open_viewer()
+    if clone_desktop.open_paused:
+        logger.info(
+            "clone: startup programs paused for the sign-in "
+            f"{clone_desktop.open_paused}" + ("" if opened else ", put back (not opened)")
+        )
+    if not opened:
         clone_desktop.clear_job()
         if clone_desktop.open_failure.get("why") == "declined":
             message(window, "没有打开分身（Windows 的确认按了「否」）", error=True)
@@ -426,6 +432,30 @@ def open_clone(
         _launch = _Launch()
     _launch.start(window, scheduled=(auto or {}).get("scheduled") is not None)
     return True
+
+
+_startup_pause_timer: QTimer | None = None
+
+
+def watch_paused_startup(parent) -> None:
+    """Outside and in the clone: put the startup programs paused for the
+    clone's sign-in back once it is over, also after a tool that closed
+    halfway (Leo 2026-11-25: the clone's Steam made the desktop's quit)."""
+    global _startup_pause_timer
+    if _startup_pause_timer is not None:
+        return
+    guarded("clone startup pause", _restore_paused_startup)()
+    _startup_pause_timer = QTimer(parent)
+    _startup_pause_timer.timeout.connect(
+        guarded("clone startup pause", _restore_paused_startup)
+    )
+    _startup_pause_timer.start(5000)
+
+
+def _restore_paused_startup() -> None:
+    restored = clone_desktop.restore_paused_startup_when_done()
+    if restored:
+        logger.info(f"clone: startup programs put back after the sign-in {restored}")
 
 
 _job_timer: QTimer | None = None
