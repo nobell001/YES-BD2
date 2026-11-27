@@ -4,7 +4,7 @@ import ctypes
 import threading
 import time
 from ctypes import wintypes
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 import win32api
@@ -53,6 +53,15 @@ class WindowResizeResult:
     width: int
     height: int
     changed: bool
+    # How the window was before the change, so a run can put it back when it
+    # ends (player 2026-11-27: 「开自动会自己把窗口变成全屏」).
+    hwnd: int = field(default=0, compare=False)
+    original_style: int | None = field(default=None, compare=False)
+    original_rect: tuple[int, int, int, int] | None = field(default=None, compare=False)
+    original_placement: tuple | None = field(default=None, compare=False)
+    # No title bar now: the screen has no room for a framed window this size,
+    # so the game covers the whole screen like the game's own 全屏.
+    borderless: bool = field(default=False, compare=False)
 
 
 class Win32WindowBackend:
@@ -270,7 +279,7 @@ def _restore_window(
     style: int,
     rect: tuple[int, int, int, int],
     placement: tuple | None,
-) -> None:
+) -> bool:
     try:
         restored_style = style
         if placement is not None:
@@ -282,6 +291,8 @@ def _restore_window(
             backend.set_window_placement(hwnd, placement)
     except Exception as exc:
         logger.error(f"restore game window failed: {exc}", exception=exc)
+        return False
+    return True
 
 
 def resize_game_window(
@@ -358,7 +369,15 @@ def resize_game_window(
             if actual == target:
                 hwnd_window.do_update_window_size()
                 logger.info(f"manual game resolution changed to {target[0]}x{target[1]}")
-                return WindowResizeResult(*actual, changed=True)
+                return WindowResizeResult(
+                    *actual,
+                    changed=True,
+                    hwnd=hwnd,
+                    original_style=original_style,
+                    original_rect=original_rect,
+                    original_placement=original_placement,
+                    borderless=not target_style & win32con.WS_CAPTION,
+                )
             if monotonic() >= deadline:
                 break
             sleep(RESIZE_POLL_INTERVAL_SECONDS)
@@ -379,6 +398,43 @@ def resize_game_window(
         )
         hwnd_window.do_update_window_size()
         raise
+
+
+def restore_game_window(
+    device_manager: object,
+    result: WindowResizeResult,
+    *,
+    backend: Win32WindowBackend | None = None,
+) -> str:
+    """Put the game window back the way it was before ``result``'s change.
+
+    "" when it was put back, else why not.  Left alone when it is no longer
+    the same window (the game was closed or restarted) or no longer the size
+    the change gave it (the player or the game changed it since).
+    """
+    if not result.changed or not result.hwnd or result.original_style is None:
+        return "没有改过窗口"
+    backend = backend or Win32WindowBackend()
+    hwnd = result.hwnd
+    if not backend.is_window(hwnd):
+        return "游戏窗口已经关了"
+    if backend.is_minimized(hwnd):
+        return "游戏窗口最小化了"
+    if backend.get_client_size(hwnd) != (result.width, result.height):
+        return "窗口大小之后又被改过"
+    if not _restore_window(
+        backend,
+        hwnd,
+        result.original_style,
+        result.original_rect or backend.get_window_rect(hwnd),
+        result.original_placement,
+    ):
+        return "放回原来的窗口时出错"
+    hwnd_window = getattr(device_manager, "hwnd_window", None)
+    if hwnd_window is not None and int(getattr(hwnd_window, "hwnd", 0) or 0) == hwnd:
+        hwnd_window.do_update_window_size()
+    logger.info(f"game window put back to {backend.get_client_size(hwnd)}")
+    return ""
 
 
 class _ResizeSignals(QObject):

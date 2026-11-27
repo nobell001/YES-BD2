@@ -489,11 +489,15 @@ class ChildBatchTask(BaseTask):
         # run and no word why.  Pressing the button is the permission.
 
         # Once for the whole batch: the children then find a fixed size, or a
-        # notice still within its gap.
-        game_size.fix_or_warn(self)
+        # notice still within its gap.  The window is put back as it was when
+        # the batch ends (player 2026-11-27).
         # The 问题摘要 record of the whole batch; its children's problems go in it.
         # ok-script's display request is given back however the run ends.
-        with problem_report.run_scope(self), keep_awake.released_after(True):
+        with (
+            game_size.fixed_for_run(self),
+            problem_report.run_scope(self),
+            keep_awake.released_after(True),
+        ):
             # The 跑完的结算 page reads this report; it is saved however the run
             # ends (Stop and errors included).
             self._begin_report(run_mode)
@@ -1190,6 +1194,9 @@ class ChildBatchTask(BaseTask):
             run_report.set_notice(CLOSE_GAME_AFTER_FAIL_NOTE)
 
     def _close_game(self, failed_note: str) -> bool:
+        # The window the run resized goes back first: the game keeps the
+        # size it closes at for its next start (player 2026-11-27).
+        game_size.give_back_now(self)
         try:
             closed = game_process.close_game()
         except Exception as exc:

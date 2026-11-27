@@ -14,6 +14,8 @@ from unittest import mock
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.utils import game_size
 
+_real_fix_or_warn = game_size.fix_or_warn
+
 
 def executor(width, height, connected=True):
     method = SimpleNamespace(width=width, height=height, connected=lambda: connected)
@@ -36,10 +38,42 @@ def resizes_to(found, size=(1920, 1080), reason=""):
     return resize
 
 
+def remembering(found, size=(1920, 1080), borderless=True):
+    """A resize that also remembers the window, as ``resize_to_fix`` does."""
+    inner = resizes_to(found, size=size)
+
+    def resize(target_executor):
+        reason = inner(target_executor)
+        game_size._to_restore.clear()
+        game_size._to_restore.update(
+            id=next(game_size._restore_ids),
+            manager=target_executor.device_manager,
+            result="the window before",
+            borderless=borderless,
+        )
+        return reason
+
+    resize.calls = inner.calls
+    return resize
+
+
+class PutBack:
+    """Stands in for ``put_back``: records when the window is given back."""
+
+    def __init__(self, why=""):
+        self.why = why
+        self.entries = []
+
+    def __call__(self, entry):
+        self.entries.append(entry)
+        return self.why
+
+
 def reset():
     game_size._last_notified["at"] = 0.0
     game_size._last_failed_fix.clear()
     game_size._last_failed_fix["at"] = 0.0
+    game_size._to_restore.clear()
 
 
 class Clock:
@@ -225,6 +259,157 @@ class GameSizeTest(unittest.TestCase):
         resizer.assert_called_with(found.device_manager, (1920, 1080), executor=None)
 
 
+class PutBackAfterRunTest(unittest.TestCase):
+    """Player 2026-11-27: 「开自动会自己把窗口变成全屏，能不能窗口」."""
+
+    def setUp(self):
+        reset()
+
+    def _run(self, found, resize, put_back, body=lambda: None):
+        task = Recorder(found)
+        clock = Clock()
+        with game_size.fixed_for_run(
+            task, restore=put_back, resize=resize, sleep=clock.sleep, monotonic=clock
+        ):
+            body()
+        return task
+
+    def test_window_is_put_back_when_the_run_ends(self):
+        found = executor(1904, 1001)  # a maximised window on a 1080p screen
+        resize = remembering(found)
+        put_back = PutBack()
+        seen = []
+        task = self._run(found, resize, put_back, body=lambda: seen.append(len(put_back.entries)))
+        self.assertEqual([0], seen)  # not during the run
+        self.assertEqual(1, len(put_back.entries))
+        self.assertEqual("the window before", put_back.entries[0]["result"])
+        self.assertEqual({}, game_size._to_restore)
+        self.assertIn("改回原来的大小", task.info[game_size.NOTICE_KEY])
+
+    def test_notice_says_it_covers_the_screen_for_now_and_is_put_back(self):
+        found = executor(1600, 900)
+        put_back = PutBack()
+        task = Recorder(found)
+        clock = Clock()
+        with game_size.fixed_for_run(
+            task, restore=put_back, resize=remembering(found, borderless=True),
+            sleep=clock.sleep, monotonic=clock,
+        ):
+            text = task.info[game_size.NOTICE_KEY]
+        self.assertIn("铺满屏幕", text)
+        self.assertIn("跑完会改回原来的窗口", text)
+
+    def test_a_framed_resize_does_not_mention_covering_the_screen(self):
+        found = executor(1600, 900)
+        task = Recorder(found)
+        clock = Clock()
+        with game_size.fixed_for_run(
+            task, restore=PutBack(), resize=remembering(found, borderless=False),
+            sleep=clock.sleep, monotonic=clock,
+        ):
+            text = task.info[game_size.NOTICE_KEY]
+        self.assertNotIn("铺满屏幕", text)
+        self.assertIn("跑完会改回原来的窗口", text)
+
+    def test_put_back_after_a_stop_or_error_too(self):
+        found = executor(1600, 900)
+        put_back = PutBack()
+
+        def stopped():
+            raise RuntimeError("stopped")
+
+        with self.assertRaises(RuntimeError):
+            self._run(found, remembering(found), put_back, body=stopped)
+        self.assertEqual(1, len(put_back.entries))
+
+    def test_supported_size_has_nothing_to_put_back(self):
+        found = executor(2560, 1440)
+        put_back = PutBack()
+        self._run(found, remembering(found), put_back)
+        self.assertEqual([], put_back.entries)
+
+    def test_only_the_run_that_resized_puts_it_back(self):
+        # 一键日常's children find the size fixed and leave the window alone.
+        found = executor(1600, 900)
+        put_back = PutBack()
+        resize = remembering(found)
+        child_put_back = PutBack()
+
+        def children():
+            for _ in range(3):
+                self._run(found, resize, child_put_back)
+            self.assertEqual([], put_back.entries)
+
+        self._run(found, resize, put_back, body=children)
+        self.assertEqual(1, len(resize.calls))
+        self.assertEqual([], child_put_back.entries)
+        self.assertEqual(1, len(put_back.entries))
+
+    def test_window_that_could_not_be_put_back_is_logged_not_raised(self):
+        found = executor(1600, 900)
+        task = self._run(found, remembering(found), PutBack(why="游戏窗口已经关了"))
+        self.assertIn("没有改回原来的大小", task.infos[-1][0])
+        self.assertIn("游戏窗口已经关了", task.infos[-1][0])
+
+    def test_failed_resize_has_nothing_to_put_back(self):
+        found = executor(1600, 900)
+        put_back = PutBack()
+        self._run(found, resizes_to(found, size=(1600, 900), reason="无法容纳"), put_back)
+        self.assertEqual([], put_back.entries)
+
+    def test_put_back_before_the_game_is_closed_happens_once(self):
+        # 做完关闭游戏: the window goes back before the game closes, while it
+        # still exists; the end of the run then has nothing left to do.
+        found = executor(1600, 900)
+        put_back = PutBack()
+        self._run(
+            found, remembering(found), put_back,
+            body=lambda: game_size.give_back_now(Recorder(found), restore=put_back),
+        )
+        self.assertEqual(1, len(put_back.entries))
+
+    def test_batch_close_game_gives_the_window_back_first(self):
+        try:
+            from src.tasks.DailyBatchTask import DailyBatchTask
+        except ImportError as exc:  # pragma: no cover - Windows-only imports
+            self.skipTest(str(exc))
+        order = []
+        batch = object.__new__(DailyBatchTask)
+        batch.batch_label = "一键完成日常"
+        with (
+            mock.patch.object(game_size, "give_back_now", lambda _t: order.append("give back")),
+            mock.patch(
+                "src.tasks.DailyBatchTask.game_process.close_game",
+                lambda: order.append("close") or True,
+            ),
+        ):
+            self.assertTrue(batch._close_game("note"))
+        self.assertEqual(["give back", "close"], order)
+
+    def test_put_back_uses_the_home_page_restorer(self):
+        restorer = mock.Mock(return_value="")
+        fake = SimpleNamespace(restore_game_window=restorer)
+        entry = {"manager": "manager", "result": "result"}
+        with mock.patch.dict(sys.modules, {"src.ui.manual_resolution": fake}):
+            self.assertEqual("", game_size.put_back(entry))
+            restorer.side_effect = OSError("SetWindowPos failed")
+            self.assertEqual("SetWindowPos failed", game_size.put_back(entry))
+        restorer.assert_called_with("manager", "result")
+
+    def test_resize_to_fix_remembers_a_changed_window_only(self):
+        found = executor(1600, 900)
+        changed = SimpleNamespace(changed=True, borderless=True)
+        fake = SimpleNamespace(resize_game_window=mock.Mock(return_value=changed))
+        with mock.patch.dict(sys.modules, {"src.ui.manual_resolution": fake}):
+            self.assertEqual("", game_size.resize_to_fix(found))
+            self.assertIs(changed, game_size._to_restore["result"])
+            self.assertTrue(game_size._to_restore["borderless"])
+            game_size._to_restore.clear()
+            fake.resize_game_window.return_value = SimpleNamespace(changed=False)
+            self.assertEqual("", game_size.resize_to_fix(found))
+            self.assertEqual({}, game_size._to_restore)
+
+
 class GuardedRunTest(unittest.TestCase):
     def setUp(self):
         reset()
@@ -280,6 +465,27 @@ class GuardedRunTest(unittest.TestCase):
         self.assertEqual(0, task.home_calls)
         self.assertEqual([], task.warnings)
         self.assertNotIn("状态", task.info)
+
+    def test_window_is_put_back_after_the_run(self):
+        task = self._task((1904, 1001))
+        put_back = PutBack()
+        put_back_during_run = []
+
+        with (
+            mock.patch.object(game_size, "resize_to_fix", remembering(task.executor)),
+            mock.patch.object(game_size, "put_back", put_back),
+            mock.patch.object(
+                game_size, "fix_or_warn",
+                side_effect=lambda t, **kw: (
+                    put_back_during_run.append(len(put_back.entries)),
+                    _real_fix_or_warn(t, **kw),
+                )[1],
+            ),
+        ):
+            self.assertTrue(task.run())
+        self.assertEqual(1, task.ran)
+        self.assertEqual([0], put_back_during_run)
+        self.assertEqual(1, len(put_back.entries))
 
     def test_unfixable_size_warns_and_still_runs(self):
         task = self._task((1366, 768))
@@ -340,6 +546,39 @@ class BatchTest(unittest.TestCase):
         batch._run_children.assert_called_once()
         self.assertIn("已自动调成 1920×1080", batch.info[game_size.NOTICE_KEY])
         batch.log_warning.assert_not_called()
+
+    def test_batch_puts_the_window_back_after_its_children(self):
+        try:
+            from src.tasks.DailyBatchTask import DailyBatchTask
+        except ImportError as exc:  # pragma: no cover - Windows-only imports
+            self.skipTest(str(exc))
+
+        found = executor(1904, 1001)
+        put_back = PutBack()
+
+        class Batch(DailyBatchTask):
+            executor = found
+
+        batch = object.__new__(Batch)
+        batch.config = {"启用": True}
+        batch.info = {}
+        batch.log_info = mock.Mock()
+        batch.log_warning = mock.Mock()
+        batch.info_set = lambda key, value: batch.info.__setitem__(key, value)
+        batch._auto_login_pending = lambda: False
+        batch._take_run_mode = lambda mode: mode
+        batch._run_children = mock.Mock(
+            side_effect=lambda _mode: not put_back.entries  # still resized meanwhile
+        )
+        batch._begin_report = mock.Mock()
+        reset()
+        with (
+            mock.patch.object(game_size, "resize_to_fix", remembering(found)),
+            mock.patch.object(game_size, "put_back", put_back),
+            mock.patch("src.tasks.DailyBatchTask.run_report.finish"),
+        ):
+            self.assertTrue(batch.run())
+        self.assertEqual(1, len(put_back.entries))
 
 
 if __name__ == "__main__":

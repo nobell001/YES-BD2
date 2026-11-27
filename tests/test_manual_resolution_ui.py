@@ -16,6 +16,7 @@ from src.ui.manual_resolution import (
     _ResizeJob,
     format_resolution,
     resize_game_window,
+    restore_game_window,
 )
 
 
@@ -308,6 +309,106 @@ class ManualResolutionTest(unittest.TestCase):
                 monotonic=lambda: next(clock),
                 sleep=lambda _seconds: None,
             )
+
+    def _maximized_on_1080p(self):
+        """The player's case (2026-11-27): a maximised framed game on a
+        1920x1080 screen with a taskbar; its client is short of 1920x1080."""
+        return _FakeBackend(
+            style=win32con.WS_OVERLAPPEDWINDOW,
+            rect=(200, 100, 1480, 859),
+            monitor_area=(0, 0, 1920, 1040),
+            monitor_bounds=(0, 0, 1920, 1080),
+            maximized=True,
+        )
+
+    def test_1080p_screen_resize_covers_the_screen_and_remembers_the_window(self):
+        manager = _FakeDeviceManager()
+        backend = self._maximized_on_1080p()
+        original_style = backend.style
+        original_placement = backend.placement
+
+        result = resize_game_window(
+            manager, (1920, 1080), backend=backend,
+            monotonic=lambda: 0.0, sleep=lambda _seconds: None,
+        )
+
+        # This is what the player saw as 「变成全屏」: no title bar, whole screen.
+        self.assertEqual((0, 0, 1920, 1080), backend.rect)
+        self.assertFalse(backend.style & win32con.WS_CAPTION)
+        self.assertTrue(result.borderless)
+        self.assertEqual(101, result.hwnd)
+        self.assertEqual(original_style, result.original_style)
+        self.assertEqual(original_placement, result.original_placement)
+
+    def test_restore_gives_back_the_maximised_framed_window(self):
+        manager = _FakeDeviceManager()
+        backend = self._maximized_on_1080p()
+        original_client = backend.client_size
+        result = resize_game_window(
+            manager, (1920, 1080), backend=backend,
+            monotonic=lambda: 0.0, sleep=lambda _seconds: None,
+        )
+        updates = manager.hwnd_window.updates
+
+        self.assertEqual("", restore_game_window(manager, result, backend=backend))
+
+        self.assertTrue(backend.style & win32con.WS_CAPTION)
+        self.assertFalse(backend.style & win32con.WS_POPUP)
+        self.assertTrue(backend.maximized)
+        self.assertEqual(original_client, backend.client_size)
+        self.assertGreater(manager.hwnd_window.updates, updates)
+
+    def test_restore_gives_back_a_small_framed_window_where_it_was(self):
+        manager = _FakeDeviceManager()
+        backend = _FakeBackend(
+            style=win32con.WS_OVERLAPPEDWINDOW,
+            rect=(300, 200, 1916, 1139),  # a 1600x900 client
+            monitor_area=(0, 0, 1920, 1040),
+            monitor_bounds=(0, 0, 1920, 1080),
+        )
+        result = resize_game_window(
+            manager, (1920, 1080), backend=backend,
+            monotonic=lambda: 0.0, sleep=lambda _seconds: None,
+        )
+        self.assertTrue(result.borderless)
+
+        self.assertEqual("", restore_game_window(manager, result, backend=backend))
+
+        self.assertEqual(win32con.WS_OVERLAPPEDWINDOW, backend.style)
+        self.assertEqual((300, 200, 1916, 1139), backend.rect)
+        self.assertEqual((1600, 900), backend.client_size)
+
+    def test_restore_leaves_a_window_changed_or_gone_since(self):
+        for case in ("resized", "gone", "minimised"):
+            with self.subTest(case=case):
+                manager = _FakeDeviceManager()
+                backend = _FakeBackend(
+                    style=win32con.WS_OVERLAPPEDWINDOW,
+                    rect=(300, 200, 1916, 1139),
+                    monitor_area=(0, 0, 1920, 1040),
+                    monitor_bounds=(0, 0, 1920, 1080),
+                )
+                result = resize_game_window(
+                    manager, (1920, 1080), backend=backend,
+                    monotonic=lambda: 0.0, sleep=lambda _seconds: None,
+                )
+                if case == "resized":
+                    backend.client_size = (2560, 1440)
+                elif case == "gone":
+                    backend.valid = False
+                else:
+                    backend.minimized = True
+                backend.calls.clear()
+
+                self.assertNotEqual("", restore_game_window(manager, result, backend=backend))
+                self.assertEqual([], backend.calls)
+
+    def test_nothing_to_restore_when_nothing_was_changed(self):
+        manager = _FakeDeviceManager()
+        backend = _FakeBackend(rect=(100, 100, 1380, 820))
+        result = resize_game_window(manager, (1280, 720), backend=backend)
+        self.assertNotEqual("", restore_game_window(manager, result, backend=backend))
+        self.assertEqual([], backend.calls)
 
     def test_running_task_is_rejected_before_window_changes(self):
         manager = _FakeDeviceManager()

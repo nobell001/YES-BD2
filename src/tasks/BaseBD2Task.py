@@ -1,3 +1,4 @@
+import contextlib
 import json
 import re
 import threading
@@ -750,15 +751,21 @@ class BaseBD2Task(BaseTask):
             top = keep and getattr(getattr(self, "executor", None), "current_task", None) is self
             if top:
                 self.player_stepped_in = False  # left by a run stopped while paused
-            with problem_report.run_scope(self, keep) as scope, keep_awake.released_after(top):
+            with (
+                problem_report.run_scope(self, keep) as scope,
+                keep_awake.released_after(top),
+                contextlib.ExitStack() as size_scope,
+            ):
                 # An unreadable account list: whose records these are is unknown.
                 if keep and self._accounts_stop():
                     scope.ended = problem_report.SETUP
                     return False
                 # Daily and weekly tasks first set a game size the tool was not
-                # tested on to 1920x1080, or say they could not (Leo 2026-10-09).
+                # tested on to 1920x1080, or say they could not (Leo 2026-10-09),
+                # and give the window back as it was when the run ends
+                # (player 2026-11-27: the game was left covering the screen).
                 if constructed and (wanted or getattr(type(self), "start_from_home", False)):
-                    game_size.fix_or_warn(self)
+                    size_scope.enter_context(game_size.fixed_for_run(self))
                     # A task the player started itself looks at the game's
                     # settings first, as 一键日常 does (差異化點子 5): a reminder.
                     if keep and self._setup_stops():
