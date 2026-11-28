@@ -1,29 +1,40 @@
 name: test
 
-# Run by hand only (Actions tab → test → Run workflow): Leo keeps CI off
-# on purpose; Actions is on for the daily character list (character-list.yml).
+# SCRATCH BRANCH ONLY (scratch/ov-amx-diag-1128, never merge): OpenVINO
+# 0xC000001D diagnostic across runner CPUs.
 on:
   workflow_dispatch:
 
 jobs:
-  test:
+  diag:
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     runs-on: windows-latest
+    env:
+      PYTHONIOENCODING: "UTF-8"
+      PYTHONLEGACYWINDOWSSTDIO: "UTF-8"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
-      - name: Validate commit attribution
-        run: python scripts/check_commit_attribution.py
-      - name: Set up uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          version: "0.11.21"
-      - name: Validate dependency lock and exports
+      - name: CPU
+        id: cpu
         shell: pwsh
-        run: .\scripts\check_dependency_exports.ps1
-      - run: python -m pip install -r requirements-dev.txt
-      - run: ruff check .
-      - run: python -m unittest discover -s tests -v
+        run: |
+          $name = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+          "CPU: $name"
+          (Get-CimInstance Win32_OperatingSystem).Caption
+          python -m pip install -q openvino==2026.2.1
+          python scratch_diag/probe.py probe-only
+          if ($name -match "Intel") { "intel=true" >> $env:GITHUB_OUTPUT }
+      - name: Install
+        if: steps.cpu.outputs.intel == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Variants
+        if: steps.cpu.outputs.intel == 'true'
+        run: python scratch_diag/probe.py
