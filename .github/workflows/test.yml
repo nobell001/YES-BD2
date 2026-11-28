@@ -1,7 +1,7 @@
 name: test
 
-# SCRATCH BRANCH ONLY (scratch/ov-amx-diag-1128, never merge): OpenVINO
-# 0xC000001D diagnostic across runner CPUs.
+# TEMPORARY SCRATCH BRANCH (scratch/ov-amx-diag-1128), deleted after the
+# OpenVINO 0xC000001D diagnostic: exact copy of Build's test step on Intel runners.
 on:
   workflow_dispatch:
 
@@ -16,25 +16,48 @@ jobs:
       PYTHONIOENCODING: "UTF-8"
       PYTHONLEGACYWINDOWSSTDIO: "UTF-8"
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: "3.12"
       - name: CPU
         id: cpu
         shell: pwsh
         run: |
           $name = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
           "CPU: $name"
-          (Get-CimInstance Win32_OperatingSystem).Caption
-          python -m pip install -q openvino==2026.2.1
-          python scratch_diag/probe.py probe-only
-          if ($name -match "Intel") { "intel=true" >> $env:GITHUB_OUTPUT }
-      - name: Install
+          if ($name -match "8573C") { "intel=true" >> $env:GITHUB_OUTPUT }
+      - name: Configure git
+        if: steps.cpu.outputs.intel == 'true'
+        shell: pwsh
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+      - uses: actions/checkout@v7
+        if: steps.cpu.outputs.intel == 'true'
+        with:
+          lfs: true
+          fetch-depth: 0
+      - name: Set up Python 3.12
+        if: steps.cpu.outputs.intel == 'true'
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
         if: steps.cpu.outputs.intel == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Variants
+      - name: Run tests (exact Build command)
+        id: a
         if: steps.cpu.outputs.intel == 'true'
-        run: python scratch_diag/probe.py
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          python -X faulthandler -m unittest discover -s tests -v 2>&1 | Select-String -Pattern "fatal exception|^Ran |^OK|^FAILED|test_below_20_used_today|Thread 0x|File .*onnxocr" | ForEach-Object { $_.Line }
+          $code = $LASTEXITCODE
+          "RESULT A exit code: 0x{0:X8}" -f $code
+      - name: Run tests again
+        if: steps.cpu.outputs.intel == 'true'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          python -X faulthandler -m unittest discover -s tests -v 2>&1 | Select-String -Pattern "fatal exception|^Ran |^OK|^FAILED|test_below_20_used_today|Thread 0x|File .*onnxocr" | ForEach-Object { $_.Line }
+          $code = $LASTEXITCODE
+          "RESULT B exit code: 0x{0:X8}" -f $code
