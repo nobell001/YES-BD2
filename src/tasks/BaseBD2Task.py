@@ -2564,6 +2564,39 @@ class BaseBD2Task(BaseTask):
         except Exception:
             pass
 
+    def clear_followers_in_way(self) -> bool:
+        """Send away a 派遣 crowd that is in the way now, without the entry's
+        5 s wait.  True when something was pressed (look again after it).
+
+        The entry look can miss the crowd: it comes a moment after the field
+        loads (slow PC or network), or the look ran out first.  The crowd then
+        stands in front of what the task looks for, and its "!" takes the F
+        slot (player via Leo 2026-11-27 「派遣没领取挡住入口的标志就会不动了」).
+        Pressed only on what is seen: the F "!" (field_followers), else a
+        crowd of head balloons (follower_balloons) gets the F key once.
+        """
+        from src.utils.field_followers import (
+            FOLLOWERS_DISMISSED,
+            FOLLOWERS_STILL_VISIBLE,
+            KEY_PRESSED_BLIND,
+        )
+        from src.utils.follower_balloons import crowd_seen
+
+        outcome = self.dismiss_field_followers(
+            appear_seconds=FIELD_FOLLOWERS_QUICK_LOOK_SECONDS,
+            use_key=True,
+            even_if_done_today=True,
+        )
+        if outcome in (FOLLOWERS_DISMISSED, FOLLOWERS_STILL_VISIBLE):
+            self.sleep(FIELD_FOLLOWERS_SETTLE_SECONDS)
+            return True
+        if not crowd_seen(self.capture_frame()):  # 有备案：上面已先看过 F 键的「!」，这里是第二种看法
+            return False
+        self.log_info("派遣：画面上有一群头顶「!」的跟随角色挡着，F 键上没认到「!」，按一次 F 领掉。")
+        self.tap_key(FIELD_FOLLOWERS_KEY, after_sleep=FIELD_FOLLOWERS_SETTLE_SECONDS)
+        self.note_dispatch(KEY_PRESSED_BLIND)
+        return True
+
     def _retry_recent_cartridge_entry(
         self,
         ensure_home: Callable[[], bool],

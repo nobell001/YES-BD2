@@ -1161,6 +1161,18 @@ class SandboxNavigationMixin:
     ) -> bool:
         """Click the portal interaction prompt when the character is already nearby."""
 
+        if self._click_teleport_hand(timeout):  # 不用确认：helper 本身，调用处看传送阵地图开没开
+            return True
+        # A 派遣 crowd that came after the entry look puts its "!" on the F
+        # slot in place of the hand (player via Leo 2026-11-27): send it
+        # away, then look for the hand once more.
+        clear = getattr(self.task, "clear_followers_in_way", None)
+        if not callable(clear) or not clear():
+            return False
+        self.task.log_info("跑图：传送阵的手势被派遣的「!」占着，领掉派遣后再找一次。")
+        return self._click_teleport_hand(timeout)  # 不用确认：helper 本身，调用处看传送阵地图开没开
+
+    def _click_teleport_hand(self, timeout: float) -> bool:
         end_at = monotonic() + max(0.0, timeout)
         last = MatchResult(-1.0, (0, 0), (0, 0))
         while monotonic() <= end_at:

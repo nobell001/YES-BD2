@@ -114,6 +114,24 @@ class GuidePageTest(unittest.TestCase):
         missing = [text for text in texts if catalog.gettext(text) == text]
         self.assertEqual([], sorted(missing))
 
+    def test_map_skills_card_says_where_the_cooking_skill_goes(self):
+        # Leo 2026-11-28: 跑商 kept failing with no cooking skill on the
+        # bottom-right bar; the 跑图 skills card now says to put it there.
+        from src.ui.traditional import to_traditional
+
+        line = "跑商要做料理：料理技能也要放在右下角（哪一组、哪一格都可以）"
+        self.assertIn(f'"{line}"', SOURCE)
+        self.assertLess(SOURCE.index("技能按顺序放"), SOURCE.index(line))
+        self.assertLess(SOURCE.index(line), SOURCE.index("左上角保持小地图"))
+        self.assertEqual(
+            "跑商要做料理：料理技能也要放在右下角（哪一組、哪一格都可以）",
+            to_traditional(line),
+        )
+        for lang in ("en_US", "ja_JP", "ko_KR"):
+            with self.subTest(lang=lang):
+                catalog = gettext.translation("ok", CATALOG_ROOT, languages=[lang])
+                self.assertNotEqual(line, catalog.gettext(line))
+
 
 if __name__ == "__main__":
     unittest.main()

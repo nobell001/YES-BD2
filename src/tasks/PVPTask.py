@@ -2974,25 +2974,28 @@ class PVPTask(BaseBD2Task):
         does instead of a fixed 6 s wait: the result goes to
         ``_stage_reset_result`` (STAGE_RESET_*)."""
         self._stage_reset_result = ""
-        if self._click_template_until(  # 不用确认：本身就是补救（定位修正），按后看画面
-            PVP_LOC_RESET_TEMPLATE,
-            timeout=2.0,
-            name="PVP 定位修正",
-            target_offset=(0, 100),
-            after_sleep=0.3,
-        ):
-            self._stage_reset_result = self._watch_stage_reset()
-            return True
-
-        for spec in PVP_NO_FIND_TEMPLATES:
-            if self._click_template_until(  # 不用确认：本身就是补救（舞台搜索），按后看画面
-                spec,
-                timeout=0.8,
-                name="PVP 舞台搜索",
+        for look in range(2):
+            if self._click_template_until(  # 不用确认：本身就是补救（定位修正），按后看画面
+                PVP_LOC_RESET_TEMPLATE,
+                timeout=2.0,
+                name="PVP 定位修正",
+                target_offset=(0, 100),
                 after_sleep=0.3,
             ):
                 self._stage_reset_result = self._watch_stage_reset()
                 return True
+            # The red ✕ hidden: a 派遣 crowd that came after the entry look
+            # stands in front of it (player via Leo 2026-11-27).  Send it
+            # away and look once more.
+            if look or not self.clear_followers_in_way():
+                break
+            self.log_info("镜中之战：舞台上方的红色交叉剑没看到，先领掉挡着的派遣再找一次。")
+        # No clicks on hub people any more: the old fallback clicked the
+        # seated man right of the bar (1080p ~(1295, 385), up-right of the
+        # spawn, far from the stage) whenever the ✕ was hidden, and the
+        # character ran to the top right (player via Leo 2026-11-27 「进去后
+        # 会自动往右上角跑」; Leo 「舞台的位置進卡帶時幾乎都是固定的」).
+        self.info_set("PVP 定位修正", "没看到舞台上方的红色交叉剑")
         return False
 
     def _watch_stage_reset(self) -> str:
@@ -3606,47 +3609,3 @@ PVP_LOC_RESET_TEMPLATE = TemplateSpec(
     default_threshold=0.76,
 )
 
-PVP_NO_FIND_TEMPLATES = [
-    TemplateSpec(
-        name="pvp_nofind_UT_bk",
-        file_name="image/pvp-nofind-UT-bk.png",
-        threshold_key="PVP 定位修正阈值",
-        default_threshold=0.76,
-    ),
-    TemplateSpec(
-        name="pvp_nofind_ut_bk2",
-        file_name="image/pvp-nofind-ut-bk2.png",
-        threshold_key="PVP 定位修正阈值",
-        default_threshold=0.76,
-    ),
-    TemplateSpec(
-        name="pvp_nofind_UT_ft",
-        file_name="image/pvp-nofind-UT-ft.png",
-        threshold_key="PVP 定位修正阈值",
-        default_threshold=0.76,
-    ),
-    TemplateSpec(
-        name="pvp_nofind_UT_Rt",
-        file_name="image/pvp-nofind-UT-Rt.png",
-        threshold_key="PVP 定位修正阈值",
-        default_threshold=0.76,
-    ),
-    TemplateSpec(
-        name="pvp_nofind_twoaudience",
-        file_name="image/pvp-nofind-twoaudience.png",
-        threshold_key="PVP 定位修正阈值",
-        default_threshold=0.76,
-    ),
-    TemplateSpec(
-        name="pvp_nofind_waiter_fr",
-        file_name="image/pvp-nofind-waiter-fr.png",
-        threshold_key="PVP 定位修正阈值",
-        default_threshold=0.76,
-    ),
-    TemplateSpec(
-        name="pvp_nofind_aman_sit",
-        file_name="image/pvp-nofind-aman-sit.png",
-        threshold_key="PVP 定位修正阈值",
-        default_threshold=0.76,
-    ),
-]

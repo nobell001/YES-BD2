@@ -414,6 +414,11 @@
   "ja": "どのスキルセット（TAB で切替の 1/2/3）でも可",
   "ko": "어느 스킬 세트(TAB으로 바꾸는 1/2/3)든 괜찮음"
  },
+ "跑商要做料理：料理技能也要放在右下角（哪一组、哪一格都可以）": {
+  "en": "Trade Run cooks dishes: put the Cook skill in the bottom-right skills too (any set, any slot)",
+  "ja": "交易周回では料理を作る：調理スキルも右下に配置（どのセット・どの枠でも可）",
+  "ko": "교역 파밍은 요리를 함: 요리하기 스킬도 오른쪽 아래에 배치(어느 세트, 어느 칸이든 가능)"
+ },
  "建议跑之前先放好": {
   "en": "Best to set them before running",
   "ja": "実行前に配置しておくのがおすすめ",

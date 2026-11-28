@@ -4398,3 +4398,6 @@ msgstr "Start here"
 
 msgid "勾选要打的关，游戏停在主页时按这里就会照顺序打，打过的关会自己跳过。"
 msgstr "Tick the stages to fight. With the game on the home screen, press here and they are fought in order; cleared stages are skipped."
+
+msgid "跑商要做料理：料理技能也要放在右下角（哪一组、哪一格都可以）"
+msgstr "Trade Run cooks dishes: put the Cook skill in the bottom-right skills too (any set, any slot)"
